@@ -61,6 +61,12 @@ import {
 import { formatFileSize, type AgentFile } from "@/lib/agent-file";
 import { formatReminderTime, type Reminder } from "@/lib/reminder";
 import { getCurrentTimeContext } from "@/lib/time-context";
+import {
+  defaultRealtimeVoice,
+  parseRealtimeVoice,
+  realtimeVoiceOptions,
+  type RealtimeVoice,
+} from "@/lib/realtime-voice";
 
 type ConnectionState =
   | "idle"
@@ -92,12 +98,40 @@ type Initiative = "off" | "quiet" | "balanced" | "social";
 type PresenceAction = "stay_silent" | "check_in" | "continue_topic";
 type AuthState = "checking" | "authenticated" | "locked";
 type ContextMode = "continue" | "fresh";
+type TurnState = "wait" | "complete";
+
+type PendingUtterance = {
+  text: string;
+  startedAt: number;
+  timings: SpeechTiming[];
+};
+
+type SpeechTiming = {
+  speechDurationMs: number | null;
+  estimatedTrailingSoundMs: number | null;
+  silenceBeforeMs: number | null;
+  transcriptReadyDelayMs: number | null;
+};
+
+type LiveSpeechTiming = {
+  itemId?: string;
+  startedAt: number;
+  stoppedAt?: number;
+  audioStartMs?: number;
+  audioEndMs?: number;
+  silenceBeforeMs: number | null;
+  estimatedTrailingSoundMs?: number;
+};
+
+const VOICE_STORAGE_KEY = "vox.realtimeVoice";
 
 type RealtimeEvent = {
   type?: string;
   transcript?: string;
   delta?: string;
   item_id?: string;
+  audio_start_ms?: number;
+  audio_end_ms?: number;
   item?: {
     id?: string;
     type?: string;
@@ -248,6 +282,8 @@ export default function Home() {
   const [lastRoute, setLastRoute] = useState<JevRoute | null>(null);
   const [lastContextMode, setLastContextMode] = useState<ContextMode | null>(null);
   const [initiative, setInitiative] = useState<Initiative>("balanced");
+  const [voice, setVoice] = useState<RealtimeVoice>(defaultRealtimeVoice);
+  const [thinkingCue, setThinkingCue] = useState("");
   const [memories, setMemories] = useState<MemoryRecord[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(true);
   const [memoryError, setMemoryError] = useState("");
@@ -282,6 +318,16 @@ export default function Home() {
   const conversationItemsRef = useRef<Array<{ id: string; role: string }>>([]);
   const processedUtterancesRef = useRef(new Map<string, number>());
   const sessionOwnerRef = useRef<string | null>(null);
+  const pendingUtteranceRef = useRef<PendingUtterance | null>(null);
+  const userSpeakingRef = useRef(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const speechMonitorTimerRef = useRef<number | null>(null);
+  const currentSoundStartedAtRef = useRef<number | null>(null);
+  const lastLoudMomentRef = useRef<number | null>(null);
+  const lastTrailingSoundDurationRef = useRef(0);
+  const activeSpeechTimingRef = useRef<LiveSpeechTiming | null>(null);
+  const speechTimingsRef = useRef(new Map<string, LiveSpeechTiming>());
+  const previousSpeechStoppedAtRef = useRef<number | null>(null);
 
   const connected = [
     "listening",
@@ -299,7 +345,7 @@ export default function Home() {
       top: transcriptRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [messages]);
+  }, [messages, thinkingCue]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -312,6 +358,14 @@ export default function Home() {
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
+
+  useEffect(() => {
+    const savedVoice = parseRealtimeVoice(
+      window.localStorage.getItem(VOICE_STORAGE_KEY),
+    );
+    const timer = window.setTimeout(() => setVoice(savedVoice), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -357,6 +411,8 @@ export default function Home() {
 
   useEffect(() => {
     return () => disconnect(false);
+    // The unmount cleanup intentionally uses the single session owned at mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -402,6 +458,105 @@ export default function Home() {
       ...current,
       { id: crypto.randomUUID(), role, text: cleanText },
     ]);
+  }
+
+  function quietThinkingCue(text: string) {
+    return /[\u3400-\u9fff]/u.test(text)
+      ? "慢慢想，我在聽。"
+      : "Take your time — I’m listening.";
+  }
+
+  function startSpeechTimingMonitor(stream: MediaStream) {
+    const audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.15;
+    source.connect(analyser);
+    audioContextRef.current = audioContext;
+
+    const samples = new Uint8Array(analyser.fftSize);
+    speechMonitorTimerRef.current = window.setInterval(() => {
+      analyser.getByteTimeDomainData(samples);
+      let energy = 0;
+      for (const sample of samples) {
+        const centered = (sample - 128) / 128;
+        energy += centered * centered;
+      }
+      const rms = Math.sqrt(energy / samples.length);
+      const now = performance.now();
+
+      if (rms >= 0.028) {
+        currentSoundStartedAtRef.current ??= now;
+        lastLoudMomentRef.current = now;
+      } else if (
+        currentSoundStartedAtRef.current !== null &&
+        lastLoudMomentRef.current !== null &&
+        now - lastLoudMomentRef.current >= 180
+      ) {
+        lastTrailingSoundDurationRef.current = Math.max(
+          0,
+          lastLoudMomentRef.current - currentSoundStartedAtRef.current,
+        );
+        currentSoundStartedAtRef.current = null;
+        lastLoudMomentRef.current = null;
+      }
+    }, 40);
+  }
+
+  function stopSpeechTimingMonitor() {
+    if (speechMonitorTimerRef.current !== null) {
+      window.clearInterval(speechMonitorTimerRef.current);
+      speechMonitorTimerRef.current = null;
+    }
+    void audioContextRef.current?.close().catch(() => undefined);
+    audioContextRef.current = null;
+    currentSoundStartedAtRef.current = null;
+    lastLoudMomentRef.current = null;
+    lastTrailingSoundDurationRef.current = 0;
+    activeSpeechTimingRef.current = null;
+    speechTimingsRef.current.clear();
+    previousSpeechStoppedAtRef.current = null;
+  }
+
+  function completedSpeechTiming(itemId?: string): SpeechTiming {
+    const live =
+      (itemId ? speechTimingsRef.current.get(itemId) : undefined) ??
+      activeSpeechTimingRef.current;
+    const now = Date.now();
+    const audioDuration =
+      live?.audioStartMs !== undefined && live.audioEndMs !== undefined
+        ? Math.max(0, live.audioEndMs - live.audioStartMs)
+        : live?.stoppedAt
+          ? Math.max(0, live.stoppedAt - live.startedAt)
+          : null;
+    const trailingSound = live?.estimatedTrailingSoundMs ?? 0;
+
+    if (itemId) speechTimingsRef.current.delete(itemId);
+    if (activeSpeechTimingRef.current === live) activeSpeechTimingRef.current = null;
+
+    return {
+      speechDurationMs: audioDuration,
+      estimatedTrailingSoundMs:
+        trailingSound > 0
+          ? Math.round(Math.min(trailingSound, audioDuration ?? trailingSound))
+          : null,
+      silenceBeforeMs: live?.silenceBeforeMs ?? null,
+      transcriptReadyDelayMs: live?.stoppedAt
+        ? Math.max(0, now - live.stoppedAt)
+        : null,
+    };
+  }
+
+  function chooseVoice(value: string) {
+    const nextVoice = parseRealtimeVoice(value);
+    setVoice(nextVoice);
+    window.localStorage.setItem(VOICE_STORAGE_KEY, nextVoice);
+    if (connected || connectionState === "connecting") {
+      toast.info("Voice saved for the next conversation", {
+        description: "End this conversation and start another to hear the change.",
+      });
+    }
   }
 
   function claimInputTranscription(text: string, itemId?: string) {
@@ -747,6 +902,7 @@ export default function Home() {
       mutedRef.current ||
       connectionStateRef.current !== "listening" ||
       activeRouteTurnRef.current !== null ||
+      pendingUtteranceRef.current !== null ||
       presenceCheckInFlightRef.current ||
       proactiveCountRef.current >= 6 ||
       now - lastHumanMoment < timing.minimumQuietMs ||
@@ -817,6 +973,8 @@ export default function Home() {
     text: string,
     currentItemId?: string,
     previousUserItemId?: string,
+    allowWait = true,
+    timing?: SpeechTiming,
   ) {
     const channel = channelRef.current;
     if (!channel || channel.readyState !== "open") return;
@@ -824,6 +982,11 @@ export default function Home() {
     const turnId = ++routeTurnRef.current;
     activeRouteTurnRef.current = turnId;
     const isCurrentTurn = () => turnId === routeTurnRef.current;
+    const pending = pendingUtteranceRef.current;
+    const pendingText = pending?.text ?? "";
+    const completeText = [pendingText, text].filter(Boolean).join(" ").trim();
+    const pendingTimings = pending?.timings ?? [];
+    const completeTimings = [...pendingTimings, ...(timing ? [timing] : [])];
 
     function sendTurnResponse(
       kind: string,
@@ -852,7 +1015,7 @@ export default function Home() {
       task: () => Promise<T>,
     ) {
       const config = frontVoiceConfig[route];
-      const bridge = /[\u3400-\u9fff]/u.test(text)
+      const bridge = /[\u3400-\u9fff]/u.test(completeText)
         ? config.zhBridge
         : config.enBridge;
       setConnectionState(config.workState);
@@ -907,6 +1070,11 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text,
+          pendingText,
+          pendingAgeMs: pending ? Date.now() - pending.startedAt : 0,
+          timing,
+          pendingTimings,
+          allowWait,
           recentMessages: messagesRef.current.slice(-6).map(({ role, text }) => ({
             role,
             text,
@@ -916,18 +1084,37 @@ export default function Home() {
       const route = (await routeResponse.json()) as {
         route?: JevRoute;
         contextMode?: ContextMode;
+        turnState?: TurnState;
       };
       if (!isCurrentTurn()) return;
       const selectedRoute = route.route ?? "realtime";
       const contextMode = route.contextMode ?? "continue";
+      const turnState = allowWait ? (route.turnState ?? "complete") : "complete";
       setLastRoute(selectedRoute);
       setLastContextMode(contextMode);
+
+      if (turnState === "wait") {
+        pendingUtteranceRef.current = {
+          text: completeText,
+          startedAt: pending?.startedAt ?? Date.now(),
+          timings: completeTimings,
+        };
+        setThinkingCue(quietThinkingCue(completeText));
+        activeRouteTurnRef.current = null;
+        setConnectionState("listening");
+        return;
+      }
+
+      pendingUtteranceRef.current = null;
+      setThinkingCue("");
 
       if (selectedRoute === "silence") {
         activeRouteTurnRef.current = null;
         setConnectionState("listening");
         return;
       }
+
+      void considerMemory(completeText);
 
       if (contextMode === "fresh") {
         startFreshRealtimeContext(currentItemId, previousUserItemId);
@@ -936,7 +1123,7 @@ export default function Home() {
       if (selectedRoute === "create_reminder") {
         try {
           const reminder = await runWithFrontVoice(selectedRoute, () =>
-            createScheduledReminder(text),
+            createScheduledReminder(completeText),
           );
           if (!isCurrentTurn()) return;
           sendTurnResponse(
@@ -953,7 +1140,9 @@ export default function Home() {
         }
       } else if (selectedRoute === "create_file") {
         try {
-          const file = await runWithFrontVoice(selectedRoute, () => createFile(text));
+          const file = await runWithFrontVoice(selectedRoute, () =>
+            createFile(completeText),
+          );
           if (!isCurrentTurn()) return;
           sendTurnResponse(
             "final_answer",
@@ -971,7 +1160,7 @@ export default function Home() {
           fetch("/api/reason", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text, route: selectedRoute }),
+            body: JSON.stringify({ text: completeText, route: selectedRoute }),
           }),
         );
         const searched = (await searchResponse.json()) as {
@@ -991,7 +1180,7 @@ export default function Home() {
           fetch("/api/reason", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text, route: selectedRoute }),
+            body: JSON.stringify({ text: completeText, route: selectedRoute }),
           }),
         );
         const reasoned = (await reasonResponse.json()) as {
@@ -1009,7 +1198,7 @@ export default function Home() {
       if (isCurrentTurn()) setConnectionState("thinking");
     } catch {
       if (!isCurrentTurn()) return;
-      const safeFailure = /[\u3400-\u9fff]/u.test(text)
+      const safeFailure = /[\u3400-\u9fff]/u.test(completeText)
         ? "抱歉，我剛剛沒能可靠地完成這個查詢。請再試一次。"
         : "Sorry, I could not complete that request reliably. Please try again.";
       sendTurnResponse("final_error", safeFailure, true);
@@ -1019,7 +1208,21 @@ export default function Home() {
 
   function handleRealtimeEvent(event: RealtimeEvent) {
     switch (event.type) {
-      case "input_audio_buffer.speech_started":
+      case "input_audio_buffer.speech_started": {
+        userSpeakingRef.current = true;
+        lastTrailingSoundDurationRef.current = 0;
+        const speechStartedAt = Date.now();
+        const liveTiming: LiveSpeechTiming = {
+          itemId: event.item_id,
+          startedAt: speechStartedAt,
+          audioStartMs: event.audio_start_ms,
+          silenceBeforeMs:
+            previousSpeechStoppedAtRef.current === null
+              ? null
+              : Math.max(0, speechStartedAt - previousSpeechStoppedAtRef.current),
+        };
+        activeSpeechTimingRef.current = liveTiming;
+        if (event.item_id) speechTimingsRef.current.set(event.item_id, liveTiming);
         routeTurnRef.current += 1;
         activeRouteTurnRef.current = routeTurnRef.current;
         if (activeResponseIdRef.current && channelRef.current?.readyState === "open") {
@@ -1035,11 +1238,33 @@ export default function Home() {
           activeResponseIdRef.current = null;
         }
         lastUserActivityRef.current = Date.now();
+        setThinkingCue("");
         setConnectionState("listening");
         break;
-      case "input_audio_buffer.speech_stopped":
+      }
+      case "input_audio_buffer.speech_stopped": {
+        userSpeakingRef.current = false;
+        const speechStoppedAt = Date.now();
+        const stoppedTiming =
+          (event.item_id ? speechTimingsRef.current.get(event.item_id) : undefined) ??
+          activeSpeechTimingRef.current;
+        if (stoppedTiming) {
+          stoppedTiming.stoppedAt = speechStoppedAt;
+          stoppedTiming.audioEndMs = event.audio_end_ms;
+          stoppedTiming.estimatedTrailingSoundMs =
+            currentSoundStartedAtRef.current !== null &&
+            lastLoudMomentRef.current !== null
+              ? Math.max(
+                  0,
+                  lastLoudMomentRef.current - currentSoundStartedAtRef.current,
+                )
+              : lastTrailingSoundDurationRef.current;
+          if (event.item_id) speechTimingsRef.current.set(event.item_id, stoppedTiming);
+        }
+        previousSpeechStoppedAtRef.current = speechStoppedAt;
         setConnectionState("thinking");
         break;
+      }
       case "conversation.item.added":
         if (
           event.item?.id &&
@@ -1061,15 +1286,33 @@ export default function Home() {
       case "conversation.item.input_audio_transcription.completed": {
         const transcript = event.transcript ?? "";
         if (!claimInputTranscription(transcript, event.item_id)) break;
+        const timing = completedSpeechTiming(event.item_id);
         lastUserActivityRef.current = Date.now();
         addMessage("user", transcript);
-        void considerMemory(transcript);
         refreshRealtimeContext();
-        void routeAndRespond(transcript, event.item_id);
+        const earlierFragment = pendingUtteranceRef.current;
+        if (userSpeakingRef.current) {
+          pendingUtteranceRef.current = {
+            text: [earlierFragment?.text, transcript].filter(Boolean).join(" "),
+            startedAt: earlierFragment?.startedAt ?? Date.now(),
+            timings: [...(earlierFragment?.timings ?? []), timing],
+          };
+          activeRouteTurnRef.current = null;
+          break;
+        }
+        void routeAndRespond(transcript, event.item_id, undefined, true, timing);
+        pendingUtteranceRef.current = {
+          text: [earlierFragment?.text, transcript].filter(Boolean).join(" "),
+          startedAt: earlierFragment?.startedAt ?? Date.now(),
+          timings: [...(earlierFragment?.timings ?? []), timing],
+        };
         break;
       }
       case "conversation.item.input_audio_transcription.failed":
         activeRouteTurnRef.current = null;
+        if (pendingUtteranceRef.current) {
+          setThinkingCue(quietThinkingCue(pendingUtteranceRef.current.text));
+        }
         setConnectionState("listening");
         break;
       case "response.created": {
@@ -1147,6 +1390,8 @@ export default function Home() {
     try {
       const tokenResponse = await fetch("/api/realtime-token", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voice }),
       });
       const tokenPayload = (await tokenResponse.json()) as RealtimeTokenPayload;
       if (!tokenResponse.ok || !tokenPayload.value) {
@@ -1165,6 +1410,11 @@ export default function Home() {
       });
       peerRef.current = peer;
       streamRef.current = stream;
+      try {
+        startSpeechTimingMonitor(stream);
+      } catch {
+        // Timing is an optional local hint; voice should still work without it.
+      }
       stream.getAudioTracks().forEach((track) => peer.addTrack(track, stream));
 
       peer.ontrack = (event) => {
@@ -1244,6 +1494,10 @@ export default function Home() {
     frontVoiceWaitersRef.current.clear();
     conversationItemsRef.current = [];
     processedUtterancesRef.current.clear();
+    pendingUtteranceRef.current = null;
+    userSpeakingRef.current = false;
+    stopSpeechTimingMonitor();
+    setThinkingCue("");
     if (
       sessionOwnerRef.current &&
       window.__voxActiveVoiceSession?.ownerId === sessionOwnerRef.current
@@ -1281,8 +1535,8 @@ export default function Home() {
       .reverse()
       .find((item) => item.role === "user")?.id;
     lastUserActivityRef.current = Date.now();
+    setThinkingCue("");
     addMessage("user", text);
-    void considerMemory(text);
     refreshRealtimeContext();
     channelRef.current.send(
       JSON.stringify({
@@ -1294,7 +1548,7 @@ export default function Home() {
         },
       }),
     );
-    void routeAndRespond(text, undefined, previousUserItemId);
+    void routeAndRespond(text, undefined, previousUserItemId, false);
     setInput("");
     setConnectionState("thinking");
   }
@@ -1455,7 +1709,9 @@ export default function Home() {
               <p className="mt-2 min-h-5 text-sm text-white/42">
                 {errorMessage ||
                   (connected
-                    ? muted
+                    ? thinkingCue
+                      ? "No voice reply yet — continue whenever you’re ready"
+                      : muted
                       ? "Microphone paused — tap the orb to resume"
                       : initiative === "off"
                         ? "You can speak over Vox whenever you need"
@@ -1512,29 +1768,53 @@ export default function Home() {
             <span className="flex items-center gap-2">
               <Volume2 size={14} /> Headphones recommended
             </span>
-            <div className="flex items-center gap-3">
-              <label htmlFor="initiative" className="whitespace-nowrap">
-                Initiative
-              </label>
-              <Select
-                value={initiative}
-                onValueChange={(value) => setInitiative(value as Initiative)}
-              >
-                <SelectTrigger
-                  id="initiative"
-                  size="sm"
-                  className="w-[118px] border-white/10 bg-white/[0.04] text-white/70 shadow-none"
-                  aria-label="How often Vox may speak first"
+            <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-3">
+              <div className="flex items-center gap-3">
+                <label htmlFor="voice" className="whitespace-nowrap">
+                  Voice
+                </label>
+                <Select value={voice} onValueChange={chooseVoice}>
+                  <SelectTrigger
+                    id="voice"
+                    size="sm"
+                    className="w-[112px] border-white/10 bg-white/[0.04] text-white/70 shadow-none"
+                    aria-label="Vox voice"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="border-white/10 bg-[#171823] text-white">
+                    {realtimeVoiceOptions.map((option) => (
+                      <SelectItem key={option.id} value={option.id}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-3">
+                <label htmlFor="initiative" className="whitespace-nowrap">
+                  Initiative
+                </label>
+                <Select
+                  value={initiative}
+                  onValueChange={(value) => setInitiative(value as Initiative)}
                 >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="border-white/10 bg-[#171823] text-white">
-                  <SelectItem value="off">Off</SelectItem>
-                  <SelectItem value="quiet">Quiet</SelectItem>
-                  <SelectItem value="balanced">Balanced</SelectItem>
-                  <SelectItem value="social">Social</SelectItem>
-                </SelectContent>
-              </Select>
+                  <SelectTrigger
+                    id="initiative"
+                    size="sm"
+                    className="w-[118px] border-white/10 bg-white/[0.04] text-white/70 shadow-none"
+                    aria-label="How often Vox may speak first"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="border-white/10 bg-[#171823] text-white">
+                    <SelectItem value="off">Off</SelectItem>
+                    <SelectItem value="quiet">Quiet</SelectItem>
+                    <SelectItem value="balanced">Balanced</SelectItem>
+                    <SelectItem value="social">Social</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
         </div>
@@ -1549,7 +1829,11 @@ export default function Home() {
               {messages.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setMessages([])}
+                  onClick={() => {
+                    setMessages([]);
+                    pendingUtteranceRef.current = null;
+                    setThinkingCue("");
+                  }}
                   className="rounded-full px-3 py-1.5 text-xs text-white/36 transition hover:bg-white/5 hover:text-white/70"
                 >
                   Clear
@@ -2007,6 +2291,17 @@ export default function Home() {
                   </p>
                 </article>
               ))
+            )}
+            {thinkingCue && (
+              <article
+                className="message message-assistant border border-[#c8bcff]/12 bg-[#c8bcff]/[0.035]"
+                aria-live="polite"
+              >
+                <p className="message-role">Vox · text only</p>
+                <p className="mt-2 text-[0.95rem] leading-6 text-white/58">
+                  {thinkingCue}
+                </p>
+              </article>
             )}
           </div>
 

@@ -14,6 +14,10 @@ Jev can select seven paths:
 
 The initiative control sets how readily Vox may speak without being prompted. The browser checks for a useful moment only while the live session is quiet and idle; Jev has a strong bias toward `stay_silent`, and the app enforces cooldowns and a per-session cap so presence does not turn into chatter.
 
+Vox also treats a pause as evidence, not an automatic handoff. OpenAI semantic VAD waits through likely hesitation, while a second Jev gate combines the verbatim transcript with local timing hints such as utterance length, silence between fragments, and an estimate of a prolonged final sound. If the thought still appears unfinished, Vox stays vocally silent, shows a small text-only “take your time” cue, suppresses proactive check-ins, and buffers the next spoken fragment before routing an answer. Filler words and self-corrections are intentionally preserved for this decision.
+
+Users can choose among the supported OpenAI Realtime voices. The preference is saved only in the browser and takes effect when the next voice conversation begins.
+
 When Jev delegates a request to live search, deeper reasoning, file creation, or reminder scheduling, the Realtime voice acts as a brief front voice. It immediately acknowledges what it is doing in the user's language while the longer operation runs, then hands back the completed result. The bridge never claims completion, and a new user turn suppresses stale results from an older task.
 
 Jev also classifies each utterance as a continuation or a fresh topic. Clear follow-ups retain short-term Realtime conversation context. On a clear topic shift, Vox keeps the transcript visible in the browser but removes older Realtime conversation items before generating the next response, reducing irrelevant context and repeated input-token cost. Durable memories remain available separately, and uncertain cases keep context rather than risk losing meaning.

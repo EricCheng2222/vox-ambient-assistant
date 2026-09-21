@@ -1,6 +1,7 @@
 import { buildVoiceInstructions } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
 import { requireUser } from "@/lib/auth";
+import { parseRealtimeVoice } from "@/lib/realtime-voice";
 
 const REALTIME_MODEL = "gpt-realtime-2.1";
 
@@ -15,6 +16,11 @@ export async function POST(request: Request) {
       { status: 503 },
     );
   }
+
+  const requestBody = (await request.json().catch(() => ({}))) as {
+    voice?: unknown;
+  };
+  const voice = parseRealtimeVoice(requestBody.voice);
 
   const remembered = await listMemories(auth.user.id, 24).catch((error) => {
     console.error("Starting Realtime without saved memory", error);
@@ -41,7 +47,7 @@ export async function POST(request: Request) {
               transcription: {
                 model: "gpt-4o-mini-transcribe",
                 prompt:
-                  "The speaker may use English or Mandarin. Transcribe exactly in the language spoken and never translate. When the speech is Mandarin or Chinese, always write it in Traditional Chinese as used in Taiwan, with Taiwan wording and punctuation. 使用者可能說英文或華語；請依原語言逐字轉錄，不要翻譯。華語內容一律使用台灣繁體中文、台灣用詞與標點。",
+                  "The speaker may use English or Mandarin. Transcribe verbatim in the language spoken and never translate. Preserve hesitation sounds, filler words, self-corrections, and trailing speech such as um, uh, hmm, er, 嗯, 呃, 欸, 那個, and 就是 instead of silently removing them. If a final sound or word is conspicuously prolonged, preserve that delivery with a natural repeated sound or ellipsis instead of polishing it into a finished sentence. When the speech is Mandarin or Chinese, always write it in Traditional Chinese as used in Taiwan, with Taiwan wording and punctuation. 使用者可能說英文或華語；請依原語言逐字轉錄，不要翻譯，並保留嗯、呃、欸、那個、就是等語助詞、停頓、自我修正與拖長音。華語內容一律使用台灣繁體中文、台灣用詞與標點。",
               },
               turn_detection: {
                 type: "semantic_vad",
@@ -50,7 +56,7 @@ export async function POST(request: Request) {
                 interrupt_response: false,
               },
             },
-            output: { voice: "marin" },
+            output: { voice },
           },
         },
       }),
