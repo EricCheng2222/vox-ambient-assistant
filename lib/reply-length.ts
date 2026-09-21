@@ -14,6 +14,13 @@ const ADAPTIVE_REPLY_LENGTHS = new Set<AdaptiveReplyLength>([
   "detailed",
   "expansive",
 ]);
+const ADAPTIVE_REPLY_LENGTH_ORDER: readonly AdaptiveReplyLength[] = [
+  "minimal",
+  "brief",
+  "standard",
+  "detailed",
+  "expansive",
+];
 
 const ADAPTIVE_CHOICES: Record<ReplyLength, readonly AdaptiveReplyLength[]> = {
   less: ["minimal", "brief", "standard"],
@@ -31,12 +38,12 @@ export function parseReplyLength(value: unknown): ReplyLength {
 
 export function replyLengthInstruction(value: ReplyLength) {
   if (value === "less") {
-    return "Response length preference: Less. Treat this as a concise range, not a fixed sentence count. A tiny social response may be only a phrase, a normal answer may be a few spoken sentences, and a genuinely complex request may run a little longer when usefulness requires it. Do not make every reply the same size.";
+    return "Response length preference: Less. Loosely mirror how much the user says, then bias the reply about one natural step shorter. Treat this as a concise range, not a fixed sentence count. A complex request may still need enough room to be useful. Do not make every reply the same size.";
   }
   if (value === "more") {
-    return "Response length preference: More. Usually give a fuller conversational answer with helpful explanation, context, or examples, but still allow naturally short acknowledgements and simple answers. Vary length and rhythm with the moment instead of filling a quota.";
+    return "Response length preference: More. Loosely mirror how much the user says, then bias the reply about one natural step fuller with useful explanation, context, or examples. Still allow short acknowledgements and simple answers. Vary length and rhythm with the moment instead of filling a quota.";
   }
-  return "Response length preference: Balanced. Move naturally between a quick reply, a normal explanation, and an occasional detailed answer according to the moment. Do not force every response toward the same middle length.";
+  return "Response length preference: Balanced. Loosely mirror the user's conversational scale while still adapting to what the answer needs. Move naturally between a quick reply, a normal explanation, and an occasional detailed answer. Do not force every response toward the same middle length.";
 }
 
 export function adaptiveReplyLengthChoices(value: ReplyLength) {
@@ -65,6 +72,60 @@ export function parseAdaptiveReplyLength(
   return defaultAdaptiveReplyLength(preference);
 }
 
+export function userTurnLengthSignals(text: string) {
+  const trimmed = text.trim();
+  const hanCharacters = trimmed.match(/[\u3400-\u9fff]/gu)?.length ?? 0;
+  const nonHanText = trimmed.replace(/[\u3400-\u9fff]/gu, " ");
+  const nonHanWords =
+    nonHanText.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
+  const sentenceCount = trimmed.match(/[.!?。！？]+/gu)?.length ?? 0;
+
+  return {
+    characters: trimmed.length,
+    meaningfulUnits: hanCharacters + nonHanWords,
+    sentenceCount,
+  };
+}
+
+export function mirroredAdaptiveReplyLength(
+  text: string,
+  preference: ReplyLength,
+  options: { compact?: boolean } = {},
+): AdaptiveReplyLength {
+  const choices = adaptiveReplyLengthChoices(preference);
+  if (options.compact) return choices[0];
+
+  const { meaningfulUnits, sentenceCount } = userTurnLengthSignals(text);
+  let mirroredIndex =
+    meaningfulUnits <= 7
+      ? 0
+      : meaningfulUnits <= 20
+        ? 1
+        : meaningfulUnits <= 55
+          ? 2
+          : meaningfulUnits <= 110
+            ? 3
+            : 4;
+
+  if (sentenceCount >= 4 && mirroredIndex < 3) mirroredIndex += 1;
+
+  const preferenceShift = preference === "less" ? -1 : preference === "more" ? 1 : 0;
+  const desiredIndex = Math.max(
+    0,
+    Math.min(ADAPTIVE_REPLY_LENGTH_ORDER.length - 1, mirroredIndex + preferenceShift),
+  );
+
+  return choices.reduce((closest, choice) => {
+    const closestDistance = Math.abs(
+      ADAPTIVE_REPLY_LENGTH_ORDER.indexOf(closest) - desiredIndex,
+    );
+    const choiceDistance = Math.abs(
+      ADAPTIVE_REPLY_LENGTH_ORDER.indexOf(choice) - desiredIndex,
+    );
+    return choiceDistance < closestDistance ? choice : closest;
+  });
+}
+
 export function adaptiveReplyLengthInstruction(
   preference: ReplyLength,
   value: AdaptiveReplyLength,
@@ -82,7 +143,7 @@ export function adaptiveReplyLengthInstruction(
     expansive:
       "For this turn, a fuller exploration is appropriate: explain the important reasoning, nuance, or examples while keeping it comfortable to hear aloud.",
   };
-  return `${instruction[target]} This is a flexible target for this particular reply, not an exact word or sentence quota; let the phrasing and cadence vary naturally.`;
+  return `${instruction[target]} This target already reflects the user's conversational scale and their saved length preference. It is not an exact word or sentence quota; loosely match the user's rhythm and let the phrasing and cadence vary naturally.`;
 }
 
 export function adaptiveReplyLengthSettings(

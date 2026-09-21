@@ -2,8 +2,10 @@ import { requireUser } from "@/lib/auth";
 import {
   adaptiveReplyLengthChoices,
   defaultAdaptiveReplyLength,
+  mirroredAdaptiveReplyLength,
   parseAdaptiveReplyLength,
   parseReplyLength,
+  userTurnLengthSignals,
   type AdaptiveReplyLength,
   type ReplyLength,
 } from "@/lib/reply-length";
@@ -163,27 +165,10 @@ function fallbackResponseLength(
   preference: ReplyLength,
   route: JevRoute,
 ): AdaptiveReplyLength {
-  const choices = adaptiveReplyLengthChoices(preference);
   if (route === "silence") return defaultAdaptiveReplyLength(preference);
-  if (route === "create_reminder" || route === "create_file") return choices[0];
-
-  const value = text.trim().toLocaleLowerCase();
-  const socialOrSimple =
-    value.length < 70 &&
-    /^(?:hi|hello|hey|thanks|thank you|okay|ok|sure|yes|no|嗨|哈囉|你好|謝謝|好|好的|可以|嗯|喔)/u.test(
-      value,
-    );
-  if (socialOrSimple) return choices[0];
-
-  const asksForDepth =
-    value.length > 320 ||
-    /\b(?:explain|analyze|compare|walk me through|in detail|why|trade-?offs?)\b/i.test(
-      value,
-    ) ||
-    /(?:詳細|解釋|分析|比較|為什麼|怎麼做|一步一步|優缺點|利弊)/u.test(value);
-  if (asksForDepth) return choices[choices.length - 1];
-
-  return choices[Math.floor((choices.length - 1) / 2)];
+  return mirroredAdaptiveReplyLength(text, preference, {
+    compact: route === "create_reminder" || route === "create_file",
+  });
 }
 
 export async function POST(request: Request) {
@@ -277,6 +262,13 @@ export async function POST(request: Request) {
           recent_conversation: recentMessages,
           authoritative_clock: getCurrentTimeContext(),
           reply_length_preference: replyLength,
+          user_length_signals: {
+            current_turn: userTurnLengthSignals(completeText),
+            recent_user_turns: recentMessages
+              .filter((message) => message.role === "user")
+              .slice(-3)
+              .map((message) => userTurnLengthSignals(message.text)),
+          },
         },
         questions: {
           turn_state: {
@@ -320,7 +312,7 @@ export async function POST(request: Request) {
           response_length: {
             type: "choice",
             instructions:
-              `Choose the most natural amount for the assistant to say on this turn. The user's overall preference is ${replyLength}, which is a range rather than a fixed target. Let quick acknowledgements, greetings, simple facts, emotionally sensitive moments, and transactional confirmations stay compact. Use more room for teaching, nuanced explanations, comparisons, difficult decisions, or an explicit request for detail. Consider the recent conversation: avoid repeatedly choosing the same length when the moments differ, but never add filler just to create variety. Choose only from the provided criteria.`,
+              `Choose the most natural amount for the assistant to say on this turn. Use the person's own conversational scale as the rule of thumb: estimate how much they said in the complete current utterance, then smooth that estimate against their recent user turns so a tiny follow-up does not erase an established speaking style. Apply the saved preference as a meaningful bias: Less should usually be about one level shorter than the natural mirror, Balanced should stay near the mirror, and More should usually be about one level fuller. The preference is still a range, not a fixed quota. The needs of the answer may move the result by one level: quick acknowledgements, greetings, simple facts, emotionally sensitive moments, and transactional confirmations can stay compact; teaching, nuanced explanations, comparisons, difficult decisions, or explicit requests for detail can use more room. Mirror amount and conversational rhythm, not filler words, repetition, hesitation, or exact word count. Avoid repeatedly choosing the same length when the user's turns differ, and never add padding merely to create variety. Choose only from the provided criteria.`,
             criteria: Object.fromEntries(
               adaptiveReplyLengthChoices(replyLength).map((choice) => [
                 choice,
