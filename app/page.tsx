@@ -2715,7 +2715,12 @@ export default function Home() {
                 <span className="holo-ring holo-ring-one" />
                 <span className="holo-ring holo-ring-two" />
                 <span className="orb-core">
-                  {connectionState === "creating" ? (
+                  {theme === "holographic" ? (
+                    <span
+                      className={`holo-core-energy is-${connectionState}`}
+                      aria-hidden="true"
+                    />
+                  ) : connectionState === "creating" ? (
                     <FileText size={34} />
                   ) : connectionState === "searching" ? (
                     <Globe2 size={34} />
