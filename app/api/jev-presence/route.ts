@@ -1,8 +1,16 @@
 import { requireUser } from "@/lib/auth";
+import { listMemories } from "@/lib/memory-store";
+import { getSocialEligibility, recordSocialDecision } from "@/lib/social-state-store";
 import { getCurrentTimeContext } from "@/lib/time-context";
 
 type Initiative = "off" | "quiet" | "balanced" | "social";
-type PresenceAction = "stay_silent" | "check_in" | "continue_topic";
+type PresenceAction =
+  | "stay_silent"
+  | "check_in"
+  | "continue_topic"
+  | "natural_callback"
+  | "emotional_followup"
+  | "morning_hello";
 
 type RecentMessage = {
   role: "user" | "assistant";
@@ -14,6 +22,9 @@ const ACTIONS = new Set<PresenceAction>([
   "stay_silent",
   "check_in",
   "continue_topic",
+  "natural_callback",
+  "emotional_followup",
+  "morning_hello",
 ]);
 
 function fallbackAction(
@@ -21,12 +32,15 @@ function fallbackAction(
   quietForMs: number,
   sinceAssistantMs: number,
   recentMessages: RecentMessage[],
+  morningAvailable: boolean,
 ): PresenceAction {
   if (initiative === "off") return "stay_silent";
 
   const threshold =
     initiative === "social" ? 45_000 : initiative === "balanced" ? 120_000 : 300_000;
   if (quietForMs < threshold || sinceAssistantMs < threshold) return "stay_silent";
+
+  if (morningAvailable && recentMessages.length === 0) return "morning_hello";
 
   return recentMessages.length > 0 ? "continue_topic" : "check_in";
 }
@@ -64,10 +78,44 @@ export async function POST(request: Request) {
     return Response.json({ action: "stay_silent", source: "guardrail" });
   }
 
+  const now = new Date();
+  const [memories, socialEligibility] = await Promise.all([
+    listMemories(auth.user.id, 8).catch((error) => {
+      console.error("Jev presence without saved memory", error);
+      return [];
+    }),
+    getSocialEligibility(auth.user.id, now).catch((error) => {
+      console.error("Jev presence without social state", error);
+      return {
+        localDate: "",
+        localHour: -1,
+        morning: false,
+        night: false,
+        naturalCallback: false,
+        emotionalFollowup: false,
+      };
+    }),
+  ]);
+
   const apiKey = process.env.TYPESAFE_API_KEY;
   if (!apiKey) {
+    const action = fallbackAction(
+      initiative,
+      quietForMs,
+      sinceAssistantMs,
+      recentMessages,
+      socialEligibility.morning,
+    );
+    if (action === "morning_hello") {
+      await recordSocialDecision(
+        auth.user.id,
+        { ritual: "good_morning", memoryUse: "none" },
+        socialEligibility.localDate,
+        now,
+      ).catch((error) => console.error("Social state update failed", error));
+    }
     return Response.json({
-      action: fallbackAction(initiative, quietForMs, sinceAssistantMs, recentMessages),
+      action,
       source: "fallback",
     });
   }
@@ -88,17 +136,35 @@ export async function POST(request: Request) {
           proactive_count: proactiveCount,
           current_time: getCurrentTimeContext(),
           recent_conversation: recentMessages,
+          remembered_context: memories.map((memory) => ({
+            id: memory.id,
+            category: memory.category,
+            content: memory.content.slice(0, 280),
+            updated_at: memory.updatedAt,
+          })),
+          social_eligibility: {
+            local_hour: socialEligibility.localHour,
+            good_morning_available: socialEligibility.morning,
+            natural_callback_available: socialEligibility.naturalCallback,
+            emotional_followup_available: socialEligibility.emotionalFollowup,
+          },
         },
         questions: {
           timing: {
             type: "choice",
             instructions:
-              "Decide whether an ambient voice companion should speak first right now. Strongly prefer silence. Never speak merely because a timer elapsed. Speak only when a short contribution would feel socially natural and clearly useful: continuing an unfinished topic, surfacing a relevant next step, or offering a gentle check-in after meaningful quiet. Avoid nagging, repetition, filler, or interrupting focused silence. Interpret quiet as low initiative, balanced as moderate initiative, and social as higher initiative, while still requiring a reason to talk.",
+              "Decide whether an ambient voice companion should speak first right now. Strongly prefer silence. Never speak merely because a timer elapsed. Speak only when a short contribution would feel socially natural and clearly welcome. Continue a topic only when there is a concrete unfinished thread. Choose natural_callback only when one saved detail is directly relevant and the cooldown is available. Choose emotional_followup only when one saved unresolved feeling is directly relevant, the moment is calm and unhurried, and the cooldown is available. Choose morning_hello only when it is available, this is the first meaningful local-morning interaction, and a greeting would not interrupt focused silence. Avoid nagging, repetition, filler, demonstrating memory, or interrupting concentration. Interpret quiet as low initiative, balanced as moderate initiative, and social as higher initiative, while still requiring a real reason to talk.",
             criteria: {
               stay_silent: "There is no clearly useful or natural reason to speak now.",
               check_in: "A short, warm check-in would be welcome and not intrusive.",
               continue_topic:
                 "A concise follow-up grounded in the recent conversation would add value now.",
+              natural_callback:
+                "One directly relevant remembered detail would feel like an effortless, welcome callback now.",
+              emotional_followup:
+                "A gentle, tentative follow-up to one directly relevant unresolved feeling would be welcome now.",
+              morning_hello:
+                "A brief first-interaction good-morning greeting would feel natural now.",
             },
           },
         },
@@ -112,6 +178,27 @@ export async function POST(request: Request) {
     const action = payload.answers?.timing?.choice as PresenceAction | undefined;
     if (!action || !ACTIONS.has(action)) throw new Error("Invalid Jev presence action");
 
+    if (
+      (action === "morning_hello" && !socialEligibility.morning) ||
+      (action === "natural_callback" && !socialEligibility.naturalCallback) ||
+      (action === "emotional_followup" && !socialEligibility.emotionalFollowup)
+    ) {
+      return Response.json({ action: "stay_silent", source: "guardrail" });
+    }
+
+    await recordSocialDecision(
+      auth.user.id,
+      {
+        ritual: action === "morning_hello" ? "good_morning" : "none",
+        memoryUse:
+          action === "natural_callback" || action === "emotional_followup"
+            ? action
+            : "none",
+      },
+      socialEligibility.localDate,
+      now,
+    ).catch((error) => console.error("Social state update failed", error));
+
     return Response.json({
       action,
       confidence: payload.answers?.timing?.confidence ?? null,
@@ -119,8 +206,25 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("Jev presence decision failed", error);
+    const action = fallbackAction(
+      initiative,
+      quietForMs,
+      sinceAssistantMs,
+      recentMessages,
+      socialEligibility.morning,
+    );
+    if (action === "morning_hello") {
+      await recordSocialDecision(
+        auth.user.id,
+        { ritual: "good_morning", memoryUse: "none" },
+        socialEligibility.localDate,
+        now,
+      ).catch((stateError) =>
+        console.error("Social state update failed", stateError),
+      );
+    }
     return Response.json({
-      action: fallbackAction(initiative, quietForMs, sinceAssistantMs, recentMessages),
+      action,
       source: "fallback",
     });
   }

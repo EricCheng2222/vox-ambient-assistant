@@ -1,4 +1,5 @@
 import { requireUser } from "@/lib/auth";
+import { listMemories } from "@/lib/memory-store";
 import {
   adaptiveReplyLengthChoices,
   defaultAdaptiveReplyLength,
@@ -13,6 +14,17 @@ import {
   fallbackResponsePosture,
   parseResponsePosture,
 } from "@/lib/response-posture";
+import {
+  fallbackConversationRitual,
+  parseConversationRitual,
+  parseMemoryUse,
+  type ConversationRitual,
+} from "@/lib/social-policy";
+import {
+  getSocialEligibility,
+  recordSocialDecision,
+  type SocialEligibility,
+} from "@/lib/social-state-store";
 import { getCurrentTimeContext } from "@/lib/time-context";
 
 type JevRoute =
@@ -51,6 +63,15 @@ const ROUTES = new Set<JevRoute>([
 
 const CONTEXT_MODES = new Set<ContextMode>(["continue", "fresh"]);
 const TURN_STATES = new Set<TurnState>(["wait", "complete"]);
+
+const unavailableSocialEligibility: SocialEligibility = {
+  localDate: "",
+  localHour: -1,
+  morning: false,
+  night: false,
+  naturalCallback: false,
+  emotionalFollowup: false,
+};
 
 function duration(value: unknown) {
   return typeof value === "number" && Number.isFinite(value)
@@ -229,23 +250,55 @@ export async function POST(request: Request) {
       route: "silence",
       turnState: "complete",
       contextMode: "continue",
-      responsePosture: "flow",
+      responsePosture: "acknowledge",
       responseLength: defaultAdaptiveReplyLength(replyLength),
+      memoryUse: "none",
+      ritual: "none",
       source: "fallback",
     });
   }
 
+  const now = new Date();
+  const [memories, socialEligibility] = await Promise.all([
+    listMemories(auth.user.id, 8).catch((error) => {
+      console.error("Jev routing without saved memory", error);
+      return [];
+    }),
+    getSocialEligibility(auth.user.id, now).catch((error) => {
+      console.error("Jev routing without social state", error);
+      return unavailableSocialEligibility;
+    }),
+  ]);
+
   const apiKey = process.env.TYPESAFE_API_KEY;
   if (!apiKey) {
     const route = fallbackRoute(completeText);
+    const turnState = allowWait ? fallbackTurnState(text, pendingText) : "complete";
+    const ritual: ConversationRitual =
+      turnState === "complete" &&
+      route !== "silence" &&
+      route !== "create_reminder" &&
+      route !== "create_file"
+        ? fallbackConversationRitual(completeText, socialEligibility)
+        : "none";
+    if (ritual !== "none") {
+      await recordSocialDecision(
+        auth.user.id,
+        { ritual, memoryUse: "none" },
+        socialEligibility.localDate,
+        now,
+      ).catch((error) => console.error("Social state update failed", error));
+    }
     return Response.json({
       route,
-      turnState: allowWait ? fallbackTurnState(text, pendingText) : "complete",
+      turnState,
       contextMode: pendingText
         ? "continue"
         : fallbackContextMode(text, recentMessages),
       responsePosture: fallbackResponsePosture(completeText),
       responseLength: fallbackResponseLength(completeText, replyLength, route),
+      memoryUse: "none",
+      ritual,
       source: "fallback",
     });
   }
@@ -266,6 +319,19 @@ export async function POST(request: Request) {
           voice_pause_detection_enabled: allowWait,
           delivery_timing: timingSummary,
           recent_conversation: recentMessages,
+          remembered_context: memories.map((memory) => ({
+            id: memory.id,
+            category: memory.category,
+            content: memory.content.slice(0, 280),
+            updated_at: memory.updatedAt,
+          })),
+          social_eligibility: {
+            local_hour: socialEligibility.localHour,
+            good_morning_available: socialEligibility.morning,
+            good_night_available: socialEligibility.night,
+            natural_callback_available: socialEligibility.naturalCallback,
+            emotional_followup_available: socialEligibility.emotionalFollowup,
+          },
           authoritative_clock: getCurrentTimeContext(),
           reply_length_preference: replyLength,
           user_length_signals: {
@@ -315,19 +381,52 @@ export async function POST(request: Request) {
                 "Start a fresh model context because this is clearly an independent topic and prior turns are unnecessary.",
             },
           },
-          response_posture: {
+          conversation_move: {
             type: "choice",
             instructions:
-              "Choose the social stance for the assistant's next response. Advice is not the default. Choose advise only when the person explicitly asks for advice, recommendations, steps, a plan, decision support, or a solution, or when immediate safety makes guidance necessary. Merely mentioning a goal, frustration, project, health effort, relationship, or difficult situation is not a request for advice. Choose flow for everyday conversation, stories, opinions, updates, playful remarks, and thinking aloud when the natural move is simply to engage and continue the moment. Choose reflect when the person is sharing feelings, vulnerability, uncertainty, or an experience and would benefit from being heard rather than fixed. Choose answer for a direct factual or explanatory question that should be answered without adding unsolicited coaching or next steps. Use the recent conversation to distinguish a real request from casual sharing. When uncertain between advise and another stance, choose the non-advice stance.",
+              "Choose exactly one socially natural conversational move for the assistant's next response. The route question separately handles staying silent. Advice is never the default: choose advise only when the person explicitly requests advice, recommendations, steps, planning, decision support, or a solution, or when immediate safety makes guidance necessary. Merely mentioning a goal, frustration, purchase, health effort, relationship, or difficult situation is not a request for advice. Detect repair when the person corrects the assistant, says it misunderstood, rejects its framing, or appears disengaged after a mismatch; repair briefly and change approach instead of defending the earlier answer. Use acknowledge for ordinary updates where a specific warm reaction is enough. Use listen for emotion or vulnerability that should be heard rather than fixed. Use joke only when the person's tone makes playful reciprocity safe. Use ask only when one genuine, low-pressure question is more natural than making a statement; never ask merely to keep the conversation going. Use share when a relevant observation or association would make the exchange feel reciprocal without becoming advice. Use answer for a direct factual or explanatory question. Use recent conversation to understand what went wrong or what would feel natural now.",
             criteria: {
-              flow:
-                "Continue the conversation naturally with a reaction, observation, gentle curiosity, humor, or a related thought; do not coach or prescribe.",
-              reflect:
-                "Acknowledge and reflect the person's feelings or meaning, leaving room for them to continue without trying to fix it.",
+              acknowledge:
+                "Give a natural, specific acknowledgement without turning the moment into advice or an interview.",
+              listen:
+                "Reflect the person's feeling or meaning and leave room for them to continue without trying to fix it.",
+              joke:
+                "Match a clearly playful tone with one light, safe, context-aware remark.",
+              ask:
+                "Ask one genuinely interesting, low-pressure question because curiosity is the best next move.",
+              share:
+                "Contribute one relevant observation, association, or small personal-style thought as a conversational equal.",
               answer:
                 "Answer the direct question or explain the requested information without unsolicited advice.",
               advise:
                 "Give proportionate practical advice because the person clearly requested it or safety requires it.",
+              repair:
+                "Acknowledge a mismatch or misunderstanding and respond again from the person's corrected direction without defensiveness.",
+            },
+          },
+          memory_timing: {
+            type: "choice",
+            instructions:
+              "Decide whether this exact turn is a socially good moment to reference older remembered context. Strongly prefer none. Choose natural_callback only when one saved detail is directly relevant to what the person just said and mentioning it would feel like a friend's effortless recollection rather than database retrieval. Choose emotional_followup only when a saved unresolved emotional thread is directly relevant, the present moment is calm and unhurried, and a tentative check-in would not interrupt a task, urgent request, distress, or topic change. Never select a mode whose matching social_eligibility flag is false. Do not use memory merely to demonstrate that it exists, and never stack multiple callbacks.",
+            criteria: {
+              none:
+                "Do not surface older personal context; it is irrelevant, ill-timed, too sensitive, or would feel forced.",
+              natural_callback:
+                "One directly relevant remembered detail can be woven in casually and the callback cooldown is available.",
+              emotional_followup:
+                "One directly relevant unresolved feeling can be revisited gently and the emotional follow-up cooldown is available.",
+            },
+          },
+          ritual: {
+            type: "choice",
+            instructions:
+              "Decide whether to include a tiny relationship ritual in this response. Strongly prefer none. Choose good_morning only when it is available, this appears to be the first meaningful interaction of the local morning, and a brief greeting will not delay an urgent or purely transactional request. Choose good_night only when it is available and the person explicitly says good night, says they are going to bed or sleep, or naturally closes a late conversation. Never infer bedtime from the clock alone. A ritual must be brief, natural, and used at most once per local day.",
+            criteria: {
+              none: "No morning or bedtime ritual naturally fits this turn.",
+              good_morning:
+                "A brief good-morning greeting fits this first meaningful morning interaction.",
+              good_night:
+                "A brief good-night sign-off fits because the person is explicitly winding down or going to sleep.",
             },
           },
           response_length: {
@@ -357,7 +456,9 @@ export async function POST(request: Request) {
         turn_state?: { choice?: string; confidence?: number };
         route?: { choice?: string; confidence?: number };
         context_mode?: { choice?: string; confidence?: number };
-        response_posture?: { choice?: string; confidence?: number };
+        conversation_move?: { choice?: string; confidence?: number };
+        memory_timing?: { choice?: string; confidence?: number };
+        ritual?: { choice?: string; confidence?: number };
         response_length?: { choice?: string; confidence?: number };
       };
     };
@@ -381,9 +482,39 @@ export async function POST(request: Request) {
       replyLength,
     );
     const responsePosture = parseResponsePosture(
-      payload.answers?.response_posture?.choice,
+      payload.answers?.conversation_move?.choice,
       fallbackResponsePosture(completeText),
     );
+    let memoryUse = parseMemoryUse(payload.answers?.memory_timing?.choice);
+    let ritual = parseConversationRitual(payload.answers?.ritual?.choice);
+    if (
+      (memoryUse === "natural_callback" && !socialEligibility.naturalCallback) ||
+      (memoryUse === "emotional_followup" && !socialEligibility.emotionalFollowup)
+    ) {
+      memoryUse = "none";
+    }
+    if (
+      (ritual === "good_morning" && !socialEligibility.morning) ||
+      (ritual === "good_night" && !socialEligibility.night)
+    ) {
+      ritual = "none";
+    }
+    if (
+      turnState === "wait" ||
+      choice === "silence" ||
+      choice === "create_reminder" ||
+      choice === "create_file"
+    ) {
+      memoryUse = "none";
+      ritual = "none";
+    }
+
+    await recordSocialDecision(
+      auth.user.id,
+      { ritual, memoryUse },
+      socialEligibility.localDate,
+      now,
+    ).catch((error) => console.error("Social state update failed", error));
 
     return Response.json({
       route: choice,
@@ -394,7 +525,11 @@ export async function POST(request: Request) {
       contextConfidence: payload.answers?.context_mode?.confidence ?? null,
       responsePosture,
       responsePostureConfidence:
-        payload.answers?.response_posture?.confidence ?? null,
+        payload.answers?.conversation_move?.confidence ?? null,
+      memoryUse,
+      memoryUseConfidence: payload.answers?.memory_timing?.confidence ?? null,
+      ritual,
+      ritualConfidence: payload.answers?.ritual?.confidence ?? null,
       responseLength,
       responseLengthConfidence:
         payload.answers?.response_length?.confidence ?? null,
@@ -403,14 +538,32 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Jev routing failed", error);
     const route = fallbackRoute(completeText);
+    const turnState = allowWait ? fallbackTurnState(text, pendingText) : "complete";
+    const ritual: ConversationRitual =
+      turnState === "complete" &&
+      route !== "silence" &&
+      route !== "create_reminder" &&
+      route !== "create_file"
+        ? fallbackConversationRitual(completeText, socialEligibility)
+        : "none";
+    await recordSocialDecision(
+      auth.user.id,
+      { ritual, memoryUse: "none" },
+      socialEligibility.localDate,
+      now,
+    ).catch((stateError) =>
+      console.error("Social state update failed", stateError),
+    );
     return Response.json({
       route,
-      turnState: allowWait ? fallbackTurnState(text, pendingText) : "complete",
+      turnState,
       contextMode: pendingText
         ? "continue"
         : fallbackContextMode(text, recentMessages),
       responsePosture: fallbackResponsePosture(completeText),
       responseLength: fallbackResponseLength(completeText, replyLength, route),
+      memoryUse: "none",
+      ritual,
       source: "fallback",
     });
   }

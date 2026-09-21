@@ -109,6 +109,15 @@ export const conversationThreads = sqliteTable("conversation_threads", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const socialInteractionState = sqliteTable("social_interaction_state", {
+  ownerId: text("owner_id").primaryKey(),
+  lastMorningDate: text("last_morning_date"),
+  lastNightDate: text("last_night_date"),
+  lastNaturalCallbackAt: text("last_natural_callback_at"),
+  lastEmotionalFollowupAt: text("last_emotional_followup_at"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const conversationMessages = sqliteTable(
   "conversation_messages",
   {

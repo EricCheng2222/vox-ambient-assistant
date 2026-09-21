@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type {
+  CSSProperties,
+  FormEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   ArrowUp,
   AudioLines,
@@ -63,7 +68,6 @@ import {
 } from "@/lib/memory";
 import { formatFileSize, type AgentFile } from "@/lib/agent-file";
 import { formatReminderTime, type Reminder } from "@/lib/reminder";
-import { getCurrentTimeContext } from "@/lib/time-context";
 import {
   parseRealtimeVoice,
   realtimeVoiceOptions,
@@ -87,6 +91,14 @@ import {
   responsePostureInstruction,
   type ResponsePosture,
 } from "@/lib/response-posture";
+import {
+  memoryUseInstruction,
+  parseConversationRitual,
+  parseMemoryUse,
+  ritualInstruction,
+  type ConversationRitual,
+  type MemoryUse,
+} from "@/lib/social-policy";
 import {
   defaultUserPreferences,
   parseInitiative,
@@ -123,7 +135,13 @@ type JevRoute =
   | "create_reminder"
   | "create_file";
 
-type PresenceAction = "stay_silent" | "check_in" | "continue_topic";
+type PresenceAction =
+  | "stay_silent"
+  | "check_in"
+  | "continue_topic"
+  | "natural_callback"
+  | "emotional_followup"
+  | "morning_hello";
 type AuthState = "checking" | "authenticated" | "locked";
 type InviteStatus = {
   generated: number;
@@ -155,6 +173,24 @@ type LiveSpeechTiming = {
   silenceBeforeMs: number | null;
   estimatedTrailingSoundMs?: number;
 };
+
+const DEFAULT_CONVERSATION_WIDTH = 420;
+const MIN_CONVERSATION_WIDTH = 320;
+const MAX_CONVERSATION_WIDTH = 720;
+const MIN_VOICE_CONSOLE_WIDTH = 520;
+const PANEL_DIVIDER_WIDTH = 10;
+const CONVERSATION_WIDTH_STORAGE_KEY = "vox-conversation-panel-width";
+
+function clampConversationWidth(value: number, containerWidth: number) {
+  const availableMaximum = Math.max(
+    MIN_CONVERSATION_WIDTH,
+    containerWidth - MIN_VOICE_CONSOLE_WIDTH - PANEL_DIVIDER_WIDTH,
+  );
+  const maximum = Math.min(MAX_CONVERSATION_WIDTH, availableMaximum);
+  return Math.round(
+    Math.max(MIN_CONVERSATION_WIDTH, Math.min(value, maximum)),
+  );
+}
 
 type EchoCandidate = {
   itemId?: string;
@@ -478,7 +514,12 @@ export default function Home() {
   const [inviteLoading, setInviteLoading] = useState(true);
   const [inviteCreating, setInviteCreating] = useState(false);
   const [inviteError, setInviteError] = useState("");
+  const [conversationWidth, setConversationWidth] = useState(
+    DEFAULT_CONVERSATION_WIDTH,
+  );
 
+  const interfaceGridRef = useRef<HTMLElement | null>(null);
+  const conversationWidthRef = useRef(DEFAULT_CONVERSATION_WIDTH);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -548,6 +589,39 @@ export default function Home() {
       behavior: "smooth",
     });
   }, [messages, thinkingCue]);
+
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+
+    const grid = interfaceGridRef.current;
+    if (!grid) return;
+
+    const storedWidth = Number(
+      window.localStorage.getItem(CONVERSATION_WIDTH_STORAGE_KEY),
+    );
+    const nextWidth = clampConversationWidth(
+      Number.isFinite(storedWidth) && storedWidth > 0
+        ? storedWidth
+        : DEFAULT_CONVERSATION_WIDTH,
+      grid.clientWidth,
+    );
+    conversationWidthRef.current = nextWidth;
+    setConversationWidth(nextWidth);
+
+    const keepWidthInBounds = () => {
+      const currentGrid = interfaceGridRef.current;
+      if (!currentGrid || window.innerWidth < 1024) return;
+      const bounded = clampConversationWidth(
+        conversationWidthRef.current,
+        currentGrid.clientWidth,
+      );
+      conversationWidthRef.current = bounded;
+      setConversationWidth(bounded);
+    };
+
+    window.addEventListener("resize", keepWidthInBounds);
+    return () => window.removeEventListener("resize", keepWidthInBounds);
+  }, [authState]);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -1560,11 +1634,33 @@ export default function Home() {
       const languageInstruction = responseLanguageInstruction(
         selectResponseLanguage("", messagesRef.current),
       );
-      const instructions = `${languageInstruction}\n\n${
-        decision.action === "continue_topic"
-          ? "Speak first with one brief, genuinely useful follow-up based on the recent conversation. Be natural and specific. Do not mention silence, timers, proactive mode, routing, or Jev."
-          : "Initiate one brief, warm, context-aware check-in. Avoid saying 'are you still there' unless that is genuinely appropriate. Do not mention silence, timers, proactive mode, routing, or Jev."
-      }\n\n${getCurrentTimeContext()}`;
+      const proactiveInstruction: Record<Exclude<PresenceAction, "stay_silent">, string> = {
+        check_in:
+          "Initiate one brief, warm, context-aware check-in. Avoid saying 'are you still there' unless that is genuinely appropriate.",
+        continue_topic:
+          "Speak first with one brief, genuinely useful follow-up based on the recent conversation. Be natural and specific.",
+        natural_callback:
+          "Speak first with one brief, natural callback to exactly one directly relevant remembered detail. It should feel like effortless recollection, not a memory demonstration.",
+        emotional_followup:
+          "Speak first with one gentle, tentative follow-up to exactly one directly relevant unresolved emotional thread. Keep it low-pressure and easy to decline.",
+        morning_hello:
+          "Offer one brief, natural good-morning greeting for the first meaningful interaction of the day. Do not turn it into a productivity prompt or a list of plans.",
+      };
+      const memoryUse: MemoryUse =
+        decision.action === "natural_callback" ||
+        decision.action === "emotional_followup"
+          ? decision.action
+          : "none";
+      const ritual: ConversationRitual =
+        decision.action === "morning_hello" ? "good_morning" : "none";
+      const instructions = [
+        buildVoiceInstructions(memoriesRef.current),
+        languageInstruction,
+        proactiveInstruction[decision.action],
+        memoryUseInstruction(memoryUse),
+        ritualInstruction(ritual),
+        "Do not mention silence, timers, proactive mode, routing, model names, or Jev.",
+      ].join("\n\n");
 
       lastAssistantAtRef.current = Date.now();
       proactiveCountRef.current += 1;
@@ -1724,6 +1820,8 @@ export default function Home() {
         turnState?: TurnState;
         responseLength?: AdaptiveReplyLength;
         responsePosture?: ResponsePosture;
+        memoryUse?: MemoryUse;
+        ritual?: ConversationRitual;
       };
       if (!isCurrentTurn()) return;
       const selectedRoute = route.route ?? "realtime";
@@ -1735,8 +1833,10 @@ export default function Home() {
       );
       const responsePosture = parseResponsePosture(
         route.responsePosture,
-        "flow",
+        "acknowledge",
       );
+      const memoryUse = parseMemoryUse(route.memoryUse);
+      const ritual = parseConversationRitual(route.ritual);
       if (turnState === "wait") {
         pendingUtteranceRef.current = {
           text: completeText,
@@ -1818,6 +1918,8 @@ export default function Home() {
               replyLength: replyLengthRef.current,
               responseLength,
               responsePosture,
+              memoryUse,
+              ritual,
             }),
           }),
         );
@@ -1844,6 +1946,8 @@ export default function Home() {
               replyLength: replyLengthRef.current,
               responseLength,
               responsePosture,
+              memoryUse,
+              ritual,
             }),
           }),
         );
@@ -1871,6 +1975,8 @@ export default function Home() {
               responseLength,
             ),
             responsePostureInstruction(responsePosture),
+            memoryUseInstruction(memoryUse),
+            ritualInstruction(ritual),
             carryover,
           ]
             .filter(Boolean)
@@ -1889,6 +1995,75 @@ export default function Home() {
       sendTurnResponse("final_error", safeFailure, true);
       setConnectionState("thinking");
     }
+  }
+
+  function saveConversationWidth(width: number) {
+    conversationWidthRef.current = width;
+    setConversationWidth(width);
+    window.localStorage.setItem(
+      CONVERSATION_WIDTH_STORAGE_KEY,
+      String(width),
+    );
+  }
+
+  function beginConversationResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const grid = interfaceGridRef.current;
+    if (!grid || window.innerWidth < 1024) return;
+
+    event.preventDefault();
+    event.currentTarget.focus();
+    document.documentElement.classList.add("is-resizing-conversation");
+    const gridBounds = grid.getBoundingClientRect();
+
+    const resize = (pointerEvent: PointerEvent) => {
+      const nextWidth = clampConversationWidth(
+        gridBounds.right - pointerEvent.clientX,
+        gridBounds.width,
+      );
+      conversationWidthRef.current = nextWidth;
+      setConversationWidth(nextWidth);
+      window.localStorage.setItem(
+        CONVERSATION_WIDTH_STORAGE_KEY,
+        String(nextWidth),
+      );
+    };
+
+    const finish = () => {
+      document.documentElement.classList.remove("is-resizing-conversation");
+      window.removeEventListener("pointermove", resize);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      window.removeEventListener("blur", finish);
+      window.localStorage.setItem(
+        CONVERSATION_WIDTH_STORAGE_KEY,
+        String(conversationWidthRef.current),
+      );
+    };
+
+    window.addEventListener("pointermove", resize);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+    window.addEventListener("blur", finish);
+  }
+
+  function resizeConversationWithKeyboard(
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) {
+    const grid = interfaceGridRef.current;
+    if (!grid || window.innerWidth < 1024) return;
+    const step = event.shiftKey ? 64 : 24;
+    let requestedWidth = conversationWidthRef.current;
+
+    if (event.key === "ArrowLeft") requestedWidth += step;
+    else if (event.key === "ArrowRight") requestedWidth -= step;
+    else if (event.key === "Home") requestedWidth = MAX_CONVERSATION_WIDTH;
+    else if (event.key === "End") requestedWidth = MIN_CONVERSATION_WIDTH;
+    else return;
+
+    event.preventDefault();
+    saveConversationWidth(
+      clampConversationWidth(requestedWidth, grid.clientWidth),
+    );
   }
 
   function interruptActiveVoiceResponse() {
@@ -2676,7 +2851,15 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="interface-grid relative z-10 mx-auto grid min-h-[calc(100dvh-5rem)] max-w-[1440px] grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px]">
+      <section
+        ref={interfaceGridRef}
+        className="interface-grid relative z-10 mx-auto grid min-h-[calc(100dvh-5rem)] max-w-[1440px] grid-cols-1"
+        style={
+          {
+            "--conversation-width": `${conversationWidth}px`,
+          } as CSSProperties
+        }
+      >
         <div className="voice-console flex min-h-0 flex-col items-center justify-between px-4 py-7 sm:min-h-[620px] sm:px-10 sm:py-12 lg:min-h-0 lg:px-14 lg:py-16">
           <div className="hero-copy max-w-2xl self-start">
             {theme === "holographic" ? (
@@ -2922,7 +3105,33 @@ export default function Home() {
           </div>
         </div>
 
-        <aside className="conversation-console transcript-panel flex flex-col border-t border-white/8 p-4 sm:min-h-[560px] sm:p-7 lg:min-h-0 lg:border-l lg:border-t-0 lg:p-8">
+        <div
+          className="panel-resize-handle"
+          role="separator"
+          aria-label="Resize conversation panel"
+          aria-orientation="vertical"
+          aria-valuemin={MIN_CONVERSATION_WIDTH}
+          aria-valuemax={MAX_CONVERSATION_WIDTH}
+          aria-valuenow={conversationWidth}
+          aria-valuetext={`${conversationWidth} pixels wide`}
+          tabIndex={0}
+          onPointerDown={beginConversationResize}
+          onKeyDown={resizeConversationWithKeyboard}
+          onDoubleClick={() => {
+            const grid = interfaceGridRef.current;
+            if (!grid) return;
+            saveConversationWidth(
+              clampConversationWidth(
+                DEFAULT_CONVERSATION_WIDTH,
+                grid.clientWidth,
+              ),
+            );
+          }}
+        >
+          <span aria-hidden="true" />
+        </div>
+
+        <aside className="conversation-console transcript-panel flex flex-col border-t border-white/8 p-4 sm:min-h-[560px] sm:p-7 lg:min-h-0 lg:border-t-0 lg:p-8">
           <div className="transcript-header flex items-start justify-between gap-3 sm:gap-5">
             <div>
               <p className="font-display text-xl font-medium tracking-tight">

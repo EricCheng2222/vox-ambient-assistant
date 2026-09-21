@@ -18,6 +18,12 @@ import {
   parseResponsePosture,
   responsePostureInstruction,
 } from "@/lib/response-posture";
+import {
+  memoryUseInstruction,
+  parseConversationRitual,
+  parseMemoryUse,
+  ritualInstruction,
+} from "@/lib/social-policy";
 
 type ReasonRoute = "balanced_reasoning" | "expert_reasoning" | "live_web";
 
@@ -49,12 +55,16 @@ export async function POST(request: Request) {
     replyLength?: unknown;
     responseLength?: unknown;
     responsePosture?: unknown;
+    memoryUse?: unknown;
+    ritual?: unknown;
   };
   const text = body.text?.trim().slice(0, 12000) ?? "";
   const route = body.route;
   const replyLength = parseReplyLength(body.replyLength);
   const responseLength = parseAdaptiveReplyLength(body.responseLength, replyLength);
   const responsePosture = parseResponsePosture(body.responsePosture, "answer");
+  const memoryUse = parseMemoryUse(body.memoryUse);
+  const ritual = parseConversationRitual(body.ritual);
   if (!text || !route) {
     return Response.json({ error: "A prompt and route are required." }, { status: 400 });
   }
@@ -88,6 +98,8 @@ export async function POST(request: Request) {
         timeContext +
         memoryContext +
         `\n\n${responsePostureInstruction(responsePosture)}` +
+        `\n\n${memoryUseInstruction(memoryUse)}` +
+        `\n\n${ritualInstruction(ritual)}` +
         `\n\n${replyLengthInstruction(replyLength)}` +
         `\n\n${adaptiveReplyLengthInstruction(replyLength, responseLength)}`,
       reasoning: { effort: isExpert ? "high" : "low" },

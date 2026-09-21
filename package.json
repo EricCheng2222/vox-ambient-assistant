@@ -16,6 +16,7 @@
     "test:reply-length": "node --experimental-strip-types scripts/test-reply-length.mjs",
     "test:response-language": "node --experimental-strip-types scripts/test-response-language.mjs",
     "test:response-posture": "node --experimental-strip-types scripts/test-response-posture.mjs",
+    "test:social-policy": "node --experimental-strip-types scripts/test-social-policy.mjs",
     "test:visual-theme": "node --experimental-strip-types scripts/test-visual-theme.mjs",
     "db:generate": "drizzle-kit generate",
     "deploy:prepare": "node scripts/prepare-cloudflare-deploy.mjs",

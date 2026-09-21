@@ -739,9 +739,6 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
 }
 
 @media (min-width: 1024px) {
-  .vox-shell[data-vox-theme="holographic"] .interface-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(420px, 33vw);
-  }
   .vox-shell[data-vox-theme="holographic"] .voice-console {
     padding: 2.2rem clamp(2.5rem, 5vw, 6rem) 1.5rem;
   }
@@ -813,6 +810,14 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
   box-shadow: 0 0 0 4px rgb(244 255 116 / 9%);
 }
 .idle-dot { background: rgb(255 255 255 / 24%); }
+.panel-resize-handle {
+  display: none;
+}
+.is-resizing-conversation,
+.is-resizing-conversation * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
 
 .eyebrow {
   display: inline-flex;
@@ -994,6 +999,76 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
   50% {
     transform: scale(1.08);
     filter: brightness(1.2);
+  }
+}
+@media (min-width: 1024px) {
+  .interface-grid {
+    grid-template-columns:
+      minmax(0, 1fr)
+      10px
+      minmax(320px, var(--conversation-width, 420px));
+  }
+  .panel-resize-handle {
+    position: relative;
+    z-index: 8;
+    display: grid;
+    min-height: 100%;
+    place-items: center;
+    cursor: col-resize;
+    touch-action: none;
+    outline: none;
+  }
+  .panel-resize-handle::before {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: rgb(255 255 255 / 9%);
+    content: "";
+    transition: width 160ms ease, background 160ms ease, box-shadow 160ms ease;
+    transform: translateX(-50%);
+  }
+  .panel-resize-handle span {
+    position: relative;
+    width: 3px;
+    height: 3.25rem;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 18%);
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 18%);
+    transition: height 160ms ease, background 160ms ease, box-shadow 160ms ease;
+  }
+  .panel-resize-handle:hover::before,
+  .panel-resize-handle:focus-visible::before,
+  .is-resizing-conversation .panel-resize-handle::before {
+    width: 2px;
+    background: rgb(190 174 255 / 56%);
+    box-shadow: 0 0 18px rgb(190 174 255 / 30%);
+  }
+  .panel-resize-handle:hover span,
+  .panel-resize-handle:focus-visible span,
+  .is-resizing-conversation .panel-resize-handle span {
+    height: 4.5rem;
+    background: #c9bcff;
+    box-shadow: 0 0 16px rgb(190 174 255 / 38%);
+  }
+  .vox-shell[data-vox-theme="holographic"] .panel-resize-handle::before {
+    background: rgb(120 235 255 / 15%);
+  }
+  .vox-shell[data-vox-theme="holographic"] .panel-resize-handle span {
+    background: rgb(120 235 255 / 30%);
+  }
+  .vox-shell[data-vox-theme="holographic"] .panel-resize-handle:hover::before,
+  .vox-shell[data-vox-theme="holographic"] .panel-resize-handle:focus-visible::before,
+  .is-resizing-conversation .vox-shell[data-vox-theme="holographic"] .panel-resize-handle::before {
+    background: rgb(120 235 255 / 70%);
+    box-shadow: 0 0 20px rgb(120 235 255 / 32%);
+  }
+  .vox-shell[data-vox-theme="holographic"] .panel-resize-handle:hover span,
+  .vox-shell[data-vox-theme="holographic"] .panel-resize-handle:focus-visible span,
+  .is-resizing-conversation .vox-shell[data-vox-theme="holographic"] .panel-resize-handle span {
+    background: #9bf2ff;
+    box-shadow: 0 0 18px rgb(120 235 255 / 42%);
   }
 }
 @media (max-width: 1023px) {
