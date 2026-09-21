@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import type { MemoryCategory } from "@/lib/memory";
+import { summarizeMemory } from "@/lib/memory-summary";
 import {
   createMemory,
   deleteMemory,
@@ -59,8 +60,9 @@ export async function POST(request: Request) {
     return Response.json({ action: "ignore", source: "safety" });
   }
 
-  const apiKey = process.env.TYPESAFE_API_KEY;
-  if (!apiKey) {
+  const jevApiKey = process.env.TYPESAFE_API_KEY;
+  const openAiApiKey = process.env.OPENAI_API_KEY;
+  if (!jevApiKey || !openAiApiKey) {
     return Response.json({ action: "ignore", source: "unavailable" });
   }
 
@@ -86,7 +88,7 @@ export async function POST(request: Request) {
     const jevResponse = await fetch("https://api.typesafe.ai/v1/systemone", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${jevApiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -104,7 +106,7 @@ export async function POST(request: Request) {
           memory_action: {
             type: "choice",
             instructions:
-              "Decide whether an ambient personal assistant should remember this user utterance for future sessions. Store only durable, user-specific information: stable preferences, identity/background, ongoing goals, important relationships, lasting constraints, or continuing context. Ignore requests and questions, momentary plans, casual remarks, assistant-directed commands, uncertain inferences, and details that will probably expire soon. Never store credentials, authentication codes, financial account data, government identifiers, or other secrets. Prefer updating one existing memory when the utterance corrects, replaces, or refines it; otherwise create at most one new memory. The stored content will remain the user's exact statement, so only choose create or update when that statement is self-contained enough to be useful later.",
+              "Decide whether an ambient personal assistant should remember this user utterance for future sessions. Store only durable, user-specific information: stable preferences, identity/background, ongoing goals, important relationships, lasting constraints, or continuing context. Ignore requests and questions, momentary plans, casual remarks, assistant-directed commands, uncertain inferences, and details that will probably expire soon. Never store credentials, authentication codes, financial account data, government identifiers, or other secrets. Prefer updating one existing memory when the utterance corrects, replaces, or refines it; otherwise create at most one new memory. A separate summarization step will turn the selected information into a short standalone fact, so judge the meaning rather than the utterance's wording.",
             criteria,
           },
         },
@@ -128,7 +130,14 @@ export async function POST(request: Request) {
       const index = Number(choice.slice("update_".length));
       const target = Number.isInteger(index) ? existing[index] : undefined;
       if (!target) throw new Error("Jev selected an invalid memory target");
-      const memory = await updateMemory(auth.user.id, target.id, text);
+      const summary = await summarizeMemory({
+        apiKey: openAiApiKey,
+        category: target.category,
+        utterance: text,
+        previousContent: target.content,
+      });
+      if (looksLikeSecret(summary)) throw new Error("Unsafe memory summary");
+      const memory = await updateMemory(auth.user.id, target.id, summary);
       if (!memory) throw new Error("The selected memory no longer exists");
       return Response.json({ action: "update", memory, confidence, source: "jev" });
     }
@@ -136,7 +145,13 @@ export async function POST(request: Request) {
     if (choice.startsWith("create_")) {
       const category = choice.slice("create_".length) as MemoryCategory;
       if (!CATEGORIES.includes(category)) throw new Error("Invalid memory category");
-      const memory = await createMemory(auth.user.id, { category, content: text });
+      const summary = await summarizeMemory({
+        apiKey: openAiApiKey,
+        category,
+        utterance: text,
+      });
+      if (looksLikeSecret(summary)) throw new Error("Unsafe memory summary");
+      const memory = await createMemory(auth.user.id, { category, content: summary });
       return Response.json(
         { action: "create", memory, confidence, source: "jev" },
         { status: 201 },
@@ -145,7 +160,7 @@ export async function POST(request: Request) {
 
     throw new Error("Jev returned an invalid memory action");
   } catch (error) {
-    console.error("Jev memory decision failed", error);
+    console.error("Memory decision or summarization failed", error);
     return Response.json({ action: "ignore", source: "fallback" });
   }
 }
