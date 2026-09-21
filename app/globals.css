@@ -1001,6 +1001,44 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
     filter: brightness(1.2);
   }
 }
+@keyframes camera-capture-flash {
+  0% { opacity: 0; }
+  9% { opacity: 0.9; }
+  32% { opacity: 0.18; }
+  100% { opacity: 0; }
+}
+@keyframes camera-capture-frame {
+  0% { opacity: 0; transform: scale(0.9); }
+  18% { opacity: 1; transform: scale(1); }
+  72% { opacity: 0.84; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.035); }
+}
+@keyframes camera-capture-badge {
+  0% { opacity: 0; transform: translate(-50%, -42%) scale(0.88); }
+  18% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  76% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -58%) scale(0.96); }
+}
+.camera-preview {
+  --camera-capture-accent: #f4ff74;
+}
+.vox-shell[data-vox-theme="holographic"] .camera-preview {
+  --camera-capture-accent: #78ebff;
+}
+.camera-capture-flash {
+  animation: camera-capture-flash 680ms ease-out both;
+}
+.camera-capture-frame {
+  border-color: var(--camera-capture-accent);
+  box-shadow:
+    inset 0 0 18px color-mix(in srgb, var(--camera-capture-accent) 34%, transparent),
+    0 0 20px color-mix(in srgb, var(--camera-capture-accent) 48%, transparent);
+  animation: camera-capture-frame 1.65s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.camera-capture-badge {
+  color: var(--camera-capture-accent);
+  animation: camera-capture-badge 2.05s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
 @media (min-width: 1024px) {
   .interface-grid {
     grid-template-columns:

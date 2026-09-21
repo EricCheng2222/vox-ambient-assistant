@@ -16,6 +16,14 @@ assert.equal(fallbackVisionNeed("你幫我看一下這是什麼"), "inspect_low"
 assert.equal(fallbackVisionNeed("你看上面的小字寫什麼"), "inspect_high");
 assert.equal(fallbackVisionNeed("I bought a new camera"), "none");
 assert.match(visualTurnInstruction("attached", "auto"), /one requested still frame/i);
+assert.match(
+  visualTurnInstruction("attached", "auto"),
+  /do not routinely mention image quality/i,
+);
+assert.match(
+  visualTurnInstruction("attached", "auto"),
+  /only when it genuinely prevents a reasonably confident answer/i,
+);
 assert.match(visualTurnInstruction("unavailable"), /camera is off/i);
 assert.match(visualTurnInstruction("blocked"), /temporary usage limit/i);
 
@@ -25,7 +33,12 @@ const pageSource = await readFile(
 );
 assert.match(pageSource, /type: "input_image"/);
 assert.match(pageSource, /need === "inspect_high" \? "high" : "auto"/);
-assert.match(pageSource, /Local preview · sent only when asked/);
+assert.match(pageSource, /Local preview ·/);
+assert.match(pageSource, /no frames sent/i);
+assert.match(pageSource, /announceFrameCapture\(detail\)/);
+assert.match(pageSource, /Frame sent/);
+assert.match(pageSource, /aria-live="assertive"/);
+assert.match(pageSource, /sessionFramesSent/);
 assert.match(pageSource, /conversation\.item\.delete/);
 assert.doesNotMatch(pageSource, /visionSampling|Every 60 sec|Every second/);
 

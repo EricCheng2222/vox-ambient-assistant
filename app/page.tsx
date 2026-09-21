@@ -527,6 +527,11 @@ export default function Home() {
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [cameraError, setCameraError] = useState("");
+  const [sessionFramesSent, setSessionFramesSent] = useState(0);
+  const [frameCaptureNotice, setFrameCaptureNotice] = useState<{
+    id: number;
+    detail: "auto" | "high";
+  } | null>(null);
 
   const interfaceGridRef = useRef<HTMLElement | null>(null);
   const conversationWidthRef = useRef(DEFAULT_CONVERSATION_WIDTH);
@@ -538,6 +543,7 @@ export default function Home() {
   const cameraCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const cameraActiveRef = useRef(false);
   const cameraStartingRef = useRef(false);
+  const frameCaptureNoticeTimerRef = useRef<number | null>(null);
   const visionItemByTurnRef = useRef(new Map<number, string>());
   const visionItemIdsRef = useRef(new Set<string>());
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -1097,6 +1103,19 @@ export default function Home() {
     return canvas.toDataURL("image/jpeg", detail === "high" ? 0.66 : 0.5);
   }
 
+  function announceFrameCapture(detail: "auto" | "high") {
+    const id = Date.now();
+    setSessionFramesSent((count) => count + 1);
+    setFrameCaptureNotice({ id, detail });
+    if (frameCaptureNoticeTimerRef.current !== null) {
+      window.clearTimeout(frameCaptureNoticeTimerRef.current);
+    }
+    frameCaptureNoticeTimerRef.current = window.setTimeout(() => {
+      setFrameCaptureNotice((notice) => (notice?.id === id ? null : notice));
+      frameCaptureNoticeTimerRef.current = null;
+    }, 2_200);
+  }
+
   function releaseVisionItem(turnId: number) {
     const itemId = visionItemByTurnRef.current.get(turnId);
     if (!itemId) return;
@@ -1135,8 +1154,6 @@ export default function Home() {
     }
 
     const itemId = `item_${crypto.randomUUID().replaceAll("-", "")}`;
-    visionItemByTurnRef.current.set(turnId, itemId);
-    visionItemIdsRef.current.add(itemId);
     channel.send(
       JSON.stringify({
         type: "conversation.item.create",
@@ -1148,6 +1165,9 @@ export default function Home() {
         },
       }),
     );
+    visionItemByTurnRef.current.set(turnId, itemId);
+    visionItemIdsRef.current.add(itemId);
+    announceFrameCapture(detail);
     return visualTurnInstruction("attached", detail);
   }
 
@@ -2556,6 +2576,8 @@ export default function Home() {
     if (connectionState === "connecting" || connected) return;
     setConnectionState("connecting");
     setErrorMessage("");
+    setSessionFramesSent(0);
+    setFrameCaptureNotice(null);
 
     window.__voxActiveVoiceSession?.close();
     delete window.__voxActiveVoiceSession;
@@ -2681,6 +2703,11 @@ export default function Home() {
       window.clearTimeout(bargeInTimerRef.current);
       bargeInTimerRef.current = null;
     }
+    if (frameCaptureNoticeTimerRef.current !== null) {
+      window.clearTimeout(frameCaptureNoticeTimerRef.current);
+      frameCaptureNoticeTimerRef.current = null;
+    }
+    setFrameCaptureNotice(null);
     assistantSpeakingSinceRef.current = null;
     assistantEchoFloorRef.current = 0;
     stopSpeechTimingMonitor();
@@ -3133,9 +3160,9 @@ export default function Home() {
 
             <Waveform live={connected && !muted} analyserRef={inputAnalyserRef} />
 
-            <div className="mt-5 flex min-h-[5.75rem] items-center justify-center">
+            <div className="mt-5 flex min-h-[5.75rem] flex-col items-center justify-center">
               <div
-                className="relative aspect-video w-40 overflow-hidden rounded-2xl border border-white/12 bg-black/25 shadow-[0_12px_38px_rgba(0,0,0,0.22)]"
+                className="camera-preview relative aspect-video w-40 overflow-hidden rounded-2xl border border-white/12 bg-black/25 shadow-[0_12px_38px_rgba(0,0,0,0.22)]"
                 role="img"
                 aria-label={
                   cameraActive
@@ -3167,7 +3194,33 @@ export default function Home() {
                     Local preview · sent only when asked
                   </div>
                 )}
+                {frameCaptureNotice && cameraActive && (
+                  <div
+                    key={frameCaptureNotice.id}
+                    className="camera-capture-effect pointer-events-none absolute inset-0 z-20"
+                    aria-hidden="true"
+                  >
+                    <div className="camera-capture-flash absolute inset-0 bg-white" />
+                    <div className="camera-capture-frame absolute inset-1 rounded-xl border-2" />
+                    <div className="camera-capture-badge absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 whitespace-nowrap rounded-full bg-black/78 px-3 py-1.5 text-[0.64rem] font-semibold uppercase tracking-[0.12em] text-white shadow-xl backdrop-blur-md">
+                      <CheckCircle2 className="size-3.5" />
+                      Frame sent
+                    </div>
+                  </div>
+                )}
               </div>
+              <p className="sr-only" role="status" aria-live="assertive" aria-atomic="true">
+                {frameCaptureNotice
+                  ? `One camera frame was captured and sent to Vox using ${frameCaptureNotice.detail} detail.`
+                  : ""}
+              </p>
+              <p className="mt-1.5 text-[0.62rem] font-medium uppercase tracking-[0.1em] text-white/42">
+                {!connected
+                  ? "Frames are sent only when you ask"
+                  : sessionFramesSent === 0
+                    ? "No frames sent this session"
+                    : `${sessionFramesSent} frame${sessionFramesSent === 1 ? "" : "s"} sent this session`}
+              </p>
             </div>
             {cameraError && connected && !cameraActive && (
               <p className="mt-2 max-w-xs text-center text-xs leading-5 text-white/34">
