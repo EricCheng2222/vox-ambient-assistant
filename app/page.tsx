@@ -91,11 +91,18 @@ type JevRoute =
 type Initiative = "off" | "quiet" | "balanced" | "social";
 type PresenceAction = "stay_silent" | "check_in" | "continue_topic";
 type AuthState = "checking" | "authenticated" | "locked";
+type ContextMode = "continue" | "fresh";
 
 type RealtimeEvent = {
   type?: string;
   transcript?: string;
   delta?: string;
+  item_id?: string;
+  item?: {
+    id?: string;
+    type?: string;
+    role?: string;
+  };
   error?: { message?: string };
   response?: {
     metadata?: Record<string, string>;
@@ -226,6 +233,7 @@ export default function Home() {
   const [muted, setMuted] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [lastRoute, setLastRoute] = useState<JevRoute | null>(null);
+  const [lastContextMode, setLastContextMode] = useState<ContextMode | null>(null);
   const [initiative, setInitiative] = useState<Initiative>("balanced");
   const [memories, setMemories] = useState<MemoryRecord[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(true);
@@ -256,6 +264,7 @@ export default function Home() {
   const memoriesRef = useRef<MemoryRecord[]>([]);
   const routeTurnRef = useRef(0);
   const frontVoiceWaitersRef = useRef(new Map<string, () => void>());
+  const conversationItemsRef = useRef<Array<{ id: string; role: string }>>([]);
 
   const connected = [
     "listening",
@@ -397,6 +406,38 @@ export default function Home() {
         }),
       );
     }
+  }
+
+  function startFreshRealtimeContext(
+    currentItemId?: string,
+    previousUserItemId?: string,
+  ) {
+    const channel = channelRef.current;
+    if (!channel || channel.readyState !== "open") return;
+
+    const latestUserId = [...conversationItemsRef.current]
+      .reverse()
+      .find(
+        (item) => item.role === "user" && item.id !== previousUserItemId,
+      )?.id;
+    const keepId = currentItemId || latestUserId;
+    const staleItems = conversationItemsRef.current.filter(
+      (item) => item.id !== keepId,
+    );
+
+    for (const item of staleItems) {
+      channel.send(
+        JSON.stringify({
+          type: "conversation.item.delete",
+          item_id: item.id,
+        }),
+      );
+    }
+
+    conversationItemsRef.current = conversationItemsRef.current.filter(
+      (item) => item.id === keepId,
+    );
+    assistantDraftRef.current = "";
   }
 
   async function loadMemories() {
@@ -730,7 +771,11 @@ export default function Home() {
     }
   }
 
-  async function routeAndRespond(text: string) {
+  async function routeAndRespond(
+    text: string,
+    currentItemId?: string,
+    previousUserItemId?: string,
+  ) {
     const channel = channelRef.current;
     if (!channel || channel.readyState !== "open") return;
     const openChannel = channel;
@@ -788,18 +833,31 @@ export default function Home() {
       const routeResponse = await fetch("/api/jev-route", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({
+          text,
+          recentMessages: messagesRef.current.slice(-6).map(({ role, text }) => ({
+            role,
+            text,
+          })),
+        }),
       });
       const route = (await routeResponse.json()) as {
         route?: JevRoute;
+        contextMode?: ContextMode;
       };
       if (!isCurrentTurn()) return;
       const selectedRoute = route.route ?? "realtime";
+      const contextMode = route.contextMode ?? "continue";
       setLastRoute(selectedRoute);
+      setLastContextMode(contextMode);
 
       if (selectedRoute === "silence") {
         setConnectionState("listening");
         return;
+      }
+
+      if (contextMode === "fresh") {
+        startFreshRealtimeContext(currentItemId, previousUserItemId);
       }
 
       if (selectedRoute === "create_reminder") {
@@ -921,12 +979,30 @@ export default function Home() {
       case "input_audio_buffer.speech_stopped":
         setConnectionState("thinking");
         break;
+      case "conversation.item.added":
+        if (
+          event.item?.id &&
+          event.item.type === "message" &&
+          (event.item.role === "user" || event.item.role === "assistant") &&
+          !conversationItemsRef.current.some((item) => item.id === event.item?.id)
+        ) {
+          conversationItemsRef.current.push({
+            id: event.item.id,
+            role: event.item.role,
+          });
+        }
+        break;
+      case "conversation.item.deleted":
+        conversationItemsRef.current = conversationItemsRef.current.filter(
+          (item) => item.id !== event.item_id,
+        );
+        break;
       case "conversation.item.input_audio_transcription.completed":
         lastUserActivityRef.current = Date.now();
         addMessage("user", event.transcript ?? "");
         void considerMemory(event.transcript ?? "");
         refreshRealtimeContext();
-        void routeAndRespond(event.transcript ?? "");
+        void routeAndRespond(event.transcript ?? "", event.item_id);
         break;
       case "conversation.item.input_audio_transcription.failed":
         channelRef.current?.send(JSON.stringify({ type: "response.create" }));
@@ -1060,6 +1136,7 @@ export default function Home() {
     routeTurnRef.current += 1;
     for (const finish of frontVoiceWaitersRef.current.values()) finish();
     frontVoiceWaitersRef.current.clear();
+    conversationItemsRef.current = [];
     channelRef.current?.close();
     peerRef.current?.close();
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -1084,6 +1161,9 @@ export default function Home() {
     event.preventDefault();
     const text = input.trim();
     if (!text || channelRef.current?.readyState !== "open") return;
+    const previousUserItemId = [...conversationItemsRef.current]
+      .reverse()
+      .find((item) => item.role === "user")?.id;
     lastUserActivityRef.current = Date.now();
     addMessage("user", text);
     void considerMemory(text);
@@ -1098,7 +1178,7 @@ export default function Home() {
         },
       }),
     );
-    void routeAndRespond(text);
+    void routeAndRespond(text, undefined, previousUserItemId);
     setInput("");
     setConnectionState("thinking");
   }
@@ -1269,6 +1349,7 @@ export default function Home() {
               {lastRoute && connected && (
                 <p className="mt-3 text-[0.66rem] font-semibold uppercase tracking-[0.16em] text-[#c8bcff]/55">
                   Jev route · {lastRoute.replaceAll("_", " ")}
+                  {lastContextMode === "fresh" ? " · fresh topic" : ""}
                 </p>
               )}
             </div>

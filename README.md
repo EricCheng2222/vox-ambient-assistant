@@ -16,6 +16,8 @@ The initiative control sets how readily Vox may speak without being prompted. Th
 
 When Jev delegates a request to live search, deeper reasoning, file creation, or reminder scheduling, the Realtime voice acts as a brief front voice. It immediately acknowledges what it is doing in the user's language while the longer operation runs, then hands back the completed result. The bridge never claims completion, and a new user turn suppresses stale results from an older task.
 
+Jev also classifies each utterance as a continuation or a fresh topic. Clear follow-ups retain short-term Realtime conversation context. On a clear topic shift, Vox keeps the transcript visible in the browser but removes older Realtime conversation items before generating the next response, reducing irrelevant context and repeated input-token cost. Durable memories remain available separately, and uncertain cases keep context rather than risk losing meaning.
+
 Mandarin speech is transcribed without translation and guided toward Traditional Chinese as used in Taiwan. Mandarin responses—including proactive check-ins and answers prepared by deeper models—use Taiwan vocabulary, phrasing, and conversational pacing. Substantive English input still receives an English response.
 
 Vox receives an authoritative UTC clock plus the current date and time in `Asia/Taipei`. The clock is refreshed immediately before each typed or spoken response, and it is also available to JEV presence decisions, reasoning routes, and generated files.

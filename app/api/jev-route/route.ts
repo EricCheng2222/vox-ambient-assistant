@@ -10,6 +10,13 @@ type JevRoute =
   | "create_reminder"
   | "create_file";
 
+type ContextMode = "continue" | "fresh";
+
+type RecentMessage = {
+  role: "user" | "assistant";
+  text: string;
+};
+
 const ROUTES = new Set<JevRoute>([
   "silence",
   "realtime",
@@ -19,6 +26,8 @@ const ROUTES = new Set<JevRoute>([
   "create_reminder",
   "create_file",
 ]);
+
+const CONTEXT_MODES = new Set<ContextMode>(["continue", "fresh"]);
 
 function fallbackRoute(text: string): JevRoute {
   const value = text.trim().toLowerCase();
@@ -66,17 +75,53 @@ function fallbackRoute(text: string): JevRoute {
   return "realtime";
 }
 
+function fallbackContextMode(text: string, recentMessages: RecentMessage[]): ContextMode {
+  if (recentMessages.length === 0) return "fresh";
+  if (
+    /\b(?:new|different|unrelated) (?:topic|question)|\bchanging (?:the )?subject\b/i.test(
+      text,
+    ) ||
+    /(?:換個話題|換一個話題|題外話|另外一個問題|不同的主題)/.test(text)
+  ) {
+    return "fresh";
+  }
+  return "continue";
+}
+
 export async function POST(request: Request) {
   const auth = await requireUser(request);
   if ("response" in auth) return auth.response;
 
-  const body = (await request.json().catch(() => ({}))) as { text?: string };
+  const body = (await request.json().catch(() => ({}))) as {
+    text?: string;
+    recentMessages?: RecentMessage[];
+  };
   const text = body.text?.trim().slice(0, 6000) ?? "";
-  if (!text) return Response.json({ route: "silence", source: "fallback" });
+  const recentMessages = Array.isArray(body.recentMessages)
+    ? body.recentMessages
+        .filter(
+          (message): message is RecentMessage =>
+            (message?.role === "user" || message?.role === "assistant") &&
+            typeof message?.text === "string",
+        )
+        .slice(-6)
+        .map((message) => ({ ...message, text: message.text.slice(0, 400) }))
+    : [];
+  if (!text) {
+    return Response.json({
+      route: "silence",
+      contextMode: "continue",
+      source: "fallback",
+    });
+  }
 
   const apiKey = process.env.TYPESAFE_API_KEY;
   if (!apiKey) {
-    return Response.json({ route: fallbackRoute(text), source: "fallback" });
+    return Response.json({
+      route: fallbackRoute(text),
+      contextMode: fallbackContextMode(text, recentMessages),
+      source: "fallback",
+    });
   }
 
   try {
@@ -90,6 +135,7 @@ export async function POST(request: Request) {
         model: "jev-latest",
         state: {
           utterance: text,
+          recent_conversation: recentMessages,
           authoritative_clock: getCurrentTimeContext(),
         },
         questions: {
@@ -109,24 +155,51 @@ export async function POST(request: Request) {
               create_file: "Create and save a downloadable file for the user.",
             },
           },
+          context_mode: {
+            type: "choice",
+            instructions:
+              "Decide whether the next assistant response needs the recent conversation. Choose continue when the utterance follows up on, corrects, refers to, or depends on anything in the recent conversation. Pronouns, ellipsis, phrases such as 'that one' or 'what about', and an ongoing task all require continue. Choose fresh only when the utterance is clearly self-contained and starts an unrelated topic, so the older conversation would add no useful meaning. When uncertain, choose continue. This decision controls only short-term model context; durable user memories are handled separately.",
+            criteria: {
+              continue:
+                "Keep recent conversation because the utterance may depend on it or continues the same topic or task.",
+              fresh:
+                "Start a fresh model context because this is clearly an independent topic and prior turns are unnecessary.",
+            },
+          },
         },
       }),
     });
 
     if (!response.ok) throw new Error(`Jev returned ${response.status}`);
     const payload = (await response.json()) as {
-      answers?: { route?: { choice?: string; confidence?: number } };
+      answers?: {
+        route?: { choice?: string; confidence?: number };
+        context_mode?: { choice?: string; confidence?: number };
+      };
     };
     const choice = payload.answers?.route?.choice as JevRoute | undefined;
     if (!choice || !ROUTES.has(choice)) throw new Error("Invalid Jev route");
+    const contextChoice = payload.answers?.context_mode?.choice as
+      | ContextMode
+      | undefined;
+    const contextMode =
+      contextChoice && CONTEXT_MODES.has(contextChoice)
+        ? contextChoice
+        : fallbackContextMode(text, recentMessages);
 
     return Response.json({
       route: choice,
       confidence: payload.answers?.route?.confidence ?? null,
+      contextMode,
+      contextConfidence: payload.answers?.context_mode?.confidence ?? null,
       source: "jev",
     });
   } catch (error) {
     console.error("Jev routing failed", error);
-    return Response.json({ route: fallbackRoute(text), source: "fallback" });
+    return Response.json({
+      route: fallbackRoute(text),
+      contextMode: fallbackContextMode(text, recentMessages),
+      source: "fallback",
+    });
   }
 }
