@@ -1,5 +1,10 @@
 export type VisionNeed = "none" | "inspect_low" | "inspect_high";
 
+export function createVisionItemId(): string {
+  // Realtime item IDs have a 32-character limit, including the prefix.
+  return `item_${crypto.randomUUID().replaceAll("-", "").slice(0, 27)}`;
+}
+
 const VISION_NEEDS = new Set<VisionNeed>([
   "none",
   "inspect_low",

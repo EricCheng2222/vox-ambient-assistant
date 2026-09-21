@@ -2,10 +2,18 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const {
+  createVisionItemId,
   fallbackVisionNeed,
   parseVisionNeed,
   visualTurnInstruction,
 } = await import("../lib/vision.ts");
+
+const imageItemIds = Array.from({ length: 100 }, createVisionItemId);
+assert.equal(new Set(imageItemIds).size, imageItemIds.length);
+for (const id of imageItemIds) {
+  assert.ok(id.length <= 32, "Realtime rejects item IDs longer than 32 characters");
+  assert.match(id, /^item_[a-f0-9]+$/);
+}
 
 assert.equal(parseVisionNeed("inspect_low"), "inspect_low");
 assert.equal(parseVisionNeed("inspect_high"), "inspect_high");

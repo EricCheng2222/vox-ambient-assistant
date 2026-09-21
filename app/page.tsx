@@ -117,6 +117,7 @@ import {
 import {
   parseVisionNeed,
   visualTurnInstruction,
+  createVisionItemId,
   type VisionNeed,
 } from "@/lib/vision";
 
@@ -1200,7 +1201,7 @@ export default function Home() {
       return visualTurnInstruction("unavailable");
     }
 
-    const itemId = `item_${crypto.randomUUID().replaceAll("-", "")}`;
+    const itemId = createVisionItemId();
     const eventId = `event_${crypto.randomUUID().replaceAll("-", "")}`;
     visionItemIdsRef.current.add(itemId);
     announceFrameCapture(itemId, detail, imageUrl);
