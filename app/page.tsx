@@ -97,6 +97,9 @@ type RealtimeEvent = {
   transcript?: string;
   delta?: string;
   error?: { message?: string };
+  response?: {
+    metadata?: Record<string, string>;
+  };
 };
 
 type RealtimeTokenPayload = {
@@ -145,6 +148,34 @@ const initiativeTiming: Record<
   quiet: { minimumQuietMs: 150_000, recheckMs: 90_000 },
   balanced: { minimumQuietMs: 60_000, recheckMs: 35_000 },
   social: { minimumQuietMs: 25_000, recheckMs: 15_000 },
+};
+
+type BackgroundRoute = Exclude<JevRoute, "silence" | "realtime">;
+
+const frontVoiceConfig: Record<
+  BackgroundRoute,
+  { workState: ConnectionState; task: string }
+> = {
+  balanced_reasoning: {
+    workState: "thinking",
+    task: "think this through carefully",
+  },
+  expert_reasoning: {
+    workState: "thinking",
+    task: "work through the difficult parts carefully",
+  },
+  live_web: {
+    workState: "searching",
+    task: "check current sources",
+  },
+  create_reminder: {
+    workState: "scheduling",
+    task: "work out the date and schedule the reminder",
+  },
+  create_file: {
+    workState: "creating",
+    task: "put the requested file together",
+  },
 };
 
 function formatMemoryDate(value: string) {
@@ -223,6 +254,8 @@ export default function Home() {
   const presenceCheckInFlightRef = useRef(false);
   const proactiveCountRef = useRef(0);
   const memoriesRef = useRef<MemoryRecord[]>([]);
+  const routeTurnRef = useRef(0);
+  const frontVoiceWaitersRef = useRef(new Map<string, () => void>());
 
   const connected = [
     "listening",
@@ -700,6 +733,56 @@ export default function Home() {
   async function routeAndRespond(text: string) {
     const channel = channelRef.current;
     if (!channel || channel.readyState !== "open") return;
+    const openChannel = channel;
+    const turnId = ++routeTurnRef.current;
+    const isCurrentTurn = () => turnId === routeTurnRef.current;
+
+    async function runWithFrontVoice<T>(
+      route: BackgroundRoute,
+      task: () => Promise<T>,
+    ) {
+      const config = frontVoiceConfig[route];
+      setConnectionState(config.workState);
+
+      const frontVoice = new Promise<void>((resolve) => {
+        const responseId = crypto.randomUUID();
+        let timeoutId = 0;
+        const finish = () => {
+          window.clearTimeout(timeoutId);
+          frontVoiceWaitersRef.current.delete(responseId);
+          if (isCurrentTurn()) setConnectionState(config.workState);
+          resolve();
+        };
+
+        frontVoiceWaitersRef.current.set(responseId, finish);
+        timeoutId = window.setTimeout(finish, 12_000);
+
+        try {
+          openChannel.send(
+            JSON.stringify({
+              type: "response.create",
+              response: {
+                metadata: {
+                  vox_kind: "front_voice",
+                  vox_response_id: responseId,
+                  vox_turn_id: String(turnId),
+                  vox_work_state: config.workState,
+                },
+                instructions:
+                  `Speak one short, natural bridge sentence while background work begins. Tell the user you will ${config.task} and then return with the result. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese. Keep it under eight seconds. Do not answer the request yet, claim the work is finished, ask a filler question, mention model names, routing, Jev, or internal implementation.`,
+              },
+            }),
+          );
+        } catch {
+          finish();
+        }
+      });
+
+      const result = task();
+      const [, settledResult] = await Promise.allSettled([frontVoice, result]);
+      if (settledResult.status === "rejected") throw settledResult.reason;
+      return settledResult.value;
+    }
 
     try {
       const routeResponse = await fetch("/api/jev-route", {
@@ -710,6 +793,7 @@ export default function Home() {
       const route = (await routeResponse.json()) as {
         route?: JevRoute;
       };
+      if (!isCurrentTurn()) return;
       const selectedRoute = route.route ?? "realtime";
       setLastRoute(selectedRoute);
 
@@ -719,9 +803,11 @@ export default function Home() {
       }
 
       if (selectedRoute === "create_reminder") {
-        setConnectionState("scheduling");
         try {
-          const reminder = await createScheduledReminder(text);
+          const reminder = await runWithFrontVoice(selectedRoute, () =>
+            createScheduledReminder(text),
+          );
+          if (!isCurrentTurn()) return;
           channel.send(
             JSON.stringify({
               type: "response.create",
@@ -732,6 +818,7 @@ export default function Home() {
             }),
           );
         } catch (error) {
+          if (!isCurrentTurn()) return;
           channel.send(
             JSON.stringify({
               type: "response.create",
@@ -744,9 +831,9 @@ export default function Home() {
           );
         }
       } else if (selectedRoute === "create_file") {
-        setConnectionState("creating");
         try {
-          const file = await createFile(text);
+          const file = await runWithFrontVoice(selectedRoute, () => createFile(text));
+          if (!isCurrentTurn()) return;
           channel.send(
             JSON.stringify({
               type: "response.create",
@@ -757,6 +844,7 @@ export default function Home() {
             }),
           );
         } catch {
+          if (!isCurrentTurn()) return;
           channel.send(
             JSON.stringify({
               type: "response.create",
@@ -768,13 +856,15 @@ export default function Home() {
           );
         }
       } else if (selectedRoute === "live_web") {
-        setConnectionState("searching");
-        const searchResponse = await fetch("/api/reason", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, route: selectedRoute }),
-        });
+        const searchResponse = await runWithFrontVoice(selectedRoute, () =>
+          fetch("/api/reason", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, route: selectedRoute }),
+          }),
+        );
         const searched = (await searchResponse.json()) as { answer?: string };
+        if (!isCurrentTurn()) return;
         channel.send(
           JSON.stringify({
             type: "response.create",
@@ -790,13 +880,15 @@ export default function Home() {
         selectedRoute === "balanced_reasoning" ||
         selectedRoute === "expert_reasoning"
       ) {
-        setConnectionState("thinking");
-        const reasonResponse = await fetch("/api/reason", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, route: selectedRoute }),
-        });
+        const reasonResponse = await runWithFrontVoice(selectedRoute, () =>
+          fetch("/api/reason", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, route: selectedRoute }),
+          }),
+        );
         const reasoned = (await reasonResponse.json()) as { answer?: string };
+        if (!isCurrentTurn()) return;
         channel.send(
           JSON.stringify({
             type: "response.create",
@@ -811,8 +903,9 @@ export default function Home() {
       } else {
         channel.send(JSON.stringify({ type: "response.create" }));
       }
-      setConnectionState("thinking");
+      if (isCurrentTurn()) setConnectionState("thinking");
     } catch {
+      if (!isCurrentTurn()) return;
       channel.send(JSON.stringify({ type: "response.create" }));
       setConnectionState("thinking");
     }
@@ -821,6 +914,7 @@ export default function Home() {
   function handleRealtimeEvent(event: RealtimeEvent) {
     switch (event.type) {
       case "input_audio_buffer.speech_started":
+        routeTurnRef.current += 1;
         lastUserActivityRef.current = Date.now();
         setConnectionState("listening");
         break;
@@ -856,10 +950,17 @@ export default function Home() {
       }
       case "response.done": {
         lastAssistantAtRef.current = Date.now();
+        if (event.response?.metadata?.vox_kind === "front_voice") {
+          const responseId = event.response.metadata.vox_response_id;
+          frontVoiceWaitersRef.current.get(responseId)?.();
+          break;
+        }
         setConnectionState("listening");
         break;
       }
       case "error":
+        for (const finish of frontVoiceWaitersRef.current.values()) finish();
+        frontVoiceWaitersRef.current.clear();
         setErrorMessage(event.error?.message ?? "The live session hit an error.");
         setConnectionState("error");
         break;
@@ -956,6 +1057,9 @@ export default function Home() {
   }
 
   function disconnect(resetState = true) {
+    routeTurnRef.current += 1;
+    for (const finish of frontVoiceWaitersRef.current.values()) finish();
+    frontVoiceWaitersRef.current.clear();
     channelRef.current?.close();
     peerRef.current?.close();
     streamRef.current?.getTracks().forEach((track) => track.stop());

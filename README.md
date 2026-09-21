@@ -14,6 +14,8 @@ Jev can select seven paths:
 
 The initiative control sets how readily Vox may speak without being prompted. The browser checks for a useful moment only while the live session is quiet and idle; Jev has a strong bias toward `stay_silent`, and the app enforces cooldowns and a per-session cap so presence does not turn into chatter.
 
+When Jev delegates a request to live search, deeper reasoning, file creation, or reminder scheduling, the Realtime voice acts as a brief front voice. It immediately acknowledges what it is doing in the user's language while the longer operation runs, then hands back the completed result. The bridge never claims completion, and a new user turn suppresses stale results from an older task.
+
 Mandarin speech is transcribed without translation and guided toward Traditional Chinese as used in Taiwan. Mandarin responses—including proactive check-ins and answers prepared by deeper models—use Taiwan vocabulary, phrasing, and conversational pacing. Substantive English input still receives an English response.
 
 Vox receives an authoritative UTC clock plus the current date and time in `Asia/Taipei`. The clock is refreshed immediately before each typed or spoken response, and it is also available to JEV presence decisions, reasoning routes, and generated files.
