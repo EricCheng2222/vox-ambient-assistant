@@ -236,6 +236,7 @@ function formatConversationCarryover(messages: Message[]) {
 
 type RealtimeEvent = {
   type?: string;
+  event_id?: string;
   transcript?: string;
   delta?: string;
   item_id?: string;
@@ -246,11 +247,20 @@ type RealtimeEvent = {
     type?: string;
     role?: string;
   };
-  error?: { message?: string; code?: string };
+  error?: { message?: string; code?: string; event_id?: string };
   response?: {
     id?: string;
     metadata?: Record<string, string>;
   };
+};
+
+type FrameDeliveryPhase = "sending" | "delivered" | "failed";
+
+type PendingVisionAck = {
+  turnId: number;
+  eventId: string;
+  timeoutId: number;
+  resolve: (accepted: boolean) => void;
 };
 
 type RealtimeTokenPayload = {
@@ -529,8 +539,10 @@ export default function Home() {
   const [cameraError, setCameraError] = useState("");
   const [sessionFramesSent, setSessionFramesSent] = useState(0);
   const [frameCaptureNotice, setFrameCaptureNotice] = useState<{
-    id: number;
+    id: string;
     detail: "auto" | "high";
+    imageUrl: string;
+    phase: FrameDeliveryPhase;
   } | null>(null);
 
   const interfaceGridRef = useRef<HTMLElement | null>(null);
@@ -544,6 +556,7 @@ export default function Home() {
   const cameraActiveRef = useRef(false);
   const cameraStartingRef = useRef(false);
   const frameCaptureNoticeTimerRef = useRef<number | null>(null);
+  const pendingVisionAcksRef = useRef(new Map<string, PendingVisionAck>());
   const visionItemByTurnRef = useRef(new Map<number, string>());
   const visionItemIdsRef = useRef(new Set<string>());
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -1103,17 +1116,47 @@ export default function Home() {
     return canvas.toDataURL("image/jpeg", detail === "high" ? 0.66 : 0.5);
   }
 
-  function announceFrameCapture(detail: "auto" | "high") {
-    const id = Date.now();
-    setSessionFramesSent((count) => count + 1);
-    setFrameCaptureNotice({ id, detail });
+  function clearFrameCaptureNoticeLater(id: string, delayMs: number) {
     if (frameCaptureNoticeTimerRef.current !== null) {
       window.clearTimeout(frameCaptureNoticeTimerRef.current);
     }
     frameCaptureNoticeTimerRef.current = window.setTimeout(() => {
       setFrameCaptureNotice((notice) => (notice?.id === id ? null : notice));
       frameCaptureNoticeTimerRef.current = null;
-    }, 2_200);
+    }, delayMs);
+  }
+
+  function announceFrameCapture(
+    id: string,
+    detail: "auto" | "high",
+    imageUrl: string,
+  ) {
+    setFrameCaptureNotice({ id, detail, imageUrl, phase: "sending" });
+    clearFrameCaptureNoticeLater(id, 6_000);
+  }
+
+  function settleVisionAck(itemId: string, accepted: boolean) {
+    const pending = pendingVisionAcksRef.current.get(itemId);
+    if (!pending) return false;
+    pendingVisionAcksRef.current.delete(itemId);
+    window.clearTimeout(pending.timeoutId);
+    pending.resolve(accepted);
+    if (accepted) setSessionFramesSent((count) => count + 1);
+    setFrameCaptureNotice((notice) =>
+      notice?.id === itemId
+        ? { ...notice, phase: accepted ? "delivered" : "failed" }
+        : notice,
+    );
+    clearFrameCaptureNoticeLater(itemId, accepted ? 2_200 : 3_200);
+    return true;
+  }
+
+  function settleVisionAckByEventId(eventId: string | undefined) {
+    if (!eventId) return false;
+    for (const [itemId, pending] of pendingVisionAcksRef.current) {
+      if (pending.eventId === eventId) return settleVisionAck(itemId, false);
+    }
+    return false;
   }
 
   function releaseVisionItem(turnId: number) {
@@ -1135,12 +1178,16 @@ export default function Home() {
     for (const turnId of [...visionItemByTurnRef.current.keys()]) {
       if (turnId !== currentTurnId) releaseVisionItem(turnId);
     }
+    for (const [itemId, pending] of pendingVisionAcksRef.current) {
+      if (pending.turnId !== currentTurnId) settleVisionAck(itemId, false);
+    }
   }
 
-  function attachRequestedVision(
+  async function attachRequestedVision(
     turnId: number,
     need: VisionNeed,
     blocked: boolean,
+    question: string,
   ) {
     if (need === "none") return visualTurnInstruction("not_requested");
     if (blocked) return visualTurnInstruction("blocked");
@@ -1154,20 +1201,48 @@ export default function Home() {
     }
 
     const itemId = `item_${crypto.randomUUID().replaceAll("-", "")}`;
-    channel.send(
-      JSON.stringify({
-        type: "conversation.item.create",
-        item: {
-          id: itemId,
-          type: "message",
-          role: "user",
-          content: [{ type: "input_image", image_url: imageUrl, detail }],
-        },
-      }),
-    );
-    visionItemByTurnRef.current.set(turnId, itemId);
+    const eventId = `event_${crypto.randomUUID().replaceAll("-", "")}`;
     visionItemIdsRef.current.add(itemId);
-    announceFrameCapture(detail);
+    announceFrameCapture(itemId, detail, imageUrl);
+    const accepted = await new Promise<boolean>((resolve) => {
+      const timeoutId = window.setTimeout(
+        () => settleVisionAck(itemId, false),
+        5_000,
+      );
+      pendingVisionAcksRef.current.set(itemId, {
+        turnId,
+        eventId,
+        timeoutId,
+        resolve,
+      });
+      try {
+        channel.send(
+          JSON.stringify({
+            event_id: eventId,
+            type: "conversation.item.create",
+            item: {
+              id: itemId,
+              type: "message",
+              role: "user",
+              content: [
+                { type: "input_image", image_url: imageUrl, detail },
+                {
+                  type: "input_text",
+                  text: `Answer this visual question using the attached current frame: ${question.slice(0, 2_000)}`,
+                },
+              ],
+            },
+          }),
+        );
+      } catch {
+        settleVisionAck(itemId, false);
+      }
+    });
+    if (!accepted) {
+      visionItemIdsRef.current.delete(itemId);
+      return visualTurnInstruction("delivery_failed");
+    }
+    visionItemByTurnRef.current.set(turnId, itemId);
     return visualTurnInstruction("attached", detail);
   }
 
@@ -2026,11 +2101,13 @@ export default function Home() {
         return;
       }
 
-      const visualInstruction = attachRequestedVision(
+      const visualInstruction = await attachRequestedVision(
         turnId,
         visionNeed,
         Boolean(route.visionBlocked),
+        completeText,
       );
+      if (!isCurrentTurn()) return;
       if (visionNeed !== "none") selectedRoute = "realtime";
 
       void considerMemory(completeText);
@@ -2371,6 +2448,10 @@ export default function Home() {
           });
         }
         break;
+      case "conversation.item.done":
+      case "conversation.item.created":
+        if (event.item?.id) settleVisionAck(event.item.id, true);
+        break;
       case "conversation.item.deleted":
         conversationItemsRef.current = conversationItemsRef.current.filter(
           (item) => item.id !== event.item_id,
@@ -2557,6 +2638,12 @@ export default function Home() {
         break;
       }
       case "error":
+        if (
+          settleVisionAckByEventId(event.error?.event_id) ||
+          settleVisionAckByEventId(event.event_id)
+        ) {
+          break;
+        }
         releaseStaleVisionItems();
         for (const finish of frontVoiceWaitersRef.current.values()) finish();
         frontVoiceWaitersRef.current.clear();
@@ -3200,18 +3287,38 @@ export default function Home() {
                     className="camera-capture-effect pointer-events-none absolute inset-0 z-20"
                     aria-hidden="true"
                   >
+                    <div
+                      className="camera-capture-snapshot absolute inset-0 bg-cover bg-center"
+                      style={{
+                        backgroundImage: `url(${frameCaptureNotice.imageUrl})`,
+                      }}
+                    />
                     <div className="camera-capture-flash absolute inset-0 bg-white" />
                     <div className="camera-capture-frame absolute inset-1 rounded-xl border-2" />
                     <div className="camera-capture-badge absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 whitespace-nowrap rounded-full bg-black/78 px-3 py-1.5 text-[0.64rem] font-semibold uppercase tracking-[0.12em] text-white shadow-xl backdrop-blur-md">
-                      <CheckCircle2 className="size-3.5" />
-                      Frame sent
+                      {frameCaptureNotice.phase === "sending" ? (
+                        <Camera className="size-3.5" />
+                      ) : frameCaptureNotice.phase === "delivered" ? (
+                        <CheckCircle2 className="size-3.5" />
+                      ) : (
+                        <CameraOff className="size-3.5" />
+                      )}
+                      {frameCaptureNotice.phase === "sending"
+                        ? "Sending frame"
+                        : frameCaptureNotice.phase === "delivered"
+                          ? "Frame delivered"
+                          : "Frame not sent"}
                     </div>
                   </div>
                 )}
               </div>
               <p className="sr-only" role="status" aria-live="assertive" aria-atomic="true">
                 {frameCaptureNotice
-                  ? `One camera frame was captured and sent to Vox using ${frameCaptureNotice.detail} detail.`
+                  ? frameCaptureNotice.phase === "sending"
+                    ? "One camera frame was captured and is being sent to Vox."
+                    : frameCaptureNotice.phase === "delivered"
+                      ? `One camera frame was accepted by Vox using ${frameCaptureNotice.detail} detail.`
+                      : "The captured camera frame was not accepted and was not used."
                   : ""}
               </p>
               <p className="mt-1.5 text-[0.62rem] font-medium uppercase tracking-[0.1em] text-white/42">

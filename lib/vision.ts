@@ -32,7 +32,12 @@ export function fallbackVisionNeed(text: string): VisionNeed {
 }
 
 export function visualTurnInstruction(
-  state: "not_requested" | "attached" | "unavailable" | "blocked",
+  state:
+    | "not_requested"
+    | "attached"
+    | "unavailable"
+    | "blocked"
+    | "delivery_failed",
   detail: "auto" | "high" = "auto",
 ) {
   if (state === "not_requested") {
@@ -43,6 +48,9 @@ export function visualTurnInstruction(
   }
   if (state === "blocked") {
     return "The user asked you to look, but visual inspection has reached a temporary usage limit. Briefly say that vision will be available again soon. Do not guess what is visible.";
+  }
+  if (state === "delivery_failed") {
+    return "The user asked you to look, but the captured frame was not accepted by the vision service. Briefly say that you could not receive the frame and invite them to try once more. Do not describe or guess what was visible.";
   }
   return [
     `One current camera still is attached to this turn at ${detail} detail because the user explicitly asked you to look.`,

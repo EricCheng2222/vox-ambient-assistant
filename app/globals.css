@@ -1019,6 +1019,10 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
   76% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
   100% { opacity: 0; transform: translate(-50%, -58%) scale(0.96); }
 }
+@keyframes camera-capture-snapshot {
+  0%, 42% { opacity: 0.72; }
+  100% { opacity: 0; }
+}
 .camera-preview {
   --camera-capture-accent: #f4ff74;
 }
@@ -1027,6 +1031,10 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
 }
 .camera-capture-flash {
   animation: camera-capture-flash 680ms ease-out both;
+}
+.camera-capture-snapshot {
+  transform: scaleX(-1);
+  animation: camera-capture-snapshot 1.15s ease-out both;
 }
 .camera-capture-frame {
   border-color: var(--camera-capture-accent);

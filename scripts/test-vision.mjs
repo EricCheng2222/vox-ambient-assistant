@@ -26,6 +26,7 @@ assert.match(
 );
 assert.match(visualTurnInstruction("unavailable"), /camera is off/i);
 assert.match(visualTurnInstruction("blocked"), /temporary usage limit/i);
+assert.match(visualTurnInstruction("delivery_failed"), /was not accepted/i);
 
 const pageSource = await readFile(
   new URL("../app/page.tsx", import.meta.url),
@@ -35,8 +36,13 @@ assert.match(pageSource, /type: "input_image"/);
 assert.match(pageSource, /need === "inspect_high" \? "high" : "auto"/);
 assert.match(pageSource, /Local preview ·/);
 assert.match(pageSource, /no frames sent/i);
-assert.match(pageSource, /announceFrameCapture\(detail\)/);
-assert.match(pageSource, /Frame sent/);
+assert.match(pageSource, /announceFrameCapture\(itemId, detail, imageUrl\)/);
+assert.match(pageSource, /await attachRequestedVision/);
+assert.match(pageSource, /conversation\.item\.done/);
+assert.match(pageSource, /event_id: eventId/);
+assert.match(pageSource, /Frame delivered/);
+assert.match(pageSource, /Frame not sent/);
+assert.match(pageSource, /Answer this visual question using the attached current frame/);
 assert.match(pageSource, /aria-live="assertive"/);
 assert.match(pageSource, /sessionFramesSent/);
 assert.match(pageSource, /conversation\.item\.delete/);
