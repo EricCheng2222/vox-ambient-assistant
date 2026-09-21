@@ -26,6 +26,12 @@ import {
   type SocialEligibility,
 } from "@/lib/social-state-store";
 import { getCurrentTimeContext } from "@/lib/time-context";
+import {
+  fallbackVisionNeed,
+  parseVisionNeed,
+  type VisionNeed,
+} from "@/lib/vision";
+import { claimVisionAnalysis } from "@/lib/vision-usage-store";
 
 type JevRoute =
   | "silence"
@@ -196,6 +202,16 @@ function fallbackResponseLength(
   });
 }
 
+async function reserveVisionIfNeeded(
+  ownerId: string,
+  visionNeed: VisionNeed,
+  visionAvailable: boolean,
+) {
+  if (visionNeed === "none" || !visionAvailable) return null;
+  const allowance = await claimVisionAnalysis(ownerId);
+  return allowance.allowed ? null : allowance.reason;
+}
+
 export async function POST(request: Request) {
   const auth = await requireUser(request);
   if ("response" in auth) return auth.response;
@@ -209,6 +225,7 @@ export async function POST(request: Request) {
     allowWait?: boolean;
     recentMessages?: RecentMessage[];
     replyLength?: unknown;
+    visionAvailable?: boolean;
   };
   const text = body.text?.trim().slice(0, 6000) ?? "";
   const pendingText = body.pendingText?.trim().slice(0, 6000) ?? "";
@@ -254,6 +271,7 @@ export async function POST(request: Request) {
       responseLength: defaultAdaptiveReplyLength(replyLength),
       memoryUse: "none",
       ritual: "none",
+      visionNeed: "none",
       source: "fallback",
     });
   }
@@ -274,6 +292,10 @@ export async function POST(request: Request) {
   if (!apiKey) {
     const route = fallbackRoute(completeText);
     const turnState = allowWait ? fallbackTurnState(text, pendingText) : "complete";
+    const visionNeed =
+      turnState === "complete" && route !== "silence"
+        ? fallbackVisionNeed(completeText)
+        : "none";
     const ritual: ConversationRitual =
       turnState === "complete" &&
       route !== "silence" &&
@@ -299,6 +321,12 @@ export async function POST(request: Request) {
       responseLength: fallbackResponseLength(completeText, replyLength, route),
       memoryUse: "none",
       ritual,
+      visionNeed,
+      visionBlocked: await reserveVisionIfNeeded(
+        auth.user.id,
+        visionNeed,
+        body.visionAvailable === true,
+      ),
       source: "fallback",
     });
   }
@@ -341,6 +369,7 @@ export async function POST(request: Request) {
               .slice(-3)
               .map((message) => userTurnLengthSignals(message.text)),
           },
+          camera_preview_available: body.visionAvailable === true,
         },
         questions: {
           turn_state: {
@@ -446,6 +475,19 @@ export async function POST(request: Request) {
               ]),
             ),
           },
+          visual_need: {
+            type: "choice",
+            instructions:
+              "Decide whether the user explicitly asks the assistant to inspect the current camera view. Strongly prefer none. Choose inspect_low only for a direct request to look, see, identify a visible object, assess appearance, or answer a question that clearly depends on the camera right now. Choose inspect_high only when the user explicitly asks to read small or exact text, inspect fine detail, a label, serial number, screen, or document. Never inspect merely because a camera preview is available, because the user mentions a visual topic, or for proactive conversation. A camera preview being unavailable does not change whether inspection was requested; it only means the client will explain that it cannot look yet.",
+            criteria: {
+              none:
+                "No current-frame visual inspection was explicitly requested, so no frame should leave the browser.",
+              inspect_low:
+                "The user explicitly wants a broad look at the current camera frame; send one auto-detail still.",
+              inspect_high:
+                "The user explicitly needs small text or fine detail from the current camera frame; send one detailed still.",
+            },
+          },
         },
       }),
     });
@@ -460,6 +502,7 @@ export async function POST(request: Request) {
         memory_timing?: { choice?: string; confidence?: number };
         ritual?: { choice?: string; confidence?: number };
         response_length?: { choice?: string; confidence?: number };
+        visual_need?: { choice?: string; confidence?: number };
       };
     };
     const choice = payload.answers?.route?.choice as JevRoute | undefined;
@@ -485,6 +528,18 @@ export async function POST(request: Request) {
       payload.answers?.conversation_move?.choice,
       fallbackResponsePosture(completeText),
     );
+    let visionNeed = parseVisionNeed(payload.answers?.visual_need?.choice);
+    const fallbackVisualNeed = fallbackVisionNeed(completeText);
+    const visionNeedConfidence = payload.answers?.visual_need?.confidence ?? 0;
+    if (visionNeed === "none" && fallbackVisualNeed !== "none") {
+      visionNeed = fallbackVisualNeed;
+    } else if (
+      visionNeed !== "none" &&
+      fallbackVisualNeed === "none" &&
+      visionNeedConfidence < 0.8
+    ) {
+      visionNeed = "none";
+    }
     let memoryUse = parseMemoryUse(payload.answers?.memory_timing?.choice);
     let ritual = parseConversationRitual(payload.answers?.ritual?.choice);
     if (
@@ -508,6 +563,13 @@ export async function POST(request: Request) {
       memoryUse = "none";
       ritual = "none";
     }
+    if (turnState === "wait" || choice === "silence") visionNeed = "none";
+
+    const visionBlocked = await reserveVisionIfNeeded(
+      auth.user.id,
+      visionNeed,
+      body.visionAvailable === true,
+    );
 
     await recordSocialDecision(
       auth.user.id,
@@ -533,12 +595,19 @@ export async function POST(request: Request) {
       responseLength,
       responseLengthConfidence:
         payload.answers?.response_length?.confidence ?? null,
+      visionNeed,
+      visionNeedConfidence,
+      visionBlocked,
       source: "jev",
     });
   } catch (error) {
     console.error("Jev routing failed", error);
     const route = fallbackRoute(completeText);
     const turnState = allowWait ? fallbackTurnState(text, pendingText) : "complete";
+    const visionNeed =
+      turnState === "complete" && route !== "silence"
+        ? fallbackVisionNeed(completeText)
+        : "none";
     const ritual: ConversationRitual =
       turnState === "complete" &&
       route !== "silence" &&
@@ -564,6 +633,12 @@ export async function POST(request: Request) {
       responseLength: fallbackResponseLength(completeText, replyLength, route),
       memoryUse: "none",
       ritual,
+      visionNeed,
+      visionBlocked: await reserveVisionIfNeeded(
+        auth.user.id,
+        visionNeed,
+        body.visionAvailable === true,
+      ),
       source: "fallback",
     });
   }

@@ -12,6 +12,8 @@ import {
   AudioLines,
   Bell,
   Brain,
+  Camera,
+  CameraOff,
   CheckCircle2,
   Code2,
   Copy,
@@ -112,6 +114,11 @@ import {
   visualThemeOptions,
   type VisualTheme,
 } from "@/lib/visual-theme";
+import {
+  parseVisionNeed,
+  visualTurnInstruction,
+  type VisionNeed,
+} from "@/lib/vision";
 
 type ConnectionState =
   | "idle"
@@ -517,12 +524,22 @@ export default function Home() {
   const [conversationWidth, setConversationWidth] = useState(
     DEFAULT_CONVERSATION_WIDTH,
   );
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraStarting, setCameraStarting] = useState(false);
+  const [cameraError, setCameraError] = useState("");
 
   const interfaceGridRef = useRef<HTMLElement | null>(null);
   const conversationWidthRef = useRef(DEFAULT_CONVERSATION_WIDTH);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const cameraActiveRef = useRef(false);
+  const cameraStartingRef = useRef(false);
+  const visionItemByTurnRef = useRef(new Map<number, string>());
+  const visionItemIdsRef = useRef(new Set<string>());
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const inputAnalyserRef = useRef<AnalyserNode | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -1006,6 +1023,132 @@ export default function Home() {
     const nextTheme = parseVisualTheme(value);
     setTheme(nextTheme);
     void savePreferences({ theme: nextTheme });
+  }
+
+  async function startCameraPreview(quiet = false) {
+    if (cameraActiveRef.current || cameraStartingRef.current) return true;
+    cameraStartingRef.current = true;
+    setCameraStarting(true);
+    setCameraError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: "user",
+          width: { ideal: 640 },
+          height: { ideal: 360 },
+        },
+      });
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = stream;
+      if (cameraVideoRef.current) {
+        cameraVideoRef.current.srcObject = stream;
+        await cameraVideoRef.current.play();
+      }
+      cameraActiveRef.current = true;
+      setCameraActive(true);
+      return true;
+    } catch (error) {
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+      if (cameraVideoRef.current) cameraVideoRef.current.srcObject = null;
+      cameraActiveRef.current = false;
+      setCameraActive(false);
+      const message =
+        error instanceof DOMException && error.name === "NotAllowedError"
+          ? "Camera permission was not granted. Voice still works normally."
+          : "The camera preview could not start. Voice still works normally.";
+      setCameraError(message);
+      if (!quiet) toast.error("Camera unavailable", { description: message });
+      return false;
+    } finally {
+      cameraStartingRef.current = false;
+      setCameraStarting(false);
+    }
+  }
+
+  function stopCameraPreview() {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    if (cameraVideoRef.current) cameraVideoRef.current.srcObject = null;
+    cameraActiveRef.current = false;
+    cameraStartingRef.current = false;
+    setCameraActive(false);
+    setCameraStarting(false);
+  }
+
+  function captureCameraFrame(detail: "auto" | "high") {
+    const video = cameraVideoRef.current;
+    const canvas = cameraCanvasRef.current;
+    if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      return null;
+    }
+    const sourceWidth = video.videoWidth;
+    const sourceHeight = video.videoHeight;
+    if (!sourceWidth || !sourceHeight) return null;
+
+    const maximumWidth = detail === "high" ? 768 : 512;
+    const scale = Math.min(1, maximumWidth / sourceWidth);
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) return null;
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", detail === "high" ? 0.66 : 0.5);
+  }
+
+  function releaseVisionItem(turnId: number) {
+    const itemId = visionItemByTurnRef.current.get(turnId);
+    if (!itemId) return;
+    visionItemByTurnRef.current.delete(turnId);
+    visionItemIdsRef.current.delete(itemId);
+    conversationItemsRef.current = conversationItemsRef.current.filter(
+      (item) => item.id !== itemId,
+    );
+    if (channelRef.current?.readyState === "open") {
+      channelRef.current.send(
+        JSON.stringify({ type: "conversation.item.delete", item_id: itemId }),
+      );
+    }
+  }
+
+  function releaseStaleVisionItems(currentTurnId?: number) {
+    for (const turnId of [...visionItemByTurnRef.current.keys()]) {
+      if (turnId !== currentTurnId) releaseVisionItem(turnId);
+    }
+  }
+
+  function attachRequestedVision(
+    turnId: number,
+    need: VisionNeed,
+    blocked: boolean,
+  ) {
+    if (need === "none") return visualTurnInstruction("not_requested");
+    if (blocked) return visualTurnInstruction("blocked");
+    if (!cameraActiveRef.current) return visualTurnInstruction("unavailable");
+
+    const detail = need === "inspect_high" ? "high" : "auto";
+    const imageUrl = captureCameraFrame(detail);
+    const channel = channelRef.current;
+    if (!imageUrl || !channel || channel.readyState !== "open") {
+      return visualTurnInstruction("unavailable");
+    }
+
+    const itemId = `item_${crypto.randomUUID().replaceAll("-", "")}`;
+    visionItemByTurnRef.current.set(turnId, itemId);
+    visionItemIdsRef.current.add(itemId);
+    channel.send(
+      JSON.stringify({
+        type: "conversation.item.create",
+        item: {
+          id: itemId,
+          type: "message",
+          role: "user",
+          content: [{ type: "input_image", image_url: imageUrl, detail }],
+        },
+      }),
+    );
+    return visualTurnInstruction("attached", detail);
   }
 
   function claimInputTranscription(text: string, itemId?: string) {
@@ -1692,6 +1835,7 @@ export default function Home() {
     if (!channel || channel.readyState !== "open") return;
     const openChannel = channel;
     const turnId = ++routeTurnRef.current;
+    releaseStaleVisionItems(turnId);
     activeRouteTurnRef.current = turnId;
     const isCurrentTurn = () => turnId === routeTurnRef.current;
     const pending = pendingUtteranceRef.current;
@@ -1812,6 +1956,7 @@ export default function Home() {
             text,
           })),
           replyLength: replyLengthRef.current,
+          visionAvailable: cameraActiveRef.current,
         }),
       });
       const route = (await routeResponse.json()) as {
@@ -1822,9 +1967,11 @@ export default function Home() {
         responsePosture?: ResponsePosture;
         memoryUse?: MemoryUse;
         ritual?: ConversationRitual;
+        visionNeed?: VisionNeed;
+        visionBlocked?: string | null;
       };
       if (!isCurrentTurn()) return;
-      const selectedRoute = route.route ?? "realtime";
+      let selectedRoute = route.route ?? "realtime";
       const contextMode = route.contextMode ?? "continue";
       const turnState = allowWait ? (route.turnState ?? "complete") : "complete";
       const responseLength = parseAdaptiveReplyLength(
@@ -1837,6 +1984,7 @@ export default function Home() {
       );
       const memoryUse = parseMemoryUse(route.memoryUse);
       const ritual = parseConversationRitual(route.ritual);
+      const visionNeed = parseVisionNeed(route.visionNeed);
       if (turnState === "wait") {
         pendingUtteranceRef.current = {
           text: completeText,
@@ -1857,6 +2005,13 @@ export default function Home() {
         setConnectionState("listening");
         return;
       }
+
+      const visualInstruction = attachRequestedVision(
+        turnId,
+        visionNeed,
+        Boolean(route.visionBlocked),
+      );
+      if (visionNeed !== "none") selectedRoute = "realtime";
 
       void considerMemory(completeText);
 
@@ -1977,6 +2132,7 @@ export default function Home() {
             responsePostureInstruction(responsePosture),
             memoryUseInstruction(memoryUse),
             ritualInstruction(ritual),
+            visualInstruction,
             carryover,
           ]
             .filter(Boolean)
@@ -1985,6 +2141,7 @@ export default function Home() {
       }
       if (isCurrentTurn()) setConnectionState("thinking");
     } catch (error) {
+      releaseVisionItem(turnId);
       if (!isCurrentTurn()) return;
       const safeFailure =
         error instanceof Error && error.message === API_BUDGET_MESSAGE
@@ -2185,6 +2342,7 @@ export default function Home() {
           event.item?.id &&
           event.item.type === "message" &&
           (event.item.role === "user" || event.item.role === "assistant") &&
+          !visionItemIdsRef.current.has(event.item.id) &&
           !conversationItemsRef.current.some((item) => item.id === event.item?.id)
         ) {
           conversationItemsRef.current.push({
@@ -2367,6 +2525,7 @@ export default function Home() {
           break;
         }
         const completedTurn = Number(event.response?.metadata?.vox_turn_id);
+        if (Number.isFinite(completedTurn)) releaseVisionItem(completedTurn);
         if (
           Number.isFinite(completedTurn) &&
           completedTurn === activeRouteTurnRef.current
@@ -2378,6 +2537,7 @@ export default function Home() {
         break;
       }
       case "error":
+        releaseStaleVisionItems();
         for (const finish of frontVoiceWaitersRef.current.values()) finish();
         frontVoiceWaitersRef.current.clear();
         setErrorMessage(
@@ -2426,6 +2586,7 @@ export default function Home() {
       });
       peerRef.current = peer;
       streamRef.current = stream;
+      void startCameraPreview(true);
       try {
         startSpeechTimingMonitor(stream);
       } catch {
@@ -2515,6 +2676,7 @@ export default function Home() {
     speechAwaitingTranscriptRef.current = false;
     interruptedWorkStateRef.current = null;
     echoCandidateRef.current = null;
+    releaseStaleVisionItems();
     if (bargeInTimerRef.current !== null) {
       window.clearTimeout(bargeInTimerRef.current);
       bargeInTimerRef.current = null;
@@ -2522,6 +2684,7 @@ export default function Home() {
     assistantSpeakingSinceRef.current = null;
     assistantEchoFloorRef.current = 0;
     stopSpeechTimingMonitor();
+    stopCameraPreview();
     setThinkingCue("");
     if (
       sessionOwnerRef.current &&
@@ -2681,6 +2844,7 @@ export default function Home() {
       data-vox-theme={theme}
     >
       <audio ref={audioRef} autoPlay className="sr-only" />
+      <canvas ref={cameraCanvasRef} className="hidden" aria-hidden="true" />
       <Toaster position="top-center" richColors />
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
@@ -2969,6 +3133,48 @@ export default function Home() {
 
             <Waveform live={connected && !muted} analyserRef={inputAnalyserRef} />
 
+            <div className="mt-5 flex min-h-[5.75rem] items-center justify-center">
+              <div
+                className="relative aspect-video w-40 overflow-hidden rounded-2xl border border-white/12 bg-black/25 shadow-[0_12px_38px_rgba(0,0,0,0.22)]"
+                role="img"
+                aria-label={
+                  cameraActive
+                    ? "Live local camera preview. A still is sent only when you ask Vox to look."
+                    : "Camera preview is off."
+                }
+              >
+                <video
+                  ref={cameraVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  aria-hidden="true"
+                  className={`size-full scale-x-[-1] object-cover transition-opacity ${cameraActive ? "opacity-100" : "opacity-0"}`}
+                />
+                {!cameraActive && (
+                  <div className="absolute inset-0 grid place-items-center text-center text-white/38">
+                    <div>
+                      <CameraOff className="mx-auto size-5" />
+                      <p className="mt-1.5 text-[0.66rem] uppercase tracking-[0.12em]">
+                        {cameraStarting ? "Starting camera" : "Camera off"}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {cameraActive && (
+                  <div className="absolute inset-x-2 bottom-2 flex items-center gap-1.5 rounded-full bg-black/55 px-2 py-1 text-[0.58rem] font-medium uppercase tracking-[0.09em] text-white/76 backdrop-blur">
+                    <span className="size-1.5 rounded-full bg-emerald-400" />
+                    Local preview · sent only when asked
+                  </div>
+                )}
+              </div>
+            </div>
+            {cameraError && connected && !cameraActive && (
+              <p className="mt-2 max-w-xs text-center text-xs leading-5 text-white/34">
+                {cameraError}
+              </p>
+            )}
+
             <div className="mt-6 flex w-full items-center justify-center gap-3 sm:mt-7 sm:w-auto">
               {!connected ? (
                 <Button
@@ -2982,6 +3188,20 @@ export default function Home() {
                 </Button>
               ) : (
                 <>
+                  <Button
+                    size="icon-lg"
+                    variant="outline"
+                    onClick={() => {
+                      if (cameraActive) stopCameraPreview();
+                      else void startCameraPreview();
+                    }}
+                    disabled={cameraStarting}
+                    className={`rounded-full border-white/12 bg-white/[0.05] hover:bg-white/10 hover:text-white ${cameraActive ? "text-emerald-300" : "text-white"}`}
+                    aria-label={cameraActive ? "Turn camera off" : "Turn camera on"}
+                    aria-pressed={cameraActive}
+                  >
+                    {cameraActive ? <Camera /> : <CameraOff />}
+                  </Button>
                   <Button
                     size="icon-lg"
                     variant="outline"

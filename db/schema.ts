@@ -118,6 +118,16 @@ export const socialInteractionState = sqliteTable("social_interaction_state", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const visionUsage = sqliteTable("vision_usage", {
+  ownerId: text("owner_id").primaryKey(),
+  hourBucket: text("hour_bucket").notNull().default(""),
+  hourCount: integer("hour_count").notNull().default(0),
+  dayBucket: text("day_bucket").notNull().default(""),
+  dayCount: integer("day_count").notNull().default(0),
+  lastAnalysisAt: text("last_analysis_at"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const conversationMessages = sqliteTable(
   "conversation_messages",
   {
