@@ -1,0 +1,23 @@
+# Vox ambient voice assistant
+
+Vox is a continuous, interruptible browser voice assistant. OpenAI Realtime handles speech-to-speech conversation and semantic voice activity detection. TypeSafe Jev acts as a fast router for every utterance and as a presence classifier that can decide when Vox should speak first during a quiet stretch.
+
+Jev can select five paths:
+
+- `silence` — background speech or utterances that should not receive a reply
+- `realtime` — ordinary low-latency voice conversation
+- `balanced_reasoning` — deeper answers with GPT-5.6 Terra
+- `expert_reasoning` — difficult or high-stakes work with GPT-6 Astra
+- `live_web` — current information with web search
+
+The initiative control sets how readily Vox may speak without being prompted. The browser checks for a useful moment only while the live session is quiet and idle; Jev has a strong bias toward `stay_silent`, and the app enforces cooldowns and a per-session cap so presence does not turn into chatter.
+
+Mandarin speech is transcribed without translation and guided toward Traditional Chinese as used in Taiwan. Mandarin responses—including proactive check-ins and answers prepared by deeper models—use Taiwan vocabulary, phrasing, and conversational pacing. Substantive English input still receives an English response.
+
+## Local setup
+
+1. Copy `.env.example` to `.env.local`.
+2. Add an OpenAI API key and a TypeSafe Jev API key.
+3. Run `npm run dev`.
+
+Both long-lived API keys remain server-side. The browser receives only a short-lived OpenAI Realtime credential.
