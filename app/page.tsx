@@ -2483,6 +2483,8 @@ export default function Home() {
       <Toaster position="top-center" richColors />
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
+      <div className="holo-edge holo-edge-left" aria-hidden="true" />
+      <div className="holo-edge holo-edge-right" aria-hidden="true" />
 
       <header className="vox-header relative z-10 flex min-h-16 items-center justify-between border-b border-white/8 px-4 py-3 sm:h-20 sm:px-8 sm:py-0 lg:px-12">
         <div className="flex items-center gap-3">
@@ -2490,9 +2492,12 @@ export default function Home() {
             <AudioLines size={19} strokeWidth={2.2} />
           </div>
           <div>
-            <p className="font-display text-lg font-semibold tracking-[-0.03em]">VOX</p>
+            <p className="font-display text-lg font-semibold tracking-[-0.03em]">
+              VOX
+              <span className="holo-version"> / 02</span>
+            </p>
             <p className="text-[0.7rem] font-medium uppercase tracking-[0.17em] text-white/40">
-              Live companion
+              {theme === "holographic" ? "Cognitive voice interface" : "Live companion"}
             </p>
           </div>
         </div>
@@ -2645,53 +2650,92 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="relative z-10 mx-auto grid min-h-[calc(100dvh-5rem)] max-w-[1440px] grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="flex min-h-0 flex-col items-center justify-between px-4 py-7 sm:min-h-[620px] sm:px-10 sm:py-12 lg:min-h-0 lg:px-14 lg:py-16">
-          <div className="max-w-2xl self-start">
-            <div className="eyebrow">
-              <Sparkles size={14} /> Private voice · adaptive conversation
-            </div>
-            <h1 className="font-display mt-5 text-[clamp(2.5rem,13vw,6.5rem)] font-medium leading-[0.9] tracking-[-0.07em] text-balance sm:text-[clamp(2.7rem,7vw,6.5rem)] sm:leading-[0.88] sm:tracking-[-0.075em]">
-              No turns.
-              <br />
-              Just <span className="text-gradient">talk.</span>
-            </h1>
-            <p className="mt-5 max-w-lg text-[0.95rem] leading-6 text-white/52 sm:mt-6 sm:text-lg sm:leading-7">
-              Speak naturally, pause to think, or interrupt mid-sentence. Even when
-              you say nothing, Vox can decide whether the moment calls for a useful
-              thought—or for Vox to stay quietly present.
-            </p>
+      <section className="interface-grid relative z-10 mx-auto grid min-h-[calc(100dvh-5rem)] max-w-[1440px] grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="voice-console flex min-h-0 flex-col items-center justify-between px-4 py-7 sm:min-h-[620px] sm:px-10 sm:py-12 lg:min-h-0 lg:px-14 lg:py-16">
+          <div className="hero-copy max-w-2xl self-start">
+            {theme === "holographic" ? (
+              <>
+                <div className="holo-command-line">
+                  <span>VOICE / PRESENCE / MEMORY</span>
+                  <span>{connected ? "LINK ACTIVE" : "SYSTEM READY"}</span>
+                </div>
+                <div className="eyebrow">
+                  <span className={connected ? "live-dot" : "idle-dot"} />
+                  Adaptive intelligence online
+                </div>
+                <h1 className="holo-title font-display">
+                  Intelligence,
+                  <br />
+                  <span>in the room.</span>
+                </h1>
+                <p className="holo-lede">
+                  A private voice link that listens, thinks, remembers, and knows
+                  when the moment needs an answer.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="eyebrow">
+                  <Sparkles size={14} /> Private voice · adaptive conversation
+                </div>
+                <h1 className="font-display mt-5 text-[clamp(2.5rem,13vw,6.5rem)] font-medium leading-[0.9] tracking-[-0.07em] text-balance sm:text-[clamp(2.7rem,7vw,6.5rem)] sm:leading-[0.88] sm:tracking-[-0.075em]">
+                  No turns.
+                  <br />
+                  Just <span className="text-gradient">talk.</span>
+                </h1>
+                <p className="mt-5 max-w-lg text-[0.95rem] leading-6 text-white/52 sm:mt-6 sm:text-lg sm:leading-7">
+                  Speak naturally, pause to think, or interrupt mid-sentence. Even
+                  when you say nothing, Vox can decide whether the moment calls for
+                  a useful thought—or for Vox to stay quietly present.
+                </p>
+              </>
+            )}
           </div>
 
-          <div className="my-8 flex w-full max-w-[620px] flex-col items-center sm:my-10">
-            <button
-              type="button"
-              className={`orb ${active ? "is-active" : ""}`}
-              onClick={connected ? toggleMute : connect}
-              aria-label={
-                connected
-                  ? muted
-                    ? "Unmute microphone"
-                    : "Mute microphone"
-                  : "Start voice conversation"
-              }
-            >
-              <span className="orb-ring orb-ring-one" />
-              <span className="orb-ring orb-ring-two" />
-              <span className="orb-core">
-                {connectionState === "creating" ? (
-                  <FileText size={34} />
-                ) : connectionState === "searching" ? (
-                  <Globe2 size={34} />
-                ) : muted ? (
-                  <MicOff size={34} />
-                ) : (
-                  <Mic size={34} />
-                )}
-              </span>
-            </button>
+          <div className="voice-stage my-8 flex w-full max-w-[620px] flex-col items-center sm:my-10">
+            <div className="holo-core-stage">
+              <div className="holo-telemetry holo-telemetry-left" aria-hidden="true">
+                <span>VOICE LINK</span>
+                <strong>{connected ? (muted ? "PAUSED" : "OPEN") : "STANDBY"}</strong>
+              </div>
+              <button
+                type="button"
+                className={`orb ${active ? "is-active" : ""}`}
+                onClick={connected ? toggleMute : connect}
+                aria-label={
+                  connected
+                    ? muted
+                      ? "Unmute microphone"
+                      : "Mute microphone"
+                    : "Start voice conversation"
+                }
+              >
+                <span className="orb-ring orb-ring-one" />
+                <span className="orb-ring orb-ring-two" />
+                <span className="holo-ring holo-ring-one" />
+                <span className="holo-ring holo-ring-two" />
+                <span className="orb-core">
+                  {connectionState === "creating" ? (
+                    <FileText size={34} />
+                  ) : connectionState === "searching" ? (
+                    <Globe2 size={34} />
+                  ) : muted ? (
+                    <MicOff size={34} />
+                  ) : (
+                    <Mic size={34} />
+                  )}
+                </span>
+              </button>
+              <div className="holo-telemetry holo-telemetry-right" aria-hidden="true">
+                <span>CORE STATE</span>
+                <strong>{statusCopy[connectionState].toUpperCase()}</strong>
+              </div>
+              <div className="holo-core-caption" aria-hidden="true">
+                VOX / COGNITIVE CORE / 01
+              </div>
+            </div>
 
-            <div className="mt-7 text-center sm:mt-10" aria-live="polite">
+            <div className="voice-status mt-7 text-center sm:mt-10" aria-live="polite">
               <p className="font-display text-xl font-medium tracking-tight sm:text-2xl">
                 {statusCopy[connectionState]}
               </p>
@@ -2717,7 +2761,7 @@ export default function Home() {
                   size="lg"
                   onClick={connect}
                   disabled={connectionState === "connecting"}
-                  className="h-12 w-full max-w-[260px] rounded-full bg-[#f4ff74] px-7 font-semibold text-[#10111b] hover:bg-[#ebf969] sm:w-auto"
+                  className="voice-primary-action h-12 w-full max-w-[260px] rounded-full bg-[#f4ff74] px-7 font-semibold text-[#10111b] hover:bg-[#ebf969] sm:w-auto"
                 >
                   <Headphones className="mr-1" />
                   {connectionState === "connecting" ? "Connecting…" : "Start talking"}
@@ -2747,12 +2791,12 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="flex w-full flex-col items-stretch gap-4 border-t border-white/8 pt-5 text-xs text-white/36 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-            <span className="flex items-center gap-2">
+          <div className="control-deck flex w-full flex-col items-stretch gap-4 border-t border-white/8 pt-5 text-xs text-white/36 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <span className="control-deck-title flex items-center gap-2">
               <Volume2 size={14} /> Headphones recommended
             </span>
-            <div className="grid w-full gap-2.5 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end sm:gap-x-4 sm:gap-y-3">
-              <div className="flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
+            <div className="control-grid grid w-full gap-2.5 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end sm:gap-x-4 sm:gap-y-3">
+              <div className="control-module flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
                 <label htmlFor="reply-length" className="whitespace-nowrap">
                   Reply length
                 </label>
@@ -2772,7 +2816,7 @@ export default function Home() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
+              <div className="control-module flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
                 <label htmlFor="voice" className="whitespace-nowrap">
                   Voice
                 </label>
@@ -2794,7 +2838,7 @@ export default function Home() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
+              <div className="control-module flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
                 <label htmlFor="initiative" className="whitespace-nowrap">
                   Initiative
                 </label>
@@ -2818,7 +2862,7 @@ export default function Home() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
+              <div className="control-module flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
                 <label htmlFor="theme" className="whitespace-nowrap">
                   Theme
                 </label>
@@ -2840,18 +2884,24 @@ export default function Home() {
                   </SelectContent>
                 </Select>
               </div>
-              <span className="text-[11px] text-white/28 sm:basis-full sm:text-right">
+              <span className="control-save text-[11px] text-white/28 sm:basis-full sm:text-right">
                 Saved to your Vox account
               </span>
             </div>
           </div>
         </div>
 
-        <aside className="transcript-panel flex flex-col border-t border-white/8 p-4 sm:min-h-[560px] sm:p-7 lg:min-h-0 lg:border-l lg:border-t-0 lg:p-8">
-          <div className="flex items-start justify-between gap-3 sm:gap-5">
+        <aside className="conversation-console transcript-panel flex flex-col border-t border-white/8 p-4 sm:min-h-[560px] sm:p-7 lg:min-h-0 lg:border-l lg:border-t-0 lg:p-8">
+          <div className="transcript-header flex items-start justify-between gap-3 sm:gap-5">
             <div>
-              <p className="font-display text-xl font-medium tracking-tight">Conversation</p>
-              <p className="mt-1 text-sm text-white/40">A lightweight live transcript</p>
+              <p className="font-display text-xl font-medium tracking-tight">
+                {theme === "holographic" ? "Conversation stream" : "Conversation"}
+              </p>
+              <p className="mt-1 text-sm text-white/40">
+                {theme === "holographic"
+                  ? `LIVE LOG / ${messages.length.toString().padStart(2, "0")} ENTRIES`
+                  : "A lightweight live transcript"}
+              </p>
             </div>
             <div className="flex items-center gap-1.5">
               {messages.length > 0 && (
@@ -3292,16 +3342,19 @@ export default function Home() {
             </div>
           </div>
 
-          <div ref={transcriptRef} className="transcript-scroll mt-5 flex-1 space-y-5 overflow-y-auto pr-1 sm:mt-8 sm:space-y-6 sm:pr-2">
+          <div ref={transcriptRef} className="conversation-stream transcript-scroll mt-5 flex-1 space-y-5 overflow-y-auto pr-1 sm:mt-8 sm:space-y-6 sm:pr-2">
             {messages.length === 0 ? (
               <div className="empty-transcript">
                 <div className="empty-icon">
                   <AudioLines size={22} />
                 </div>
-                <p className="mt-5 font-display text-lg font-medium">The room is quiet</p>
+                <p className="mt-5 font-display text-lg font-medium">
+                  {theme === "holographic" ? "Awaiting voice input" : "The room is quiet"}
+                </p>
                 <p className="mt-2 max-w-[260px] text-sm leading-6 text-white/38">
-                  Start a voice session and the important parts of your conversation
-                  will appear here.
+                  {theme === "holographic"
+                    ? "Initialize the private voice link. Conversation data will appear in this stream."
+                    : "Start a voice session and the important parts of your conversation will appear here."}
                 </p>
               </div>
             ) : (
@@ -3310,7 +3363,7 @@ export default function Home() {
                   <p className="message-role">
                     {message.role === "assistant" ? "Vox" : "You"}
                   </p>
-                  <p className="mt-2 text-[0.95rem] leading-6 text-white/74">
+                  <p className="message-copy mt-2 text-[0.95rem] leading-6 text-white/74">
                     {message.text}
                   </p>
                 </article>
@@ -3329,7 +3382,7 @@ export default function Home() {
             )}
           </div>
 
-          <form onSubmit={sendText} className="mt-4 pb-[env(safe-area-inset-bottom)] sm:mt-6 sm:pb-0">
+          <form onSubmit={sendText} className="composer-form mt-4 pb-[env(safe-area-inset-bottom)] sm:mt-6 sm:pb-0">
             <label htmlFor="message" className="sr-only">
               Type a message
             </label>

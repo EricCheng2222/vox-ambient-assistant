@@ -88,36 +88,50 @@ body {
   font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
 }
 
-html[data-vox-theme="neon"] {
-  --background: #020712;
-  --foreground: #e9ffff;
-  --card: #06111f;
-  --card-foreground: #e9ffff;
-  --popover: #071522;
-  --popover-foreground: #e9ffff;
-  --primary: #4ffcff;
-  --primary-foreground: #001317;
-  --secondary: #091d2c;
-  --secondary-foreground: #e9ffff;
-  --muted: #091d2c;
-  --muted-foreground: #7ca9b5;
-  --accent: #102b3d;
+html[data-vox-theme="holographic"] {
+  --background: #020a12;
+  --foreground: #eafcff;
+  --card: #06131e;
+  --card-foreground: #eafcff;
+  --popover: #061621;
+  --popover-foreground: #eafcff;
+  --primary: #78ebff;
+  --primary-foreground: #00151b;
+  --secondary: #0a2230;
+  --secondary-foreground: #eafcff;
+  --muted: #0a2230;
+  --muted-foreground: #83aab5;
+  --accent: #123447;
   --accent-foreground: #ffffff;
-  --border: #174357;
-  --input: #174357;
-  --ring: #4ffcff;
-  --chart-1: #4ffcff;
-  --chart-2: #ff4fda;
-  --chart-3: #84ff76;
-  --chart-4: #ffd75e;
-  --chart-5: #8f7cff;
-  --radius: 0.55rem;
+  --border: #1b5267;
+  --input: #1b5267;
+  --ring: #78ebff;
+  --chart-1: #78ebff;
+  --chart-2: #2f8fff;
+  --chart-3: #b9f7ff;
+  --chart-4: #f5c66d;
+  --chart-5: #3d6683;
+  --radius: 0.7rem;
 }
 button, input {
   font: inherit;
   touch-action: manipulation;
 }
 .font-display { font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif; }
+
+.holo-edge,
+.holo-version,
+.holo-command-line,
+.holo-telemetry,
+.holo-core-caption,
+.holo-ring {
+  display: none;
+}
+.holo-core-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
 
 .ambient {
   position: fixed;
@@ -143,26 +157,35 @@ button, input {
   opacity: 0.11;
 }
 
-.vox-shell[data-vox-theme="neon"] {
+.vox-shell[data-vox-theme="holographic"] {
   position: relative;
   isolation: isolate;
   background:
-    radial-gradient(circle at 50% 38%, rgb(28 214 255 / 9%), transparent 34rem),
-    linear-gradient(145deg, #020712 0%, #03101b 52%, #08051a 100%);
+    radial-gradient(circle at 43% 48%, rgb(76 213 255 / 10%), transparent 31rem),
+    radial-gradient(circle at 84% 82%, rgb(245 198 109 / 5%), transparent 22rem),
+    linear-gradient(150deg, #020a12 0%, #06131e 52%, #020911 100%);
 }
-.vox-shell[data-vox-theme="neon"]::before {
+.vox-shell[data-vox-theme="holographic"]::before {
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(rgb(79 252 255 / 4.5%) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(79 252 255 / 4.5%) 1px, transparent 1px);
-  background-size: 3.5rem 3.5rem;
-  mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 76%, transparent);
+    repeating-radial-gradient(
+      circle at 43% 48%,
+      transparent 0,
+      transparent 7.9rem,
+      rgb(120 235 255 / 4.5%) 8rem,
+      transparent 8.08rem,
+      transparent 16rem
+    ),
+    linear-gradient(rgb(120 235 255 / 3.2%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(120 235 255 / 3.2%) 1px, transparent 1px);
+  background-size: auto, 4.5rem 4.5rem, 4.5rem 4.5rem;
+  mask-image: linear-gradient(to bottom, transparent, #000 14%, #000 82%, transparent);
   content: "";
 }
-.vox-shell[data-vox-theme="neon"]::after {
+.vox-shell[data-vox-theme="holographic"]::after {
   position: fixed;
   inset: 0;
   z-index: 0;
@@ -170,118 +193,567 @@ button, input {
   background: repeating-linear-gradient(
     to bottom,
     transparent 0,
-    transparent 3px,
-    rgb(79 252 255 / 1.6%) 4px
+    transparent 4px,
+    rgb(120 235 255 / 1.15%) 5px
   );
   content: "";
 }
-.vox-shell[data-vox-theme="neon"] .ambient {
-  filter: blur(82px);
-  opacity: 0.2;
-}
-.vox-shell[data-vox-theme="neon"] .ambient-one {
-  top: 5%;
-  left: 8%;
-  background: #00ddeb;
-}
-.vox-shell[data-vox-theme="neon"] .ambient-two {
-  right: -5rem;
-  bottom: 4%;
-  background: #f026c8;
+.vox-shell[data-vox-theme="holographic"] .ambient {
+  filter: blur(92px);
   opacity: 0.16;
 }
-.vox-shell[data-vox-theme="neon"] .vox-header {
-  border-color: rgb(79 252 255 / 17%);
-  background: rgb(2 10 20 / 76%);
-  box-shadow: 0 1px 0 rgb(255 79 218 / 7%);
+.vox-shell[data-vox-theme="holographic"] .ambient-one {
+  top: 8%;
+  left: 12%;
+  background: #2fbbe8;
+}
+.vox-shell[data-vox-theme="holographic"] .ambient-two {
+  right: -5rem;
+  bottom: 2%;
+  background: #efb957;
+  opacity: 0.08;
+}
+.vox-shell[data-vox-theme="holographic"] .vox-header {
+  border-color: rgb(120 235 255 / 18%);
+  background: rgb(2 11 19 / 78%);
+  box-shadow: 0 1px 0 rgb(120 235 255 / 5%);
   backdrop-filter: blur(18px);
 }
-.vox-shell[data-vox-theme="neon"] .brand-mark {
-  border-color: rgb(79 252 255 / 58%);
-  border-radius: 0.35rem;
-  color: #001317;
-  background: #4ffcff;
-  box-shadow: 0 0 30px rgb(79 252 255 / 32%);
-  clip-path: polygon(12% 0, 100% 0, 100% 72%, 72% 100%, 0 100%, 0 12%);
-}
-.vox-shell[data-vox-theme="neon"] .eyebrow {
-  border-color: rgb(79 252 255 / 24%);
-  border-radius: 0.35rem;
-  color: rgb(138 250 255 / 78%);
-  background: rgb(4 30 43 / 64%);
-  box-shadow: inset 0 0 22px rgb(79 252 255 / 5%);
-}
-.vox-shell[data-vox-theme="neon"] .text-gradient {
-  background-image: linear-gradient(95deg, #4ffcff 10%, #8dfff2 48%, #ff4fda 92%);
-  filter: drop-shadow(0 0 18px rgb(79 252 255 / 16%));
-}
-.vox-shell[data-vox-theme="neon"] .orb::before {
-  background: conic-gradient(from 180deg, #4ffcff, #415dff, #ff4fda, #84ff76, #4ffcff);
-  box-shadow:
-    0 0 34px rgb(79 252 255 / 34%),
-    0 0 78px rgb(255 79 218 / 18%);
-}
-.vox-shell[data-vox-theme="neon"] .orb:hover::before,
-.vox-shell[data-vox-theme="neon"] .orb:focus-visible::before {
-  box-shadow:
-    0 0 42px rgb(79 252 255 / 52%),
-    0 0 100px rgb(255 79 218 / 28%);
-}
-.vox-shell[data-vox-theme="neon"] .orb-core {
-  border-color: rgb(112 255 251 / 32%);
+.vox-shell[data-vox-theme="holographic"] .brand-mark {
+  border-color: rgb(120 235 255 / 48%);
+  border-radius: 50%;
+  color: #bff8ff;
   background:
-    radial-gradient(circle, rgb(12 44 58 / 92%) 0%, rgb(2 9 18 / 92%) 70%);
+    radial-gradient(circle, rgb(120 235 255 / 20%), rgb(6 28 42 / 90%) 68%);
   box-shadow:
-    inset 0 0 28px rgb(79 252 255 / 12%),
-    0 0 0 1px rgb(255 79 218 / 8%);
+    inset 0 0 14px rgb(120 235 255 / 16%),
+    0 0 24px rgb(120 235 255 / 19%);
 }
-.vox-shell[data-vox-theme="neon"] .orb-ring {
-  border-color: rgb(79 252 255 / 28%);
+.vox-shell[data-vox-theme="holographic"] .eyebrow {
+  border-color: rgb(120 235 255 / 22%);
+  border-radius: 999px;
+  color: rgb(179 244 255 / 76%);
+  background: rgb(5 30 44 / 58%);
+  box-shadow: inset 0 0 22px rgb(120 235 255 / 5%);
 }
-.vox-shell[data-vox-theme="neon"] .wave-bar.is-live {
-  background: linear-gradient(to top, #ff4fda, #4ffcff);
-  box-shadow: 0 0 calc(var(--wave-level) * 0.9rem) rgb(79 252 255 / 56%);
+.vox-shell[data-vox-theme="holographic"] .text-gradient {
+  background-image: linear-gradient(95deg, #dffcff 4%, #72e8ff 52%, #f0c36f 96%);
+  filter: drop-shadow(0 0 18px rgb(120 235 255 / 14%));
 }
-.vox-shell[data-vox-theme="neon"] .transcript-panel {
-  border-color: rgb(79 252 255 / 15%);
+.vox-shell[data-vox-theme="holographic"] .orb::before {
+  background: conic-gradient(
+    from 8deg,
+    #d9fbff 0 8%,
+    #61e4ff 8% 26%,
+    #1d79bc 26% 40%,
+    #f0c36f 40% 46%,
+    #2b91c7 46% 70%,
+    #8ceeff 70% 88%,
+    #d9fbff 88% 100%
+  );
+  box-shadow:
+    0 0 28px rgb(120 235 255 / 28%),
+    0 0 74px rgb(45 157 206 / 17%);
+}
+.vox-shell[data-vox-theme="holographic"] .orb::after {
+  position: absolute;
+  inset: 0.15rem;
+  z-index: -1;
+  border: 1px dashed rgb(164 242 255 / 28%);
+  border-radius: 50%;
+  content: "";
+  animation: orb-rotate 18s linear infinite reverse;
+}
+.vox-shell[data-vox-theme="holographic"] .orb:hover::before,
+.vox-shell[data-vox-theme="holographic"] .orb:focus-visible::before {
+  box-shadow:
+    0 0 42px rgb(120 235 255 / 43%),
+    0 0 96px rgb(45 157 206 / 23%);
+}
+.vox-shell[data-vox-theme="holographic"] .orb-core {
+  position: relative;
+  border-color: rgb(169 244 255 / 36%);
   background:
-    linear-gradient(180deg, rgb(8 31 45 / 82%), rgb(3 11 21 / 92%));
-  box-shadow: inset 1px 0 0 rgb(255 79 218 / 5%);
+    radial-gradient(circle, rgb(65 190 220 / 29%) 0%, rgb(6 31 46 / 94%) 55%, rgb(2 12 21 / 96%) 72%);
+  box-shadow:
+    inset 0 0 30px rgb(120 235 255 / 16%),
+    0 0 24px rgb(120 235 255 / 10%);
 }
-.vox-shell[data-vox-theme="neon"] .empty-transcript {
-  border-color: rgb(79 252 255 / 17%);
-  border-radius: 0.55rem;
+.vox-shell[data-vox-theme="holographic"] .orb-core::before {
+  position: absolute;
+  inset: 0.55rem;
+  border: 1px dotted rgb(173 246 255 / 34%);
+  border-radius: 50%;
+  content: "";
+  animation: orb-rotate 11s linear infinite;
+}
+.vox-shell[data-vox-theme="holographic"] .orb-core svg {
+  position: relative;
+  z-index: 1;
+  color: #d9fbff;
+  filter: drop-shadow(0 0 7px rgb(120 235 255 / 58%));
+}
+.vox-shell[data-vox-theme="holographic"] .orb-ring {
+  border-color: rgb(120 235 255 / 25%);
+}
+.vox-shell[data-vox-theme="holographic"] .wave-bar.is-live {
+  background: linear-gradient(to top, #2b8fbe, #d8fbff);
+  box-shadow: 0 0 calc(var(--wave-level) * 0.9rem) rgb(120 235 255 / 50%);
+}
+.vox-shell[data-vox-theme="holographic"] .transcript-panel {
+  border-color: rgb(120 235 255 / 14%);
+  background:
+    linear-gradient(180deg, rgb(7 28 41 / 81%), rgb(3 13 22 / 94%));
+  box-shadow: inset 1px 0 0 rgb(120 235 255 / 5%);
+}
+.vox-shell[data-vox-theme="holographic"] .empty-transcript {
+  border-color: rgb(120 235 255 / 17%);
+  border-radius: 0.7rem;
   background: rgb(4 25 38 / 32%);
 }
-.vox-shell[data-vox-theme="neon"] .empty-icon {
-  border-color: rgb(79 252 255 / 27%);
-  border-radius: 0.4rem;
-  color: #4ffcff;
-  background: rgb(79 252 255 / 7%);
-  box-shadow: 0 0 24px rgb(79 252 255 / 10%);
+.vox-shell[data-vox-theme="holographic"] .empty-icon {
+  border-color: rgb(120 235 255 / 27%);
+  border-radius: 50%;
+  color: #9bf2ff;
+  background: rgb(120 235 255 / 7%);
+  box-shadow: 0 0 24px rgb(120 235 255 / 10%);
 }
-.vox-shell[data-vox-theme="neon"] .message::before {
-  background: #4ffcff;
-  box-shadow: 0 0 10px rgb(79 252 255 / 52%);
+.vox-shell[data-vox-theme="holographic"] .message::before {
+  background: #78ebff;
+  box-shadow: 0 0 10px rgb(120 235 255 / 45%);
 }
-.vox-shell[data-vox-theme="neon"] .message-user::before {
-  background: #ff4fda;
-  box-shadow: 0 0 10px rgb(255 79 218 / 36%);
+.vox-shell[data-vox-theme="holographic"] .message-user::before {
+  background: #e6bd70;
+  box-shadow: 0 0 9px rgb(230 189 112 / 24%);
 }
-.vox-shell[data-vox-theme="neon"] .composer {
-  border-color: rgb(79 252 255 / 18%);
-  border-radius: 0.55rem;
+.vox-shell[data-vox-theme="holographic"] .composer {
+  border-color: rgb(120 235 255 / 18%);
+  border-radius: 0.7rem;
   background: rgb(4 24 37 / 72%);
 }
-.vox-shell[data-vox-theme="neon"] .composer:focus-within {
-  border-color: rgb(79 252 255 / 56%);
-  box-shadow: 0 0 0 2px rgb(79 252 255 / 7%);
+.vox-shell[data-vox-theme="holographic"] .composer:focus-within {
+  border-color: rgb(120 235 255 / 52%);
+  box-shadow: 0 0 0 2px rgb(120 235 255 / 7%);
 }
-html[data-vox-theme="neon"] [data-slot="select-content"],
-html[data-vox-theme="neon"] .theme-select-content {
-  border-color: rgb(79 252 255 / 22%);
+html[data-vox-theme="holographic"] [data-slot="select-content"],
+html[data-vox-theme="holographic"] .theme-select-content {
+  border-color: rgb(120 235 255 / 22%);
   background: #06131f;
-  color: #e9ffff;
+  color: #eafcff;
+}
+
+.vox-shell[data-vox-theme="holographic"] .holo-edge {
+  position: fixed;
+  z-index: 5;
+  top: 7.5rem;
+  bottom: 2.5rem;
+  display: block;
+  width: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgb(120 235 255 / 23%) 16%,
+    rgb(120 235 255 / 7%) 82%,
+    transparent
+  );
+}
+.vox-shell[data-vox-theme="holographic"] .holo-edge::before,
+.vox-shell[data-vox-theme="holographic"] .holo-edge::after {
+  position: absolute;
+  left: -2px;
+  width: 5px;
+  height: 1px;
+  background: rgb(120 235 255 / 48%);
+  content: "";
+}
+.vox-shell[data-vox-theme="holographic"] .holo-edge::before { top: 18%; }
+.vox-shell[data-vox-theme="holographic"] .holo-edge::after { bottom: 22%; }
+.vox-shell[data-vox-theme="holographic"] .holo-edge-left { left: 1.25rem; }
+.vox-shell[data-vox-theme="holographic"] .holo-edge-right { right: 1.25rem; }
+.vox-shell[data-vox-theme="holographic"] .holo-version {
+  display: inline;
+  color: rgb(120 235 255 / 52%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62em;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+.vox-shell[data-vox-theme="holographic"] .interface-grid {
+  max-width: 1680px;
+  border-right: 1px solid rgb(120 235 255 / 6%);
+  border-left: 1px solid rgb(120 235 255 / 6%);
+}
+.vox-shell[data-vox-theme="holographic"] .voice-console {
+  position: relative;
+  justify-content: flex-start;
+  overflow: hidden;
+}
+.vox-shell[data-vox-theme="holographic"] .voice-console::before {
+  position: absolute;
+  top: 1.65rem;
+  right: 1.75rem;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-top: 1px solid rgb(120 235 255 / 22%);
+  border-right: 1px solid rgb(120 235 255 / 22%);
+  content: "";
+}
+.vox-shell[data-vox-theme="holographic"] .hero-copy {
+  width: 100%;
+  max-width: none;
+}
+.vox-shell[data-vox-theme="holographic"] .holo-command-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.3rem;
+  color: rgb(120 235 255 / 38%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.61rem;
+  font-weight: 650;
+  letter-spacing: 0.16em;
+}
+.vox-shell[data-vox-theme="holographic"] .holo-command-line span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: rgb(179 244 255 / 62%);
+}
+.vox-shell[data-vox-theme="holographic"] .holo-command-line span:last-child::before {
+  width: 0.32rem;
+  height: 0.32rem;
+  border-radius: 50%;
+  background: #78ebff;
+  box-shadow: 0 0 9px rgb(120 235 255 / 65%);
+  content: "";
+}
+.vox-shell[data-vox-theme="holographic"] .holo-title {
+  margin-top: 1.4rem;
+  max-width: 760px;
+  color: #eafcff;
+  font-size: clamp(3rem, 6.8vw, 6.7rem);
+  font-weight: 420;
+  line-height: 0.9;
+  letter-spacing: -0.07em;
+}
+.vox-shell[data-vox-theme="holographic"] .holo-title span {
+  color: transparent;
+  background: linear-gradient(95deg, #effeff 5%, #78ebff 52%, #81b9d4 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+.vox-shell[data-vox-theme="holographic"] .holo-lede {
+  max-width: 36rem;
+  margin-top: 1.5rem;
+  color: rgb(223 250 255 / 48%);
+  font-size: 0.96rem;
+  line-height: 1.75;
+}
+.vox-shell[data-vox-theme="holographic"] .voice-stage {
+  position: relative;
+  max-width: 780px;
+  margin-block: 0.75rem;
+  padding-block: 0.5rem;
+}
+.vox-shell[data-vox-theme="holographic"] .holo-core-stage {
+  width: min(100%, 40rem);
+  min-height: 17.5rem;
+}
+.vox-shell[data-vox-theme="holographic"] .orb {
+  width: 12.5rem;
+  height: 12.5rem;
+}
+.vox-shell[data-vox-theme="holographic"] .orb::before {
+  inset: 1.45rem;
+}
+.vox-shell[data-vox-theme="holographic"] .orb-core {
+  width: 6.4rem;
+  height: 6.4rem;
+}
+.vox-shell[data-vox-theme="holographic"] .holo-ring {
+  position: absolute;
+  z-index: -1;
+  display: block;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.vox-shell[data-vox-theme="holographic"] .holo-ring-one {
+  inset: -0.8rem;
+  border: 1px solid rgb(120 235 255 / 13%);
+  border-right-color: rgb(120 235 255 / 52%);
+  border-left-color: rgb(120 235 255 / 38%);
+  animation: orb-rotate 13s linear infinite;
+}
+.vox-shell[data-vox-theme="holographic"] .holo-ring-two {
+  inset: -1.65rem;
+  border: 1px dashed rgb(120 235 255 / 17%);
+  animation: orb-rotate 23s linear infinite reverse;
+}
+.vox-shell[data-vox-theme="holographic"] .holo-telemetry {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  min-width: 8rem;
+  flex-direction: column;
+  gap: 0.28rem;
+  color: rgb(120 235 255 / 39%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.13em;
+  transform: translateY(-50%);
+}
+.vox-shell[data-vox-theme="holographic"] .holo-telemetry::after {
+  width: 100%;
+  height: 1px;
+  margin-top: 0.35rem;
+  background: linear-gradient(90deg, rgb(120 235 255 / 44%), transparent);
+  content: "";
+}
+.vox-shell[data-vox-theme="holographic"] .holo-telemetry strong {
+  color: rgb(222 251 255 / 76%);
+  font-size: 0.67rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.vox-shell[data-vox-theme="holographic"] .holo-telemetry-left {
+  left: 0;
+  text-align: left;
+}
+.vox-shell[data-vox-theme="holographic"] .holo-telemetry-right {
+  right: 0;
+  align-items: flex-end;
+  text-align: right;
+}
+.vox-shell[data-vox-theme="holographic"] .holo-telemetry-right::after {
+  background: linear-gradient(270deg, rgb(120 235 255 / 44%), transparent);
+}
+.vox-shell[data-vox-theme="holographic"] .holo-core-caption {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  display: block;
+  color: rgb(120 235 255 / 34%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.19em;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.vox-shell[data-vox-theme="holographic"] .voice-status {
+  margin-top: 0.8rem;
+}
+.vox-shell[data-vox-theme="holographic"] .voice-status > p:first-child {
+  color: #dffcff;
+  font-size: 1rem;
+  font-weight: 550;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.vox-shell[data-vox-theme="holographic"] .voice-status > p:last-child {
+  color: rgb(192 240 248 / 37%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+}
+.vox-shell[data-vox-theme="holographic"] .voice-primary-action {
+  min-width: 12rem;
+  border: 1px solid rgb(120 235 255 / 48%);
+  border-radius: 0.45rem;
+  color: #dffcff;
+  background: rgb(31 128 163 / 22%);
+  box-shadow:
+    inset 0 0 18px rgb(120 235 255 / 8%),
+    0 0 22px rgb(120 235 255 / 8%);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+.vox-shell[data-vox-theme="holographic"] .voice-primary-action:hover {
+  color: #ffffff;
+  background: rgb(48 175 211 / 28%);
+}
+.vox-shell[data-vox-theme="holographic"] .control-deck {
+  position: relative;
+  display: block;
+  margin-top: 1.2rem;
+  border: 1px solid rgb(120 235 255 / 13%);
+  padding: 1rem;
+  color: rgb(197 240 248 / 49%);
+  background: linear-gradient(135deg, rgb(8 35 50 / 62%), rgb(3 16 27 / 72%));
+  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+}
+.vox-shell[data-vox-theme="holographic"] .control-deck-title {
+  margin-bottom: 0.8rem;
+  color: rgb(120 235 255 / 48%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+.vox-shell[data-vox-theme="holographic"] .control-grid {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+.vox-shell[data-vox-theme="holographic"] .control-module {
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
+  border-left: 1px solid rgb(120 235 255 / 11%);
+  padding-left: 0.55rem;
+}
+.vox-shell[data-vox-theme="holographic"] .control-module label {
+  color: rgb(120 235 255 / 40%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.53rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+.vox-shell[data-vox-theme="holographic"] .control-module [data-slot="select-trigger"] {
+  width: 100%;
+  height: 2.35rem;
+  border-color: rgb(120 235 255 / 14%);
+  border-radius: 0.35rem;
+  color: rgb(226 252 255 / 72%);
+  background: rgb(4 22 34 / 72%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.65rem;
+}
+.vox-shell[data-vox-theme="holographic"] .control-save {
+  grid-column: 1 / -1;
+  margin-top: 0.2rem;
+  color: rgb(120 235 255 / 25%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.vox-shell[data-vox-theme="holographic"] .conversation-console {
+  position: relative;
+  padding-top: 2.1rem;
+}
+.vox-shell[data-vox-theme="holographic"] .conversation-console::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #78ebff, rgb(120 235 255 / 8%) 48%, transparent);
+  content: "";
+}
+.vox-shell[data-vox-theme="holographic"] .transcript-header {
+  border-bottom: 1px solid rgb(120 235 255 / 11%);
+  padding-bottom: 1rem;
+}
+.vox-shell[data-vox-theme="holographic"] .transcript-header > div:first-child p:first-child {
+  color: #dffcff;
+  font-size: 0.88rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.vox-shell[data-vox-theme="holographic"] .transcript-header > div:first-child p:last-child {
+  color: rgb(120 235 255 / 34%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.12em;
+}
+.vox-shell[data-vox-theme="holographic"] .conversation-stream {
+  margin-top: 1rem;
+  padding-right: 0.3rem;
+}
+.vox-shell[data-vox-theme="holographic"] .message {
+  border: 1px solid rgb(120 235 255 / 9%);
+  padding: 0.9rem 0.95rem 0.95rem;
+  background: linear-gradient(135deg, rgb(8 35 48 / 48%), rgb(3 17 28 / 28%));
+  clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+}
+.vox-shell[data-vox-theme="holographic"] .message::before {
+  top: 0;
+  right: auto;
+  bottom: auto;
+  left: 0;
+  width: 3rem;
+  height: 1px;
+}
+.vox-shell[data-vox-theme="holographic"] .message-user {
+  border-color: rgb(230 189 112 / 10%);
+  background: linear-gradient(135deg, rgb(51 44 29 / 32%), rgb(7 19 27 / 24%));
+}
+.vox-shell[data-vox-theme="holographic"] .message-role {
+  color: rgb(120 235 255 / 44%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.54rem;
+}
+.vox-shell[data-vox-theme="holographic"] .message-user .message-role {
+  color: rgb(230 189 112 / 48%);
+}
+.vox-shell[data-vox-theme="holographic"] .message-copy {
+  color: rgb(229 249 252 / 72%);
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+.vox-shell[data-vox-theme="holographic"] .composer-form {
+  border-top: 1px solid rgb(120 235 255 / 10%);
+  padding-top: 0.85rem;
+}
+html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
+  border-color: rgb(120 235 255 / 16%);
+  background: #06131f;
+}
+
+@media (min-width: 1024px) {
+  .vox-shell[data-vox-theme="holographic"] .interface-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(420px, 33vw);
+  }
+  .vox-shell[data-vox-theme="holographic"] .voice-console {
+    padding: 2.2rem clamp(2.5rem, 5vw, 6rem) 1.5rem;
+  }
+}
+
+@media (max-width: 720px) {
+  .vox-shell[data-vox-theme="holographic"] .holo-edge {
+    display: none;
+  }
+  .vox-shell[data-vox-theme="holographic"] .voice-console::before {
+    top: 1rem;
+    right: 1rem;
+    width: 2.2rem;
+    height: 2.2rem;
+  }
+  .vox-shell[data-vox-theme="holographic"] .holo-command-line {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+  .vox-shell[data-vox-theme="holographic"] .holo-title {
+    font-size: clamp(2.85rem, 14.5vw, 4.3rem);
+  }
+  .vox-shell[data-vox-theme="holographic"] .holo-lede {
+    font-size: 0.88rem;
+  }
+  .vox-shell[data-vox-theme="holographic"] .voice-stage {
+    margin-block: 1.25rem;
+  }
+  .vox-shell[data-vox-theme="holographic"] .holo-core-stage {
+    min-height: 16.5rem;
+  }
+  .vox-shell[data-vox-theme="holographic"] .orb {
+    width: 10.5rem;
+    height: 10.5rem;
+  }
+  .vox-shell[data-vox-theme="holographic"] .holo-telemetry {
+    display: none;
+  }
+  .vox-shell[data-vox-theme="holographic"] .control-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .vox-shell[data-vox-theme="holographic"] .control-module {
+    min-height: 4.25rem;
+  }
+  .vox-shell[data-vox-theme="holographic"] .conversation-console {
+    padding-top: 1.5rem;
+  }
 }
 
 .brand-mark {
