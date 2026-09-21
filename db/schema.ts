@@ -97,6 +97,7 @@ export const userPreferences = sqliteTable("user_preferences", {
   replyLength: text("reply_length").notNull().default("balanced"),
   voice: text("voice").notNull().default("marin"),
   initiative: text("initiative").notNull().default("balanced"),
+  theme: text("theme").notNull().default("ambient"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });

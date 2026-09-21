@@ -87,6 +87,32 @@ body {
   color: var(--foreground);
   font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
 }
+
+html[data-vox-theme="neon"] {
+  --background: #020712;
+  --foreground: #e9ffff;
+  --card: #06111f;
+  --card-foreground: #e9ffff;
+  --popover: #071522;
+  --popover-foreground: #e9ffff;
+  --primary: #4ffcff;
+  --primary-foreground: #001317;
+  --secondary: #091d2c;
+  --secondary-foreground: #e9ffff;
+  --muted: #091d2c;
+  --muted-foreground: #7ca9b5;
+  --accent: #102b3d;
+  --accent-foreground: #ffffff;
+  --border: #174357;
+  --input: #174357;
+  --ring: #4ffcff;
+  --chart-1: #4ffcff;
+  --chart-2: #ff4fda;
+  --chart-3: #84ff76;
+  --chart-4: #ffd75e;
+  --chart-5: #8f7cff;
+  --radius: 0.55rem;
+}
 button, input {
   font: inherit;
   touch-action: manipulation;
@@ -115,6 +141,147 @@ button, input {
   bottom: 2rem;
   background: #fb5d88;
   opacity: 0.11;
+}
+
+.vox-shell[data-vox-theme="neon"] {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 50% 38%, rgb(28 214 255 / 9%), transparent 34rem),
+    linear-gradient(145deg, #020712 0%, #03101b 52%, #08051a 100%);
+}
+.vox-shell[data-vox-theme="neon"]::before {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgb(79 252 255 / 4.5%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(79 252 255 / 4.5%) 1px, transparent 1px);
+  background-size: 3.5rem 3.5rem;
+  mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 76%, transparent);
+  content: "";
+}
+.vox-shell[data-vox-theme="neon"]::after {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 3px,
+    rgb(79 252 255 / 1.6%) 4px
+  );
+  content: "";
+}
+.vox-shell[data-vox-theme="neon"] .ambient {
+  filter: blur(82px);
+  opacity: 0.2;
+}
+.vox-shell[data-vox-theme="neon"] .ambient-one {
+  top: 5%;
+  left: 8%;
+  background: #00ddeb;
+}
+.vox-shell[data-vox-theme="neon"] .ambient-two {
+  right: -5rem;
+  bottom: 4%;
+  background: #f026c8;
+  opacity: 0.16;
+}
+.vox-shell[data-vox-theme="neon"] .vox-header {
+  border-color: rgb(79 252 255 / 17%);
+  background: rgb(2 10 20 / 76%);
+  box-shadow: 0 1px 0 rgb(255 79 218 / 7%);
+  backdrop-filter: blur(18px);
+}
+.vox-shell[data-vox-theme="neon"] .brand-mark {
+  border-color: rgb(79 252 255 / 58%);
+  border-radius: 0.35rem;
+  color: #001317;
+  background: #4ffcff;
+  box-shadow: 0 0 30px rgb(79 252 255 / 32%);
+  clip-path: polygon(12% 0, 100% 0, 100% 72%, 72% 100%, 0 100%, 0 12%);
+}
+.vox-shell[data-vox-theme="neon"] .eyebrow {
+  border-color: rgb(79 252 255 / 24%);
+  border-radius: 0.35rem;
+  color: rgb(138 250 255 / 78%);
+  background: rgb(4 30 43 / 64%);
+  box-shadow: inset 0 0 22px rgb(79 252 255 / 5%);
+}
+.vox-shell[data-vox-theme="neon"] .text-gradient {
+  background-image: linear-gradient(95deg, #4ffcff 10%, #8dfff2 48%, #ff4fda 92%);
+  filter: drop-shadow(0 0 18px rgb(79 252 255 / 16%));
+}
+.vox-shell[data-vox-theme="neon"] .orb::before {
+  background: conic-gradient(from 180deg, #4ffcff, #415dff, #ff4fda, #84ff76, #4ffcff);
+  box-shadow:
+    0 0 34px rgb(79 252 255 / 34%),
+    0 0 78px rgb(255 79 218 / 18%);
+}
+.vox-shell[data-vox-theme="neon"] .orb:hover::before,
+.vox-shell[data-vox-theme="neon"] .orb:focus-visible::before {
+  box-shadow:
+    0 0 42px rgb(79 252 255 / 52%),
+    0 0 100px rgb(255 79 218 / 28%);
+}
+.vox-shell[data-vox-theme="neon"] .orb-core {
+  border-color: rgb(112 255 251 / 32%);
+  background:
+    radial-gradient(circle, rgb(12 44 58 / 92%) 0%, rgb(2 9 18 / 92%) 70%);
+  box-shadow:
+    inset 0 0 28px rgb(79 252 255 / 12%),
+    0 0 0 1px rgb(255 79 218 / 8%);
+}
+.vox-shell[data-vox-theme="neon"] .orb-ring {
+  border-color: rgb(79 252 255 / 28%);
+}
+.vox-shell[data-vox-theme="neon"] .wave-bar.is-live {
+  background: linear-gradient(to top, #ff4fda, #4ffcff);
+  box-shadow: 0 0 calc(var(--wave-level) * 0.9rem) rgb(79 252 255 / 56%);
+}
+.vox-shell[data-vox-theme="neon"] .transcript-panel {
+  border-color: rgb(79 252 255 / 15%);
+  background:
+    linear-gradient(180deg, rgb(8 31 45 / 82%), rgb(3 11 21 / 92%));
+  box-shadow: inset 1px 0 0 rgb(255 79 218 / 5%);
+}
+.vox-shell[data-vox-theme="neon"] .empty-transcript {
+  border-color: rgb(79 252 255 / 17%);
+  border-radius: 0.55rem;
+  background: rgb(4 25 38 / 32%);
+}
+.vox-shell[data-vox-theme="neon"] .empty-icon {
+  border-color: rgb(79 252 255 / 27%);
+  border-radius: 0.4rem;
+  color: #4ffcff;
+  background: rgb(79 252 255 / 7%);
+  box-shadow: 0 0 24px rgb(79 252 255 / 10%);
+}
+.vox-shell[data-vox-theme="neon"] .message::before {
+  background: #4ffcff;
+  box-shadow: 0 0 10px rgb(79 252 255 / 52%);
+}
+.vox-shell[data-vox-theme="neon"] .message-user::before {
+  background: #ff4fda;
+  box-shadow: 0 0 10px rgb(255 79 218 / 36%);
+}
+.vox-shell[data-vox-theme="neon"] .composer {
+  border-color: rgb(79 252 255 / 18%);
+  border-radius: 0.55rem;
+  background: rgb(4 24 37 / 72%);
+}
+.vox-shell[data-vox-theme="neon"] .composer:focus-within {
+  border-color: rgb(79 252 255 / 56%);
+  box-shadow: 0 0 0 2px rgb(79 252 255 / 7%);
+}
+html[data-vox-theme="neon"] [data-slot="select-content"],
+html[data-vox-theme="neon"] .theme-select-content {
+  border-color: rgb(79 252 255 / 22%);
+  background: #06131f;
+  color: #e9ffff;
 }
 
 .brand-mark {

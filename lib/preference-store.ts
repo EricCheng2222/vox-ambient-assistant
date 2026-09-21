@@ -22,6 +22,7 @@ export async function getUserPreferencesState(
       replyLength: userPreferences.replyLength,
       voice: userPreferences.voice,
       initiative: userPreferences.initiative,
+      theme: userPreferences.theme,
     })
     .from(userPreferences)
     .where(eq(userPreferences.ownerId, ownerId))
@@ -49,6 +50,7 @@ export async function updateUserPreferences(
   if (patch.replyLength !== undefined) update.replyLength = patch.replyLength;
   if (patch.voice !== undefined) update.voice = patch.voice;
   if (patch.initiative !== undefined) update.initiative = patch.initiative;
+  if (patch.theme !== undefined) update.theme = patch.theme;
 
   await db
     .update(userPreferences)

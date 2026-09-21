@@ -14,6 +14,7 @@
     "test:privacy": "node --experimental-strip-types scripts/test-privacy.mjs",
     "test:reply-length": "node --experimental-strip-types scripts/test-reply-length.mjs",
     "test:response-language": "node --experimental-strip-types scripts/test-response-language.mjs",
+    "test:visual-theme": "node --experimental-strip-types scripts/test-visual-theme.mjs",
     "db:generate": "drizzle-kit generate",
     "deploy:prepare": "node scripts/prepare-cloudflare-deploy.mjs",
     "deploy:migrate": "wrangler d1 migrations apply DB --remote --config dist/server/wrangler.deploy.json",

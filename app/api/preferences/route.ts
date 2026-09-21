@@ -9,6 +9,7 @@ import {
   isReplyLength,
   type UserPreferences,
 } from "@/lib/preferences";
+import { isVisualTheme } from "@/lib/visual-theme";
 
 const noStore = { "Cache-Control": "no-store" };
 
@@ -72,6 +73,15 @@ export async function PATCH(request: Request) {
       );
     }
     patch.initiative = body.initiative;
+  }
+  if ("theme" in body) {
+    if (!isVisualTheme(body.theme)) {
+      return Response.json(
+        { error: "Theme is not valid." },
+        { status: 400, headers: noStore },
+      );
+    }
+    patch.theme = body.theme;
   }
   if (Object.keys(patch).length === 0) {
     return Response.json(

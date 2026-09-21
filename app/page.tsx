@@ -90,6 +90,11 @@ import {
   type UserPreferences,
 } from "@/lib/preferences";
 import type { ConversationMessage } from "@/lib/conversation";
+import {
+  parseVisualTheme,
+  visualThemeOptions,
+  type VisualTheme,
+} from "@/lib/visual-theme";
 
 type ConnectionState =
   | "idle"
@@ -446,6 +451,9 @@ export default function Home() {
   );
   const [replyLength, setReplyLength] =
     useState<ReplyLength>(defaultUserPreferences.replyLength);
+  const [theme, setTheme] = useState<VisualTheme>(
+    defaultUserPreferences.theme,
+  );
   const [thinkingCue, setThinkingCue] = useState("");
   const [memories, setMemories] = useState<MemoryRecord[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(true);
@@ -547,6 +555,13 @@ export default function Home() {
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
+
+  useEffect(() => {
+    document.documentElement.dataset.voxTheme = theme;
+    return () => {
+      delete document.documentElement.dataset.voxTheme;
+    };
+  }, [theme]);
 
   useEffect(() => {
     let active = true;
@@ -908,6 +923,12 @@ export default function Home() {
     void savePreferences({ initiative: nextInitiative });
   }
 
+  function chooseTheme(value: string) {
+    const nextTheme = parseVisualTheme(value);
+    setTheme(nextTheme);
+    void savePreferences({ theme: nextTheme });
+  }
+
   function claimInputTranscription(text: string, itemId?: string) {
     const normalized = text.trim().toLocaleLowerCase().replace(/\s+/g, " ");
     if (!normalized) return false;
@@ -940,6 +961,7 @@ export default function Home() {
     setReplyLength(next.replyLength);
     setVoice(next.voice);
     setInitiative(next.initiative);
+    setTheme(next.theme);
     refreshRealtimeContext(next.replyLength);
   }
 
@@ -2453,7 +2475,10 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-dvh overflow-x-hidden bg-background text-foreground">
+    <main
+      className="vox-shell min-h-dvh overflow-x-hidden bg-background text-foreground"
+      data-vox-theme={theme}
+    >
       <audio ref={audioRef} autoPlay className="sr-only" />
       <Toaster position="top-center" richColors />
       <div className="ambient ambient-one" />
@@ -2790,6 +2815,28 @@ export default function Home() {
                     <SelectItem value="quiet">Quiet</SelectItem>
                     <SelectItem value="balanced">Balanced</SelectItem>
                     <SelectItem value="social">Social</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
+                <label htmlFor="theme" className="whitespace-nowrap">
+                  Theme
+                </label>
+                <Select value={theme} onValueChange={chooseTheme}>
+                  <SelectTrigger
+                    id="theme"
+                    size="sm"
+                    className="h-11 w-[132px] border-white/10 bg-white/[0.04] text-white/70 shadow-none sm:h-auto sm:w-[118px]"
+                    aria-label="Vox visual theme"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="theme-select-content border-white/10 bg-[#171823] text-white">
+                    {visualThemeOptions.map((option) => (
+                      <SelectItem key={option.id} value={option.id}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

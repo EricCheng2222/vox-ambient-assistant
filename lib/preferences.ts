@@ -9,6 +9,11 @@ import {
   parseReplyLength,
   type ReplyLength,
 } from "@/lib/reply-length";
+import {
+  defaultVisualTheme,
+  parseVisualTheme,
+  type VisualTheme,
+} from "@/lib/visual-theme";
 
 export type Initiative = "off" | "quiet" | "balanced" | "social";
 
@@ -16,6 +21,7 @@ export type UserPreferences = {
   replyLength: ReplyLength;
   voice: RealtimeVoice;
   initiative: Initiative;
+  theme: VisualTheme;
 };
 
 const initiatives = new Set<Initiative>([
@@ -33,6 +39,7 @@ export const defaultUserPreferences: UserPreferences = {
   replyLength: defaultReplyLength,
   voice: defaultRealtimeVoice,
   initiative: defaultInitiative,
+  theme: defaultVisualTheme,
 };
 
 export function isInitiative(value: unknown): value is Initiative {
@@ -59,5 +66,6 @@ export function parseUserPreferences(value: unknown): UserPreferences {
     replyLength: parseReplyLength(candidate.replyLength),
     voice: parseRealtimeVoice(candidate.voice),
     initiative: parseInitiative(candidate.initiative),
+    theme: parseVisualTheme(candidate.theme),
   };
 }
