@@ -539,7 +539,7 @@ export default function Home() {
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({
-      top: transcriptRef.current.scrollHeight,
+      top: 0,
       behavior: "smooth",
     });
   }, [messages, thinkingCue]);
@@ -3348,7 +3348,18 @@ export default function Home() {
           </div>
 
           <div ref={transcriptRef} className="conversation-stream transcript-scroll mt-5 flex-1 space-y-5 overflow-y-auto pr-1 sm:mt-8 sm:space-y-6 sm:pr-2">
-            {messages.length === 0 ? (
+            {thinkingCue && (
+              <article
+                className="message message-assistant border border-[#c8bcff]/12 bg-[#c8bcff]/[0.035]"
+                aria-live="polite"
+              >
+                <p className="message-role">Vox · text only</p>
+                <p className="mt-2 text-[0.95rem] leading-6 text-white/58">
+                  {thinkingCue}
+                </p>
+              </article>
+            )}
+            {messages.length === 0 && !thinkingCue ? (
               <div className="empty-transcript">
                 <div className="empty-icon">
                   <AudioLines size={22} />
@@ -3363,7 +3374,7 @@ export default function Home() {
                 </p>
               </div>
             ) : (
-              messages.map((message) => (
+              messages.slice().reverse().map((message) => (
                 <article key={message.id} className={`message message-${message.role}`}>
                   <p className="message-role">
                     {message.role === "assistant" ? "Vox" : "You"}
@@ -3373,17 +3384,6 @@ export default function Home() {
                   </p>
                 </article>
               ))
-            )}
-            {thinkingCue && (
-              <article
-                className="message message-assistant border border-[#c8bcff]/12 bg-[#c8bcff]/[0.035]"
-                aria-live="polite"
-              >
-                <p className="message-role">Vox · text only</p>
-                <p className="mt-2 text-[0.95rem] leading-6 text-white/58">
-                  {thinkingCue}
-                </p>
-              </article>
             )}
           </div>
 
