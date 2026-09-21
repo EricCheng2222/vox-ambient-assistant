@@ -65,18 +65,23 @@ import { formatFileSize, type AgentFile } from "@/lib/agent-file";
 import { formatReminderTime, type Reminder } from "@/lib/reminder";
 import { getCurrentTimeContext } from "@/lib/time-context";
 import {
-  defaultRealtimeVoice,
   parseRealtimeVoice,
   realtimeVoiceOptions,
   type RealtimeVoice,
 } from "@/lib/realtime-voice";
 import {
-  defaultReplyLength,
   parseReplyLength,
   replyLengthInstruction,
   type ReplyLength,
 } from "@/lib/reply-length";
 import { API_BUDGET_MESSAGE } from "@/lib/provider-error";
+import {
+  defaultUserPreferences,
+  parseInitiative,
+  parseUserPreferences,
+  type Initiative,
+  type UserPreferences,
+} from "@/lib/preferences";
 
 type ConnectionState =
   | "idle"
@@ -104,7 +109,6 @@ type JevRoute =
   | "create_reminder"
   | "create_file";
 
-type Initiative = "off" | "quiet" | "balanced" | "social";
 type PresenceAction = "stay_silent" | "check_in" | "continue_topic";
 type AuthState = "checking" | "authenticated" | "locked";
 type InviteStatus = {
@@ -143,8 +147,8 @@ type EchoCandidate = {
   confirmed: boolean;
 };
 
-const VOICE_STORAGE_KEY = "vox.realtimeVoice";
-const REPLY_LENGTH_STORAGE_KEY = "vox.replyLength";
+const LEGACY_VOICE_STORAGE_KEY = "vox.realtimeVoice";
+const LEGACY_REPLY_LENGTH_STORAGE_KEY = "vox.replyLength";
 
 type RealtimeEvent = {
   type?: string;
@@ -403,10 +407,14 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [muted, setMuted] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [initiative, setInitiative] = useState<Initiative>("balanced");
-  const [voice, setVoice] = useState<RealtimeVoice>(defaultRealtimeVoice);
+  const [initiative, setInitiative] = useState<Initiative>(
+    defaultUserPreferences.initiative,
+  );
+  const [voice, setVoice] = useState<RealtimeVoice>(
+    defaultUserPreferences.voice,
+  );
   const [replyLength, setReplyLength] =
-    useState<ReplyLength>(defaultReplyLength);
+    useState<ReplyLength>(defaultUserPreferences.replyLength);
   const [thinkingCue, setThinkingCue] = useState("");
   const [memories, setMemories] = useState<MemoryRecord[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(true);
@@ -443,7 +451,9 @@ export default function Home() {
   const presenceCheckInFlightRef = useRef(false);
   const proactiveCountRef = useRef(0);
   const memoriesRef = useRef<MemoryRecord[]>([]);
-  const replyLengthRef = useRef<ReplyLength>(defaultReplyLength);
+  const replyLengthRef = useRef<ReplyLength>(defaultUserPreferences.replyLength);
+  const preferenceSavesRef = useRef(0);
+  const preferenceRevisionRef = useRef(0);
   const routeTurnRef = useRef(0);
   const activeRouteTurnRef = useRef<number | null>(null);
   const activeResponseIdRef = useRef<string | null>(null);
@@ -501,21 +511,6 @@ export default function Home() {
   }, [muted]);
 
   useEffect(() => {
-    const savedVoice = parseRealtimeVoice(
-      window.localStorage.getItem(VOICE_STORAGE_KEY),
-    );
-    const savedReplyLength = parseReplyLength(
-      window.localStorage.getItem(REPLY_LENGTH_STORAGE_KEY),
-    );
-    replyLengthRef.current = savedReplyLength;
-    const timer = window.setTimeout(() => {
-      setVoice(savedVoice);
-      setReplyLength(savedReplyLength);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
     let active = true;
     void fetch("/api/auth", { cache: "no-store" })
       .then(async (response) => {
@@ -541,6 +536,24 @@ export default function Home() {
     void loadFiles();
     void loadReminders();
     void loadInviteStatus();
+    void loadPreferences();
+    // Loading is intentionally keyed to the authentication transition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authState]);
+
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    const syncWhenVisible = () => {
+      if (document.visibilityState === "visible" && preferenceSavesRef.current === 0) {
+        void loadPreferences(true);
+      }
+    };
+    window.addEventListener("focus", syncWhenVisible);
+    document.addEventListener("visibilitychange", syncWhenVisible);
+    return () => {
+      window.removeEventListener("focus", syncWhenVisible);
+      document.removeEventListener("visibilitychange", syncWhenVisible);
+    };
     // Loading is intentionally keyed to the authentication transition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authState]);
@@ -714,7 +727,7 @@ export default function Home() {
   function chooseVoice(value: string) {
     const nextVoice = parseRealtimeVoice(value);
     setVoice(nextVoice);
-    window.localStorage.setItem(VOICE_STORAGE_KEY, nextVoice);
+    void savePreferences({ voice: nextVoice });
     if (connected || connectionState === "connecting") {
       toast.info("Voice saved for the next conversation", {
         description: "End this conversation and start another to hear the change.",
@@ -726,8 +739,14 @@ export default function Home() {
     const nextReplyLength = parseReplyLength(value);
     replyLengthRef.current = nextReplyLength;
     setReplyLength(nextReplyLength);
-    window.localStorage.setItem(REPLY_LENGTH_STORAGE_KEY, nextReplyLength);
+    void savePreferences({ replyLength: nextReplyLength });
     refreshRealtimeContext(nextReplyLength);
+  }
+
+  function chooseInitiative(value: string) {
+    const nextInitiative = parseInitiative(value);
+    setInitiative(nextInitiative);
+    void savePreferences({ initiative: nextInitiative });
   }
 
   function claimInputTranscription(text: string, itemId?: string) {
@@ -755,6 +774,92 @@ export default function Home() {
     memoriesRef.current = next;
     setMemories(next);
     refreshRealtimeContext();
+  }
+
+  function applyPreferences(next: UserPreferences) {
+    replyLengthRef.current = next.replyLength;
+    setReplyLength(next.replyLength);
+    setVoice(next.voice);
+    setInitiative(next.initiative);
+    refreshRealtimeContext(next.replyLength);
+  }
+
+  async function loadPreferences(quiet = false) {
+    const revisionAtStart = preferenceRevisionRef.current;
+    try {
+      const response = await fetch("/api/preferences", { cache: "no-store" });
+      const payload = (await response.json()) as {
+        preferences?: UserPreferences;
+        stored?: boolean;
+        error?: string;
+      };
+      if (!response.ok || !payload.preferences) {
+        throw new Error(payload.error ?? "Account preferences could not load.");
+      }
+      if (preferenceRevisionRef.current !== revisionAtStart) return;
+
+      if (payload.stored === false) {
+        const migratedPreferences: UserPreferences = {
+          ...defaultUserPreferences,
+          voice: parseRealtimeVoice(
+            window.localStorage.getItem(LEGACY_VOICE_STORAGE_KEY),
+          ),
+          replyLength: parseReplyLength(
+            window.localStorage.getItem(LEGACY_REPLY_LENGTH_STORAGE_KEY),
+          ),
+        };
+        applyPreferences(migratedPreferences);
+        await savePreferences(migratedPreferences);
+        return;
+      }
+
+      applyPreferences(parseUserPreferences(payload.preferences));
+    } catch (error) {
+      if (!quiet) {
+        toast.error("Account settings could not load", {
+          description:
+            error instanceof Error ? error.message : "Please try again shortly.",
+        });
+      }
+    }
+  }
+
+  async function savePreferences(patch: Partial<UserPreferences>) {
+    const revision = ++preferenceRevisionRef.current;
+    preferenceSavesRef.current += 1;
+    let failed = false;
+    try {
+      const response = await fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const payload = (await response.json()) as {
+        preferences?: UserPreferences;
+        error?: string;
+      };
+      if (!response.ok || !payload.preferences) {
+        throw new Error(payload.error ?? "That account setting could not be saved.");
+      }
+      if (preferenceRevisionRef.current === revision) {
+        applyPreferences(parseUserPreferences(payload.preferences));
+      }
+      window.localStorage.removeItem(LEGACY_VOICE_STORAGE_KEY);
+      window.localStorage.removeItem(LEGACY_REPLY_LENGTH_STORAGE_KEY);
+    } catch (error) {
+      failed = true;
+      if (preferenceRevisionRef.current === revision) {
+        toast.error("Setting not saved", {
+          description:
+            error instanceof Error ? error.message : "Please try again shortly.",
+        });
+      }
+    } finally {
+      preferenceSavesRef.current = Math.max(0, preferenceSavesRef.current - 1);
+    }
+    if (failed && preferenceRevisionRef.current === revision) {
+      await loadPreferences(true);
+    }
   }
 
   function refreshRealtimeContext(
@@ -2400,7 +2505,7 @@ export default function Home() {
                 </label>
                 <Select
                   value={initiative}
-                  onValueChange={(value) => setInitiative(value as Initiative)}
+                  onValueChange={chooseInitiative}
                 >
                   <SelectTrigger
                     id="initiative"
@@ -2418,6 +2523,9 @@ export default function Home() {
                   </SelectContent>
                 </Select>
               </div>
+              <span className="text-[11px] text-white/28 sm:basis-full sm:text-right">
+                Saved to your Vox account
+              </span>
             </div>
           </div>
         </div>

@@ -85,3 +85,12 @@ export const userContacts = sqliteTable("user_contacts", {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+export const userPreferences = sqliteTable("user_preferences", {
+  ownerId: text("owner_id").primaryKey(),
+  replyLength: text("reply_length").notNull().default("balanced"),
+  voice: text("voice").notNull().default("marin"),
+  initiative: text("initiative").notNull().default("balanced"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
