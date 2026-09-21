@@ -9,6 +9,10 @@ import {
   type AdaptiveReplyLength,
   type ReplyLength,
 } from "@/lib/reply-length";
+import {
+  fallbackResponsePosture,
+  parseResponsePosture,
+} from "@/lib/response-posture";
 import { getCurrentTimeContext } from "@/lib/time-context";
 
 type JevRoute =
@@ -225,6 +229,7 @@ export async function POST(request: Request) {
       route: "silence",
       turnState: "complete",
       contextMode: "continue",
+      responsePosture: "flow",
       responseLength: defaultAdaptiveReplyLength(replyLength),
       source: "fallback",
     });
@@ -239,6 +244,7 @@ export async function POST(request: Request) {
       contextMode: pendingText
         ? "continue"
         : fallbackContextMode(text, recentMessages),
+      responsePosture: fallbackResponsePosture(completeText),
       responseLength: fallbackResponseLength(completeText, replyLength, route),
       source: "fallback",
     });
@@ -309,6 +315,21 @@ export async function POST(request: Request) {
                 "Start a fresh model context because this is clearly an independent topic and prior turns are unnecessary.",
             },
           },
+          response_posture: {
+            type: "choice",
+            instructions:
+              "Choose the social stance for the assistant's next response. Advice is not the default. Choose advise only when the person explicitly asks for advice, recommendations, steps, a plan, decision support, or a solution, or when immediate safety makes guidance necessary. Merely mentioning a goal, frustration, project, health effort, relationship, or difficult situation is not a request for advice. Choose flow for everyday conversation, stories, opinions, updates, playful remarks, and thinking aloud when the natural move is simply to engage and continue the moment. Choose reflect when the person is sharing feelings, vulnerability, uncertainty, or an experience and would benefit from being heard rather than fixed. Choose answer for a direct factual or explanatory question that should be answered without adding unsolicited coaching or next steps. Use the recent conversation to distinguish a real request from casual sharing. When uncertain between advise and another stance, choose the non-advice stance.",
+            criteria: {
+              flow:
+                "Continue the conversation naturally with a reaction, observation, gentle curiosity, humor, or a related thought; do not coach or prescribe.",
+              reflect:
+                "Acknowledge and reflect the person's feelings or meaning, leaving room for them to continue without trying to fix it.",
+              answer:
+                "Answer the direct question or explain the requested information without unsolicited advice.",
+              advise:
+                "Give proportionate practical advice because the person clearly requested it or safety requires it.",
+            },
+          },
           response_length: {
             type: "choice",
             instructions:
@@ -336,6 +357,7 @@ export async function POST(request: Request) {
         turn_state?: { choice?: string; confidence?: number };
         route?: { choice?: string; confidence?: number };
         context_mode?: { choice?: string; confidence?: number };
+        response_posture?: { choice?: string; confidence?: number };
         response_length?: { choice?: string; confidence?: number };
       };
     };
@@ -358,6 +380,10 @@ export async function POST(request: Request) {
       payload.answers?.response_length?.choice,
       replyLength,
     );
+    const responsePosture = parseResponsePosture(
+      payload.answers?.response_posture?.choice,
+      fallbackResponsePosture(completeText),
+    );
 
     return Response.json({
       route: choice,
@@ -366,6 +392,9 @@ export async function POST(request: Request) {
       turnConfidence: payload.answers?.turn_state?.confidence ?? null,
       contextMode,
       contextConfidence: payload.answers?.context_mode?.confidence ?? null,
+      responsePosture,
+      responsePostureConfidence:
+        payload.answers?.response_posture?.confidence ?? null,
       responseLength,
       responseLengthConfidence:
         payload.answers?.response_length?.confidence ?? null,
@@ -380,6 +409,7 @@ export async function POST(request: Request) {
       contextMode: pendingText
         ? "continue"
         : fallbackContextMode(text, recentMessages),
+      responsePosture: fallbackResponsePosture(completeText),
       responseLength: fallbackResponseLength(completeText, replyLength, route),
       source: "fallback",
     });

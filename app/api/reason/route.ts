@@ -14,6 +14,10 @@ import {
   responseLanguageInstruction,
   selectResponseLanguage,
 } from "@/lib/response-language";
+import {
+  parseResponsePosture,
+  responsePostureInstruction,
+} from "@/lib/response-posture";
 
 type ReasonRoute = "balanced_reasoning" | "expert_reasoning" | "live_web";
 
@@ -44,11 +48,13 @@ export async function POST(request: Request) {
     route?: ReasonRoute;
     replyLength?: unknown;
     responseLength?: unknown;
+    responsePosture?: unknown;
   };
   const text = body.text?.trim().slice(0, 12000) ?? "";
   const route = body.route;
   const replyLength = parseReplyLength(body.replyLength);
   const responseLength = parseAdaptiveReplyLength(body.responseLength, replyLength);
+  const responsePosture = parseResponsePosture(body.responsePosture, "answer");
   if (!text || !route) {
     return Response.json({ error: "A prompt and route are required." }, { status: 400 });
   }
@@ -81,6 +87,7 @@ export async function POST(request: Request) {
         languageInstruction +
         timeContext +
         memoryContext +
+        `\n\n${responsePostureInstruction(responsePosture)}` +
         `\n\n${replyLengthInstruction(replyLength)}` +
         `\n\n${adaptiveReplyLengthInstruction(replyLength, responseLength)}`,
       reasoning: { effort: isExpert ? "high" : "low" },

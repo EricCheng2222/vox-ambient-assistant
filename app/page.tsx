@@ -83,6 +83,11 @@ import {
   selectResponseLanguage,
 } from "@/lib/response-language";
 import {
+  parseResponsePosture,
+  responsePostureInstruction,
+  type ResponsePosture,
+} from "@/lib/response-posture";
+import {
   defaultUserPreferences,
   parseInitiative,
   parseUserPreferences,
@@ -1718,6 +1723,7 @@ export default function Home() {
         contextMode?: ContextMode;
         turnState?: TurnState;
         responseLength?: AdaptiveReplyLength;
+        responsePosture?: ResponsePosture;
       };
       if (!isCurrentTurn()) return;
       const selectedRoute = route.route ?? "realtime";
@@ -1726,6 +1732,10 @@ export default function Home() {
       const responseLength = parseAdaptiveReplyLength(
         route.responseLength,
         replyLengthRef.current,
+      );
+      const responsePosture = parseResponsePosture(
+        route.responsePosture,
+        "flow",
       );
       if (turnState === "wait") {
         pendingUtteranceRef.current = {
@@ -1807,6 +1817,7 @@ export default function Home() {
               route: selectedRoute,
               replyLength: replyLengthRef.current,
               responseLength,
+              responsePosture,
             }),
           }),
         );
@@ -1832,6 +1843,7 @@ export default function Home() {
               route: selectedRoute,
               replyLength: replyLengthRef.current,
               responseLength,
+              responsePosture,
             }),
           }),
         );
@@ -1858,6 +1870,7 @@ export default function Home() {
               replyLengthRef.current,
               responseLength,
             ),
+            responsePostureInstruction(responsePosture),
             carryover,
           ]
             .filter(Boolean)
