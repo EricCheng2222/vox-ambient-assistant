@@ -1,3 +1,4 @@
+import { requireAuthorized } from "@/lib/auth";
 import type { MemoryCategory } from "@/lib/memory";
 import {
   createMemory,
@@ -33,7 +34,10 @@ function looksLikeSecret(text: string) {
   ].some((pattern) => pattern.test(text));
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const unauthorized = await requireAuthorized(request);
+  if (unauthorized) return unauthorized;
+
   try {
     return Response.json(
       { memories: await listMemories() },
@@ -46,6 +50,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const unauthorized = await requireAuthorized(request);
+  if (unauthorized) return unauthorized;
+
   const body = (await request.json().catch(() => ({}))) as { text?: string };
   const text = body.text?.trim().slice(0, 2000) ?? "";
   if (!text || looksLikeSecret(text)) {
@@ -144,6 +151,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const unauthorized = await requireAuthorized(request);
+  if (unauthorized) return unauthorized;
+
   const body = (await request.json().catch(() => ({}))) as { id?: string };
   const id = body.id?.trim() ?? "";
   if (!id) return Response.json({ error: "Memory id is required." }, { status: 400 });

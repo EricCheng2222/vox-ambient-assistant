@@ -1,3 +1,5 @@
+import { requireAuthorized } from "@/lib/auth";
+
 type Initiative = "off" | "quiet" | "balanced" | "social";
 type PresenceAction = "stay_silent" | "check_in" | "continue_topic";
 
@@ -29,6 +31,9 @@ function fallbackAction(
 }
 
 export async function POST(request: Request) {
+  const unauthorized = await requireAuthorized(request);
+  if (unauthorized) return unauthorized;
+
   const body = (await request.json().catch(() => ({}))) as {
     initiative?: Initiative;
     quietForMs?: number;

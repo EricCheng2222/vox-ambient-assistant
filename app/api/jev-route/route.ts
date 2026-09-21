@@ -1,9 +1,12 @@
+import { requireAuthorized } from "@/lib/auth";
+
 type JevRoute =
   | "silence"
   | "realtime"
   | "balanced_reasoning"
   | "expert_reasoning"
-  | "live_web";
+  | "live_web"
+  | "create_file";
 
 const ROUTES = new Set<JevRoute>([
   "silence",
@@ -11,6 +14,7 @@ const ROUTES = new Set<JevRoute>([
   "balanced_reasoning",
   "expert_reasoning",
   "live_web",
+  "create_file",
 ]);
 
 function fallbackRoute(text: string): JevRoute {
@@ -22,6 +26,14 @@ function fallbackRoute(text: string): JevRoute {
       words.every((word) => /^(um+|uh+|hmm+|okay|right|yeah)$/.test(word)))
   ) {
     return "silence";
+  }
+  if (
+    /\b(create|make|write|save|generate)\b.*\b(file|document|doc|checklist|plan|report|csv|json|html|script|code)\b/.test(
+      value,
+    ) ||
+    /(建立|製作|幫我寫|存成).*(檔案|文件|清單|計畫|報告|csv|json|html|程式碼)/.test(value)
+  ) {
+    return "create_file";
   }
   if (/\b(today|latest|current|currently|news|weather|price|score|schedule)\b/.test(value)) {
     return "live_web";
@@ -36,6 +48,9 @@ function fallbackRoute(text: string): JevRoute {
 }
 
 export async function POST(request: Request) {
+  const unauthorized = await requireAuthorized(request);
+  if (unauthorized) return unauthorized;
+
   const body = (await request.json().catch(() => ({}))) as { text?: string };
   const text = body.text?.trim().slice(0, 6000) ?? "";
   if (!text) return Response.json({ route: "silence", source: "fallback" });
@@ -59,13 +74,14 @@ export async function POST(request: Request) {
           route: {
             type: "choice",
             instructions:
-              "Route this utterance for an ambient voice assistant. Choose silence when the speech is incidental, filler, background conversation, not directed at the assistant, or explicitly asks for no reply. Choose realtime for greetings, casual conversation, simple stable facts, and brief clarifications. Choose balanced_reasoning for multi-step analysis, comparisons, planning, or nuanced explanations. Choose expert_reasoning only for exceptionally difficult, high-stakes, or deeply technical work where maximum accuracy matters. Choose live_web when the answer depends on current, recent, changing, or location-specific information.",
+              "Route this utterance for an ambient voice assistant. Choose silence when the speech is incidental, filler, background conversation, not directed at the assistant, or explicitly asks for no reply. Choose create_file only when the user explicitly wants the assistant to produce or save a downloadable file, document, checklist, report, table, data file, web page, or source-code file. Choose realtime for greetings, casual conversation, simple stable facts, and brief clarifications. Choose balanced_reasoning for multi-step analysis, comparisons, planning, or nuanced explanations that should be spoken rather than saved as a file. Choose expert_reasoning only for exceptionally difficult, high-stakes, or deeply technical work where maximum accuracy matters. Choose live_web when the answer depends on current, recent, changing, or location-specific information.",
             criteria: {
               silence: "The assistant should not speak.",
               realtime: "Use the low-latency realtime voice model.",
               balanced_reasoning: "Use the balanced reasoning model.",
               expert_reasoning: "Use the most capable expert reasoning model.",
               live_web: "Use a model with live web search.",
+              create_file: "Create and save a downloadable file for the user.",
             },
           },
         },

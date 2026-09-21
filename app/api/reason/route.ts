@@ -1,3 +1,4 @@
+import { requireAuthorized } from "@/lib/auth";
 import { formatMemoryContext } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
 
@@ -17,6 +18,9 @@ function readOutputText(payload: {
 }
 
 export async function POST(request: Request) {
+  const unauthorized = await requireAuthorized(request);
+  if (unauthorized) return unauthorized;
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return Response.json({ error: "OpenAI is not configured." }, { status: 503 });
@@ -61,7 +65,7 @@ export async function POST(request: Request) {
     }),
   });
 
-  const payload = await response.json();
+  const payload = (await response.json()) as Parameters<typeof readOutputText>[0];
   if (!response.ok) {
     console.error("Reasoning request failed", response.status);
     return Response.json(

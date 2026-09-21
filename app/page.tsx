@@ -6,6 +6,10 @@ import {
   ArrowUp,
   AudioLines,
   Brain,
+  Code2,
+  Download,
+  FileText,
+  FolderOpen,
   Globe2,
   Headphones,
   Mic,
@@ -13,6 +17,7 @@ import {
   PhoneOff,
   ShieldCheck,
   Sparkles,
+  Table2,
   Trash2,
   Volume2,
 } from "lucide-react";
@@ -51,6 +56,7 @@ import {
   categoryLabels,
   type MemoryRecord,
 } from "@/lib/memory";
+import { formatFileSize, type AgentFile } from "@/lib/agent-file";
 
 type ConnectionState =
   | "idle"
@@ -58,6 +64,7 @@ type ConnectionState =
   | "listening"
   | "thinking"
   | "searching"
+  | "creating"
   | "speaking"
   | "error";
 
@@ -72,16 +79,24 @@ type JevRoute =
   | "realtime"
   | "balanced_reasoning"
   | "expert_reasoning"
-  | "live_web";
+  | "live_web"
+  | "create_file";
 
 type Initiative = "off" | "quiet" | "balanced" | "social";
 type PresenceAction = "stay_silent" | "check_in" | "continue_topic";
+type AuthState = "checking" | "authenticated" | "locked";
 
 type RealtimeEvent = {
   type?: string;
   transcript?: string;
   delta?: string;
   error?: { message?: string };
+};
+
+type RealtimeTokenPayload = {
+  value?: string;
+  expires_at?: number;
+  error?: string;
 };
 
 type ModelContext = {
@@ -110,6 +125,7 @@ const statusCopy: Record<ConnectionState, string> = {
   listening: "Listening",
   thinking: "Thinking with you",
   searching: "Searching the live web with Jev",
+  creating: "Creating your file",
   speaking: "Speaking — jump in anytime",
   error: "Connection needs attention",
 };
@@ -133,6 +149,19 @@ function formatMemoryDate(value: string) {
   }).format(date);
 }
 
+function FileGlyph({ file }: { file: AgentFile }) {
+  if (file.mimeType.includes("csv")) return <Table2 size={18} />;
+  if (
+    file.mimeType.includes("javascript") ||
+    file.mimeType.includes("typescript") ||
+    file.mimeType.includes("python") ||
+    file.mimeType.includes("html")
+  ) {
+    return <Code2 size={18} />;
+  }
+  return <FileText size={18} />;
+}
+
 function Waveform({ active }: { active: boolean }) {
   return (
     <div className="waveform" aria-hidden="true">
@@ -148,6 +177,10 @@ function Waveform({ active }: { active: boolean }) {
 }
 
 export default function Home() {
+  const [authState, setAuthState] = useState<AuthState>("checking");
+  const [accessCode, setAccessCode] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authSubmitting, setAuthSubmitting] = useState(false);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("idle");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -159,6 +192,10 @@ export default function Home() {
   const [memories, setMemories] = useState<MemoryRecord[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(true);
   const [memoryError, setMemoryError] = useState("");
+  const [files, setFiles] = useState<AgentFile[]>([]);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [filesLoading, setFilesLoading] = useState(true);
+  const [filesError, setFilesError] = useState("");
 
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
@@ -180,6 +217,7 @@ export default function Home() {
     "listening",
     "thinking",
     "searching",
+    "creating",
     "speaking",
   ].includes(connectionState);
   const active =
@@ -205,8 +243,32 @@ export default function Home() {
   }, [muted]);
 
   useEffect(() => {
-    void loadMemories();
+    let active = true;
+    void fetch("/api/auth", { cache: "no-store" })
+      .then(async (response) => {
+        const payload = (await response.json()) as { authenticated?: boolean };
+        if (active) {
+          setAuthState(payload.authenticated ? "authenticated" : "locked");
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAuthError("Vox could not verify access. Please try again.");
+          setAuthState("locked");
+        }
+      });
+    return () => {
+      active = false;
+    };
   }, []);
+
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    void loadMemories();
+    void loadFiles();
+    // Loading is intentionally keyed to the authentication transition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authState]);
 
   useEffect(() => {
     if (!connected || initiative === "off") return;
@@ -299,6 +361,45 @@ export default function Home() {
     }
   }
 
+  async function loadFiles() {
+    try {
+      const response = await fetch("/api/files", { cache: "no-store" });
+      const payload = (await response.json()) as {
+        files?: AgentFile[];
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error ?? "Files could not load.");
+      setFiles(payload.files ?? []);
+      setFilesError("");
+    } catch (error) {
+      setFilesError(error instanceof Error ? error.message : "Files could not load.");
+    } finally {
+      setFilesLoading(false);
+    }
+  }
+
+  async function createFile(text: string) {
+    const response = await fetch("/api/files", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const payload = (await response.json()) as {
+      file?: AgentFile;
+      error?: string;
+    };
+    if (!response.ok || !payload.file) {
+      throw new Error(payload.error ?? "Vox could not create that file.");
+    }
+    setFiles((current) => [
+      payload.file as AgentFile,
+      ...current.filter((file) => file.id !== payload.file?.id),
+    ]);
+    setFilesOpen(true);
+    toast.success("File created", { description: payload.file.name });
+    return payload.file;
+  }
+
   async function considerMemory(text: string) {
     const cleanText = text.trim();
     if (!cleanText) return;
@@ -343,6 +444,23 @@ export default function Home() {
       toast.success("Memory forgotten");
     } catch {
       toast.error("Could not forget that memory", {
+        description: "Please try again in a moment.",
+      });
+    }
+  }
+
+  async function deleteFile(file: AgentFile) {
+    try {
+      const response = await fetch("/api/files", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: file.id }),
+      });
+      if (!response.ok) throw new Error("Could not delete this file.");
+      setFiles((current) => current.filter((candidate) => candidate.id !== file.id));
+      toast.success("File deleted");
+    } catch {
+      toast.error("Could not delete that file", {
         description: "Please try again in a moment.",
       });
     }
@@ -439,7 +557,31 @@ export default function Home() {
         return;
       }
 
-      if (selectedRoute === "live_web") {
+      if (selectedRoute === "create_file") {
+        setConnectionState("creating");
+        try {
+          const file = await createFile(text);
+          channel.send(
+            JSON.stringify({
+              type: "response.create",
+              response: {
+                instructions:
+                  `Briefly confirm that you created ${file.name} as a ${file.purpose.toLowerCase()} file and that it is ready in the Files panel. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese. Do not mention model routing or storage internals.`,
+              },
+            }),
+          );
+        } catch {
+          channel.send(
+            JSON.stringify({
+              type: "response.create",
+              response: {
+                instructions:
+                  "Briefly explain that the file could not be created right now and invite the user to try again. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese.",
+              },
+            }),
+          );
+        }
+      } else if (selectedRoute === "live_web") {
         setConnectionState("searching");
         const searchResponse = await fetch("/api/reason", {
           method: "POST",
@@ -546,7 +688,7 @@ export default function Home() {
       const tokenResponse = await fetch("/api/realtime-token", {
         method: "POST",
       });
-      const tokenPayload = await tokenResponse.json();
+      const tokenPayload = (await tokenResponse.json()) as RealtimeTokenPayload;
       if (!tokenResponse.ok || !tokenPayload.value) {
         throw new Error(
           tokenPayload.error ?? "The secure session could not be created.",
@@ -677,6 +819,84 @@ export default function Home() {
     setConnectionState("thinking");
   }
 
+  async function unlock(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const code = accessCode.trim();
+    if (!code || authSubmitting) return;
+
+    setAuthSubmitting(true);
+    setAuthError("");
+    try {
+      const response = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Access could not be verified.");
+      setAccessCode("");
+      setAuthState("authenticated");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Access could not be verified.");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  if (authState !== "authenticated") {
+    return (
+      <main className="relative grid min-h-dvh place-items-center overflow-hidden bg-background px-5 text-foreground">
+        <Toaster position="top-center" richColors />
+        <div className="ambient ambient-one" />
+        <div className="ambient ambient-two" />
+        <section className="relative z-10 w-full max-w-md rounded-[2rem] border border-white/10 bg-white/[0.045] p-7 shadow-2xl backdrop-blur-xl sm:p-9">
+          <div className="brand-mark" aria-hidden="true">
+            <AudioLines size={19} strokeWidth={2.2} />
+          </div>
+          <p className="mt-6 text-xs font-semibold uppercase tracking-[0.18em] text-[#c8bcff]/65">
+            Private companion
+          </p>
+          <h1 className="font-display mt-3 text-4xl font-medium tracking-[-0.055em]">
+            {authState === "checking" ? "Opening Vox…" : "Welcome back."}
+          </h1>
+          <p className="mt-4 text-sm leading-6 text-white/48">
+            {authState === "checking"
+              ? "Checking this device before the private voice room opens."
+              : "Enter your access code to open voice, memory, and files."}
+          </p>
+
+          {authState === "locked" && (
+            <form onSubmit={unlock} className="mt-7 space-y-4">
+              <label htmlFor="access-code" className="sr-only">
+                Access code
+              </label>
+              <input
+                id="access-code"
+                type="password"
+                value={accessCode}
+                onChange={(event) => setAccessCode(event.target.value)}
+                placeholder="Access code"
+                autoComplete="current-password"
+                autoFocus
+                className="h-13 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-white outline-none transition placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
+              />
+              {authError && <p className="text-sm text-[#ff9d96]">{authError}</p>}
+              <Button
+                type="submit"
+                size="lg"
+                disabled={!accessCode.trim() || authSubmitting}
+                className="h-12 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+              >
+                <ShieldCheck />
+                {authSubmitting ? "Checking…" : "Open Vox"}
+              </Button>
+            </form>
+          )}
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-dvh overflow-hidden bg-background text-foreground">
       <audio ref={audioRef} autoPlay className="sr-only" />
@@ -736,7 +956,9 @@ export default function Home() {
               <span className="orb-ring orb-ring-one" />
               <span className="orb-ring orb-ring-two" />
               <span className="orb-core">
-                {connectionState === "searching" ? (
+                {connectionState === "creating" ? (
+                  <FileText size={34} />
+                ) : connectionState === "searching" ? (
                   <Globe2 size={34} />
                 ) : muted ? (
                   <MicOff size={34} />
@@ -852,6 +1074,145 @@ export default function Home() {
                   Clear
                 </button>
               )}
+              <Sheet open={filesOpen} onOpenChange={setFilesOpen}>
+                <SheetTrigger asChild>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="rounded-full border-white/10 bg-white/[0.04] text-white/66 shadow-none hover:bg-white/10 hover:text-white"
+                    aria-label={`Open files, ${files.length} saved`}
+                  >
+                    <FolderOpen />
+                    {files.length}
+                  </Button>
+                </SheetTrigger>
+                <SheetContent className="w-[min(92vw,460px)] border-white/10 bg-[#10111b] text-white sm:max-w-[460px]">
+                  <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
+                    <div className="flex items-center gap-2 text-[#c8bcff]">
+                      <FolderOpen size={18} />
+                      <SheetTitle className="font-display text-xl text-white">
+                        Files
+                      </SheetTitle>
+                    </div>
+                    <SheetDescription className="mt-2 leading-6 text-white/46">
+                      Ask Vox to create a note, checklist, plan, report, table, data
+                      file, web page, or source-code file.
+                    </SheetDescription>
+                  </SheetHeader>
+
+                  <div className="flex-1 overflow-y-auto px-5 py-5">
+                    <div className="mb-5 rounded-xl border border-[#c8bcff]/12 bg-[#c8bcff]/[0.05] px-3.5 py-3 text-xs leading-5 text-white/56">
+                      Try: “Create a Taiwan trip checklist” or “Save this as a CSV.”
+                    </div>
+
+                    {filesLoading ? (
+                      <p className="py-10 text-center text-sm text-white/40">
+                        Loading files…
+                      </p>
+                    ) : filesError ? (
+                      <div className="rounded-2xl border border-[#ff766c]/20 bg-[#ff766c]/[0.06] p-4">
+                        <p className="text-sm text-[#ffaaa4]">{filesError}</p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="mt-3 border-white/10 bg-white/[0.04] text-white"
+                          onClick={() => void loadFiles()}
+                        >
+                          Try again
+                        </Button>
+                      </div>
+                    ) : files.length === 0 ? (
+                      <div className="flex min-h-64 flex-col items-center justify-center text-center">
+                        <div className="grid size-12 place-items-center rounded-2xl border border-white/10 bg-white/[0.04] text-white/45">
+                          <FolderOpen size={21} />
+                        </div>
+                        <p className="mt-4 font-display text-lg">No files yet</p>
+                        <p className="mt-2 max-w-64 text-sm leading-6 text-white/40">
+                          Ask during a voice or typed conversation. Jev will choose
+                          the useful format and Vox will create it here.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {files.map((file) => (
+                          <article
+                            key={file.id}
+                            className="rounded-2xl border border-white/9 bg-white/[0.035] p-4"
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-[#c8bcff]/14 bg-[#c8bcff]/[0.07] text-[#c8bcff]">
+                                <FileGlyph file={file} />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-semibold text-white/82">
+                                  {file.title}
+                                </p>
+                                <p className="mt-1 truncate text-xs text-white/42">
+                                  {file.name}
+                                </p>
+                                <p className="mt-2 text-[0.68rem] font-semibold uppercase tracking-[0.11em] text-[#c8bcff]/62">
+                                  {file.purpose} · {formatFileSize(file.size)} · {formatMemoryDate(file.createdAt)}
+                                </p>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-1">
+                                <Button
+                                  asChild
+                                  size="icon-sm"
+                                  variant="ghost"
+                                  className="rounded-full text-white/40 hover:bg-white/8 hover:text-white"
+                                >
+                                  <a
+                                    href={`/api/files?id=${encodeURIComponent(file.id)}`}
+                                    download={file.name}
+                                    aria-label={`Download ${file.name}`}
+                                  >
+                                    <Download />
+                                  </a>
+                                </Button>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      size="icon-sm"
+                                      variant="ghost"
+                                      className="rounded-full text-white/32 hover:bg-[#ff766c]/10 hover:text-[#ff9d96]"
+                                      aria-label={`Delete ${file.name}`}
+                                    >
+                                      <Trash2 />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent className="border-white/10 bg-[#171823] text-white">
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Delete this file?</AlertDialogTitle>
+                                      <AlertDialogDescription className="leading-6 text-white/46">
+                                        “{file.name}” will be permanently removed from
+                                        Vox.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel className="border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white">
+                                        Keep it
+                                      </AlertDialogCancel>
+                                      <AlertDialogAction
+                                        variant="destructive"
+                                        onClick={() => void deleteFile(file)}
+                                      >
+                                        Delete
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              </div>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </SheetContent>
+              </Sheet>
               <Sheet>
                 <SheetTrigger asChild>
                   <Button

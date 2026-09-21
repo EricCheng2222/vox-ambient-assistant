@@ -1,9 +1,13 @@
 import { buildVoiceInstructions } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
+import { requireAuthorized } from "@/lib/auth";
 
 const REALTIME_MODEL = "gpt-realtime-2.1";
 
-export async function POST() {
+export async function POST(request: Request) {
+  const unauthorized = await requireAuthorized(request);
+  if (unauthorized) return unauthorized;
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return Response.json(
