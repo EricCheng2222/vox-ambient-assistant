@@ -1,4 +1,5 @@
 import { requireAuthorized } from "@/lib/auth";
+import { getCurrentTimeContext } from "@/lib/time-context";
 
 type JevRoute =
   | "silence"
@@ -35,6 +36,14 @@ function fallbackRoute(text: string): JevRoute {
   ) {
     return "create_file";
   }
+  if (
+    /\b(what(?:'s| is) (?:the )?(?:time|date|day)|what time is it|today'?s date|current time)\b/.test(
+      value,
+    ) ||
+    /(現在幾點|現在時間|今天幾號|今天日期|今天星期幾|今天禮拜幾)/.test(value)
+  ) {
+    return "realtime";
+  }
   if (/\b(today|latest|current|currently|news|weather|price|score|schedule)\b/.test(value)) {
     return "live_web";
   }
@@ -69,15 +78,19 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         model: "jev-latest",
-        state: { utterance: text },
+        state: {
+          utterance: text,
+          authoritative_clock: getCurrentTimeContext(),
+        },
         questions: {
           route: {
             type: "choice",
             instructions:
-              "Route this utterance for an ambient voice assistant. Choose silence when the speech is incidental, filler, background conversation, not directed at the assistant, or explicitly asks for no reply. Choose create_file only when the user explicitly wants the assistant to produce or save a downloadable file, document, checklist, report, table, data file, web page, or source-code file. Choose realtime for greetings, casual conversation, simple stable facts, and brief clarifications. Choose balanced_reasoning for multi-step analysis, comparisons, planning, or nuanced explanations that should be spoken rather than saved as a file. Choose expert_reasoning only for exceptionally difficult, high-stakes, or deeply technical work where maximum accuracy matters. Choose live_web when the answer depends on current, recent, changing, or location-specific information.",
+              "Route this utterance for an ambient voice assistant. Choose silence when the speech is incidental, filler, background conversation, not directed at the assistant, or explicitly asks for no reply. Choose create_file only when the user explicitly wants the assistant to produce or save a downloadable file, document, checklist, report, table, data file, web page, or source-code file. Choose realtime for greetings, casual conversation, simple stable facts, brief clarifications, and questions about the current local time, date, or weekday because an authoritative clock is provided. Choose balanced_reasoning for multi-step analysis, comparisons, planning, or nuanced explanations that should be spoken rather than saved as a file. Choose expert_reasoning only for exceptionally difficult, high-stakes, or deeply technical work where maximum accuracy matters. Choose live_web when the answer depends on current, recent, changing, or location-specific information other than the supplied local time and date.",
             criteria: {
               silence: "The assistant should not speak.",
-              realtime: "Use the low-latency realtime voice model.",
+              realtime:
+                "Use the low-latency realtime voice model, including for current local time and date.",
               balanced_reasoning: "Use the balanced reasoning model.",
               expert_reasoning: "Use the most capable expert reasoning model.",
               live_web: "Use a model with live web search.",

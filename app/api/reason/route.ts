@@ -1,6 +1,7 @@
 import { requireAuthorized } from "@/lib/auth";
 import { formatMemoryContext } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
+import { getCurrentTimeContext } from "@/lib/time-context";
 
 type ReasonRoute = "balanced_reasoning" | "expert_reasoning" | "live_web";
 
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
     return [];
   });
   const memoryContext = remembered.length ? `\n\n${formatMemoryContext(remembered)}` : "";
+  const timeContext = `\n\n${getCurrentTimeContext()}`;
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -56,6 +58,7 @@ export async function POST(request: Request) {
       input: text,
       instructions:
         "Prepare a concise, accurate answer for a voice assistant to speak aloud. Match the language of the user's substantive request. For Mandarin or Chinese input, answer in natural Taiwan Mandarin using Traditional Chinese, Taiwan vocabulary and phrasing, and no Mainland-specific wording. For English input, answer in English. Use plain language, short sentences, and no markdown. Do not mention model routing." +
+        timeContext +
         memoryContext,
       reasoning: { effort: isExpert ? "high" : "low" },
       text: { verbosity: "low" },

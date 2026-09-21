@@ -1,3 +1,5 @@
+import { getCurrentTimeContext } from "@/lib/time-context";
+
 export type MemoryCategory =
   | "preference"
   | "identity"
@@ -30,9 +32,10 @@ const BASE_VOICE_INSTRUCTIONS =
 
 export function buildVoiceInstructions(memories: MemoryRecord[]) {
   const current = memories.slice(0, 24);
-  if (current.length === 0) return BASE_VOICE_INSTRUCTIONS;
+  const liveContext = `${BASE_VOICE_INSTRUCTIONS}\n\n${getCurrentTimeContext()}`;
+  if (current.length === 0) return liveContext;
 
-  return `${BASE_VOICE_INSTRUCTIONS}\n\n${formatMemoryContext(current)}`;
+  return `${liveContext}\n\n${formatMemoryContext(current)}`;
 }
 
 export function formatMemoryContext(memories: MemoryRecord[]) {

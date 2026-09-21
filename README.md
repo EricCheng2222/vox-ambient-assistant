@@ -15,6 +15,8 @@ The initiative control sets how readily Vox may speak without being prompted. Th
 
 Mandarin speech is transcribed without translation and guided toward Traditional Chinese as used in Taiwan. Mandarin responses—including proactive check-ins and answers prepared by deeper models—use Taiwan vocabulary, phrasing, and conversational pacing. Substantive English input still receives an English response.
 
+Vox receives an authoritative UTC clock plus the current date and time in `Asia/Taipei`. The clock is refreshed immediately before each typed or spoken response, and it is also available to JEV presence decisions, reasoning routes, and generated files.
+
 ## Local setup
 
 1. Copy `.env.example` to `.env.local`.

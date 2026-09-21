@@ -1,4 +1,5 @@
 import { requireAuthorized } from "@/lib/auth";
+import { getCurrentTimeContext } from "@/lib/time-context";
 
 type Initiative = "off" | "quiet" | "balanced" | "social";
 type PresenceAction = "stay_silent" | "check_in" | "continue_topic";
@@ -85,6 +86,7 @@ export async function POST(request: Request) {
           quiet_seconds: Math.round(quietForMs / 1000),
           seconds_since_assistant: Math.round(sinceAssistantMs / 1000),
           proactive_count: proactiveCount,
+          current_time: getCurrentTimeContext(),
           recent_conversation: recentMessages,
         },
         questions: {

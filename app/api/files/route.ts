@@ -1,6 +1,7 @@
 import { requireAuthorized } from "@/lib/auth";
 import { formatMemoryContext } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
+import { getCurrentTimeContext } from "@/lib/time-context";
 import {
   deleteAgentFile,
   getAgentFile,
@@ -192,6 +193,7 @@ export async function POST(request: Request) {
         input: text,
         instructions:
           `Create the complete content for a downloadable ${config.purpose} file with extension .${config.extension}. Follow the user's requested language; use Traditional Chinese and natural Taiwan wording for Chinese. Return a short human title, a concise lowercase ASCII filename base without an extension, and the exact complete file content. Do not wrap the content in an extra Markdown code fence. Do not claim the file was saved; the application handles saving. For code, make it complete and include helpful comments only when useful. For CSV, include a header row. For JSON, output valid JSON as the content string. For HTML, create a self-contained accessible document without external scripts.` +
+          `\n\n${getCurrentTimeContext()}` +
           memoryContext,
         reasoning: { effort: "low" },
         max_output_tokens: 7000,

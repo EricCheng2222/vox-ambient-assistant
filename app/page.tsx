@@ -57,6 +57,7 @@ import {
   type MemoryRecord,
 } from "@/lib/memory";
 import { formatFileSize, type AgentFile } from "@/lib/agent-file";
+import { getCurrentTimeContext } from "@/lib/time-context";
 
 type ConnectionState =
   | "idle"
@@ -328,6 +329,10 @@ export default function Home() {
   function setCurrentMemories(next: MemoryRecord[]) {
     memoriesRef.current = next;
     setMemories(next);
+    refreshRealtimeContext();
+  }
+
+  function refreshRealtimeContext() {
     const channel = channelRef.current;
     if (channel?.readyState === "open") {
       channel.send(
@@ -335,7 +340,7 @@ export default function Home() {
           type: "session.update",
           session: {
             type: "realtime",
-            instructions: buildVoiceInstructions(next),
+            instructions: buildVoiceInstructions(memoriesRef.current),
           },
         }),
       );
@@ -515,10 +520,11 @@ export default function Home() {
         return;
       }
 
-      const instructions =
+      const instructions = `${
         decision.action === "continue_topic"
           ? "Speak first with one brief, genuinely useful follow-up based on the recent conversation. Match the established conversation language. If it is Mandarin or Chinese, use natural Taiwan Mandarin, Traditional Chinese, and Taiwan vocabulary. If no language has been established, default to Taiwan Mandarin. Be natural and specific. Do not mention silence, timers, proactive mode, routing, or Jev."
-          : "Initiate one brief, warm, context-aware check-in. Match the established conversation language. If it is Mandarin or Chinese, use natural Taiwan Mandarin, Traditional Chinese, and Taiwan vocabulary. If no language has been established, default to Taiwan Mandarin. Avoid saying 'are you still there' unless that is genuinely appropriate. Do not mention silence, timers, proactive mode, routing, or Jev.";
+          : "Initiate one brief, warm, context-aware check-in. Match the established conversation language. If it is Mandarin or Chinese, use natural Taiwan Mandarin, Traditional Chinese, and Taiwan vocabulary. If no language has been established, default to Taiwan Mandarin. Avoid saying 'are you still there' unless that is genuinely appropriate. Do not mention silence, timers, proactive mode, routing, or Jev."
+      }\n\n${getCurrentTimeContext()}`;
 
       lastAssistantAtRef.current = Date.now();
       proactiveCountRef.current += 1;
@@ -645,6 +651,7 @@ export default function Home() {
         lastUserActivityRef.current = Date.now();
         addMessage("user", event.transcript ?? "");
         void considerMemory(event.transcript ?? "");
+        refreshRealtimeContext();
         void routeAndRespond(event.transcript ?? "");
         break;
       case "conversation.item.input_audio_transcription.failed":
@@ -731,15 +738,7 @@ export default function Home() {
       };
       channel.onopen = () => {
         setConnectionState("listening");
-        channel.send(
-          JSON.stringify({
-            type: "session.update",
-            session: {
-              type: "realtime",
-              instructions: buildVoiceInstructions(memoriesRef.current),
-            },
-          }),
-        );
+        refreshRealtimeContext();
       };
 
       const offer = await peer.createOffer();
@@ -804,6 +803,7 @@ export default function Home() {
     lastUserActivityRef.current = Date.now();
     addMessage("user", text);
     void considerMemory(text);
+    refreshRealtimeContext();
     channelRef.current.send(
       JSON.stringify({
         type: "conversation.item.create",
