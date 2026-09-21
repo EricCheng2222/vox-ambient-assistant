@@ -1,13 +1,13 @@
-import { requireAuthorized } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { claimDueReminders } from "@/lib/reminder-store";
 
 export async function POST(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   try {
     return Response.json(
-      { reminders: await claimDueReminders() },
+      { reminders: await claimDueReminders(auth.user.id) },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

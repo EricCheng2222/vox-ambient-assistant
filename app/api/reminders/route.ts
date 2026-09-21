@@ -1,4 +1,4 @@
-import { requireAuthorized } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import type { ReminderStatus } from "@/lib/reminder";
 import {
   createReminder,
@@ -22,12 +22,12 @@ function readOutputText(payload: {
 }
 
 export async function GET(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   try {
     return Response.json(
-      { reminders: await listReminders() },
+      { reminders: await listReminders(auth.user.id) },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
@@ -37,8 +37,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   const body = (await request.json().catch(() => ({}))) as { text?: string };
   const text = body.text?.trim().slice(0, 4000) ?? "";
@@ -100,7 +100,7 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    const reminder = await createReminder({
+    const reminder = await createReminder(auth.user.id, {
       title,
       notes: parsed.notes?.trim().slice(0, 500) || null,
       dueAt: new Date(dueTime).toISOString(),
@@ -113,8 +113,8 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   const body = (await request.json().catch(() => ({}))) as {
     id?: string;
@@ -125,19 +125,19 @@ export async function PATCH(request: Request) {
   if (!id || !status || !["pending", "completed", "dismissed"].includes(status)) {
     return Response.json({ error: "A valid reminder update is required." }, { status: 400 });
   }
-  const reminder = await updateReminderStatus(id, status);
+  const reminder = await updateReminderStatus(auth.user.id, id, status);
   if (!reminder) return Response.json({ error: "Reminder not found." }, { status: 404 });
   return Response.json({ reminder });
 }
 
 export async function DELETE(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   const body = (await request.json().catch(() => ({}))) as { id?: string };
   const id = body.id?.trim() ?? "";
   if (!id) return Response.json({ error: "Reminder id is required." }, { status: 400 });
-  const deletedId = await deleteReminder(id);
+  const deletedId = await deleteReminder(auth.user.id, id);
   if (!deletedId) return Response.json({ error: "Reminder not found." }, { status: 404 });
   return Response.json({ deletedId });
 }

@@ -37,11 +37,23 @@ Set all four secrets against the prepared configuration. Wrangler prompts for th
 ```bash
 npx wrangler secret put OPENAI_API_KEY --config dist/server/wrangler.deploy.json
 npx wrangler secret put TYPESAFE_API_KEY --config dist/server/wrangler.deploy.json
-npx wrangler secret put VOX_ACCESS_CODE --config dist/server/wrangler.deploy.json
+npx wrangler secret put VOX_USERS_JSON --config dist/server/wrangler.deploy.json
 npx wrangler secret put VOX_SESSION_SECRET --config dist/server/wrangler.deploy.json
 ```
 
-Use a memorable private access code for `VOX_ACCESS_CODE` and a long random value for `VOX_SESSION_SECRET`.
+`VOX_USERS_JSON` is a JSON array. Give every person a stable opaque ID and a unique access code of at least 12 characters. Do not use an email address as the ID. For example:
+
+```json
+[{"id":"user-1","name":"User One","accessCode":"a-long-unique-private-code"}]
+```
+
+Use a long random value for `VOX_SESSION_SECRET`. Changing it signs everyone out. Removing a user from `VOX_USERS_JSON` immediately invalidates that user's existing session. `VOX_ACCESS_CODE` remains supported only as a single-owner compatibility setting.
+
+## Privacy and multiple users
+
+Every authenticated session is signed, expires after seven days, and resolves to one opaque owner ID. D1 queries for memories, reminders, and file metadata always include that owner ID. R2 object keys are random and never returned by the public API. A user who guesses another record ID receives `404` and cannot read, update, claim, or delete it.
+
+The AI providers still receive the conversation content needed to answer, classify, transcribe, or create a requested file. OpenAI Responses calls use `store: false`; provider retention and organization-level data controls should be reviewed before inviting users. Keep D1 and R2 private, restrict Cloudflare account access, and enable Cloudflare Access or rate limiting before a public launch.
 
 ## 4. Migrate and deploy
 

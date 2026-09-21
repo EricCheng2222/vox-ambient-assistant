@@ -5,7 +5,6 @@ export type AgentFile = {
   purpose: string;
   mimeType: string;
   size: number;
-  objectKey: string;
   createdAt: string;
 };
 

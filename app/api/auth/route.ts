@@ -1,17 +1,19 @@
 import {
   createSessionToken,
   expiredSessionCookie,
+  getAuthorizedUser,
   isAuthConfigured,
-  isRequestAuthorized,
   sessionCookie,
   verifyAccessCode,
 } from "@/lib/auth";
 
 export async function GET(request: Request) {
+  const user = await getAuthorizedUser(request);
   return Response.json(
     {
-      authenticated: await isRequestAuthorized(request),
+      authenticated: Boolean(user),
       configured: isAuthConfigured(),
+      user: user ? { displayName: user.displayName } : undefined,
     },
     { headers: { "Cache-Control": "no-store" } },
   );
@@ -30,13 +32,18 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => ({}))) as { code?: string };
   const code = body.code?.trim().slice(0, 256) ?? "";
-  if (!code || !(await verifyAccessCode(code))) {
+  const user = code ? await verifyAccessCode(code) : null;
+  if (!user) {
     return Response.json({ error: "That access code is not valid." }, { status: 401 });
   }
 
   return Response.json(
-    { authenticated: true, configured: true },
-    { headers: { "Set-Cookie": sessionCookie(await createSessionToken()) } },
+    {
+      authenticated: true,
+      configured: true,
+      user: { displayName: user.displayName },
+    },
+    { headers: { "Set-Cookie": sessionCookie(await createSessionToken(user.id)) } },
   );
 }
 

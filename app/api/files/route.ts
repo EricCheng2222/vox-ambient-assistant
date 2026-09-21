@@ -1,4 +1,4 @@
-import { requireAuthorized } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { formatMemoryContext } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
 import { getCurrentTimeContext } from "@/lib/time-context";
@@ -134,19 +134,19 @@ function contentDisposition(name: string) {
 }
 
 export async function GET(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   try {
     const id = new URL(request.url).searchParams.get("id")?.trim();
     if (!id) {
       return Response.json(
-        { files: await listAgentFiles() },
+        { files: await listAgentFiles(auth.user.id) },
         { headers: { "Cache-Control": "no-store" } },
       );
     }
 
-    const file = await getAgentFile(id);
+    const file = await getAgentFile(auth.user.id, id);
     if (!file) return Response.json({ error: "File not found." }, { status: 404 });
     const object = await readAgentFile(file);
     if (!object) return Response.json({ error: "File content is unavailable." }, { status: 404 });
@@ -166,8 +166,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   const body = (await request.json().catch(() => ({}))) as { text?: string };
   const text = body.text?.trim().slice(0, 12000) ?? "";
@@ -179,7 +179,7 @@ export async function POST(request: Request) {
   try {
     const kind = await chooseFileKind(text);
     const config = FILE_KINDS[kind];
-    const remembered = await listMemories(16).catch(() => []);
+    const remembered = await listMemories(auth.user.id, 16).catch(() => []);
     const memoryContext = remembered.length ? `\n\n${formatMemoryContext(remembered)}` : "";
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -233,7 +233,7 @@ export async function POST(request: Request) {
     }
 
     const name = `${safeBaseName(generated.filename_base ?? title)}.${config.extension}`;
-    const file = await saveAgentFile({
+    const file = await saveAgentFile(auth.user.id, {
       name,
       title,
       purpose: config.purpose,
@@ -248,17 +248,17 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   const body = (await request.json().catch(() => ({}))) as { id?: string };
   const id = body.id?.trim() ?? "";
   if (!id) return Response.json({ error: "File id is required." }, { status: 400 });
 
   try {
-    const file = await getAgentFile(id);
+    const file = await getAgentFile(auth.user.id, id);
     if (!file) return Response.json({ error: "File not found." }, { status: 404 });
-    await deleteAgentFile(file);
+    await deleteAgentFile(auth.user.id, file);
     return Response.json({ deletedId: id });
   } catch (error) {
     console.error("File deletion failed", error);

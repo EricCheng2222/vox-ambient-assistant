@@ -1,4 +1,4 @@
-import { requireAuthorized } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import type { MemoryCategory } from "@/lib/memory";
 import {
   createMemory,
@@ -35,12 +35,12 @@ function looksLikeSecret(text: string) {
 }
 
 export async function GET(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   try {
     return Response.json(
-      { memories: await listMemories() },
+      { memories: await listMemories(auth.user.id) },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
@@ -50,8 +50,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   const body = (await request.json().catch(() => ({}))) as { text?: string };
   const text = body.text?.trim().slice(0, 2000) ?? "";
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const existing = await listMemories(12);
+    const existing = await listMemories(auth.user.id, 12);
     const criteria: Record<string, string> = {
       ignore:
         "Do not store it. Use for questions, commands, greetings, transient status, one-off details, guesses, third-party private information, or anything not useful in a future conversation.",
@@ -128,7 +128,7 @@ export async function POST(request: Request) {
       const index = Number(choice.slice("update_".length));
       const target = Number.isInteger(index) ? existing[index] : undefined;
       if (!target) throw new Error("Jev selected an invalid memory target");
-      const memory = await updateMemory(target.id, text);
+      const memory = await updateMemory(auth.user.id, target.id, text);
       if (!memory) throw new Error("The selected memory no longer exists");
       return Response.json({ action: "update", memory, confidence, source: "jev" });
     }
@@ -136,7 +136,7 @@ export async function POST(request: Request) {
     if (choice.startsWith("create_")) {
       const category = choice.slice("create_".length) as MemoryCategory;
       if (!CATEGORIES.includes(category)) throw new Error("Invalid memory category");
-      const memory = await createMemory({ category, content: text });
+      const memory = await createMemory(auth.user.id, { category, content: text });
       return Response.json(
         { action: "create", memory, confidence, source: "jev" },
         { status: 201 },
@@ -151,15 +151,15 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   const body = (await request.json().catch(() => ({}))) as { id?: string };
   const id = body.id?.trim() ?? "";
   if (!id) return Response.json({ error: "Memory id is required." }, { status: 400 });
 
   try {
-    const deletedId = await deleteMemory(id);
+    const deletedId = await deleteMemory(auth.user.id, id);
     if (!deletedId) return Response.json({ error: "Memory not found." }, { status: 404 });
     return Response.json({ deletedId });
   } catch (error) {

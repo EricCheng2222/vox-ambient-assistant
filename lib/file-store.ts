@@ -1,9 +1,24 @@
 import { env } from "cloudflare:workers";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { agentFiles } from "@/db/schema";
 import type { AgentFile } from "@/lib/agent-file";
+
+type StoredAgentFile = AgentFile & {
+  ownerId: string;
+  objectKey: string;
+};
+
+const publicFile = {
+  id: agentFiles.id,
+  name: agentFiles.name,
+  title: agentFiles.title,
+  purpose: agentFiles.purpose,
+  mimeType: agentFiles.mimeType,
+  size: agentFiles.size,
+  createdAt: agentFiles.createdAt,
+};
 
 function getBucket() {
   if (!env.BUCKET) {
@@ -14,30 +29,40 @@ function getBucket() {
   return env.BUCKET;
 }
 
-export async function listAgentFiles(limit = 40): Promise<AgentFile[]> {
+export async function listAgentFiles(
+  ownerId: string,
+  limit = 40,
+): Promise<AgentFile[]> {
   return getDb()
-    .select()
+    .select(publicFile)
     .from(agentFiles)
+    .where(eq(agentFiles.ownerId, ownerId))
     .orderBy(desc(agentFiles.createdAt))
     .limit(limit) as Promise<AgentFile[]>;
 }
 
-export async function getAgentFile(id: string): Promise<AgentFile | null> {
+export async function getAgentFile(
+  ownerId: string,
+  id: string,
+): Promise<StoredAgentFile | null> {
   const [file] = await getDb()
     .select()
     .from(agentFiles)
-    .where(eq(agentFiles.id, id))
+    .where(and(eq(agentFiles.ownerId, ownerId), eq(agentFiles.id, id)))
     .limit(1);
-  return (file ?? null) as AgentFile | null;
+  return (file ?? null) as StoredAgentFile | null;
 }
 
-export async function saveAgentFile(input: {
-  name: string;
-  title: string;
-  purpose: string;
-  mimeType: string;
-  content: string;
-}) {
+export async function saveAgentFile(
+  ownerId: string,
+  input: {
+    name: string;
+    title: string;
+    purpose: string;
+    mimeType: string;
+    content: string;
+  },
+) {
   const id = crypto.randomUUID();
   const objectKey = `agent-files/${id}/${input.name}`;
   const bytes = new TextEncoder().encode(input.content);
@@ -50,6 +75,7 @@ export async function saveAgentFile(input: {
       .insert(agentFiles)
       .values({
         id,
+        ownerId,
         name: input.name,
         title: input.title,
         purpose: input.purpose,
@@ -58,7 +84,7 @@ export async function saveAgentFile(input: {
         objectKey,
         createdAt: new Date().toISOString(),
       })
-      .returning();
+      .returning(publicFile);
     return file as AgentFile;
   } catch (error) {
     await getBucket().delete(objectKey).catch(() => undefined);
@@ -66,15 +92,15 @@ export async function saveAgentFile(input: {
   }
 }
 
-export async function readAgentFile(file: AgentFile) {
+export async function readAgentFile(file: StoredAgentFile) {
   return getBucket().get(file.objectKey);
 }
 
-export async function deleteAgentFile(file: AgentFile) {
+export async function deleteAgentFile(ownerId: string, file: StoredAgentFile) {
   await getBucket().delete(file.objectKey);
   const [deleted] = await getDb()
     .delete(agentFiles)
-    .where(eq(agentFiles.id, file.id))
+    .where(and(eq(agentFiles.ownerId, ownerId), eq(agentFiles.id, file.id)))
     .returning({ id: agentFiles.id });
   return deleted?.id ?? null;
 }

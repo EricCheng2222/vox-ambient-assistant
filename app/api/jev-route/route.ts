@@ -1,4 +1,4 @@
-import { requireAuthorized } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { getCurrentTimeContext } from "@/lib/time-context";
 
 type JevRoute =
@@ -67,8 +67,8 @@ function fallbackRoute(text: string): JevRoute {
 }
 
 export async function POST(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   const body = (await request.json().catch(() => ({}))) as { text?: string };
   const text = body.text?.trim().slice(0, 6000) ?? "";

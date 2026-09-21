@@ -1,4 +1,4 @@
-import { requireAuthorized } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { formatMemoryContext } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
 import { getCurrentTimeContext } from "@/lib/time-context";
@@ -19,8 +19,8 @@ function readOutputText(payload: {
 }
 
 export async function POST(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
   const isExpert = route === "expert_reasoning";
   const isWeb = route === "live_web";
   const model = isExpert ? "gpt-6-astra" : "gpt-5.6-terra";
-  const remembered = await listMemories(24).catch((error) => {
+  const remembered = await listMemories(auth.user.id, 24).catch((error) => {
     console.error("Reasoning without saved memory", error);
     return [];
   });

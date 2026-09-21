@@ -1,12 +1,12 @@
 import { buildVoiceInstructions } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
-import { requireAuthorized } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 
 const REALTIME_MODEL = "gpt-realtime-2.1";
 
 export async function POST(request: Request) {
-  const unauthorized = await requireAuthorized(request);
-  if (unauthorized) return unauthorized;
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const remembered = await listMemories(24).catch((error) => {
+  const remembered = await listMemories(auth.user.id, 24).catch((error) => {
     console.error("Starting Realtime without saved memory", error);
     return [];
   });
