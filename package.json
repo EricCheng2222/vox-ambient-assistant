@@ -12,6 +12,7 @@
     "start": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/state --ip 127.0.0.1 --inspector-port 0",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "test:privacy": "node --experimental-strip-types scripts/test-privacy.mjs",
+    "test:reply-length": "node --experimental-strip-types scripts/test-reply-length.mjs",
     "db:generate": "drizzle-kit generate",
     "deploy:prepare": "node scripts/prepare-cloudflare-deploy.mjs",
     "deploy:migrate": "wrangler d1 migrations apply DB --remote --config dist/server/wrangler.deploy.json",

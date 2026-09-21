@@ -70,8 +70,11 @@ import {
   type RealtimeVoice,
 } from "@/lib/realtime-voice";
 import {
+  adaptiveReplyLengthInstruction,
   parseReplyLength,
+  parseAdaptiveReplyLength,
   replyLengthInstruction,
+  type AdaptiveReplyLength,
   type ReplyLength,
 } from "@/lib/reply-length";
 import { API_BUDGET_MESSAGE } from "@/lib/provider-error";
@@ -1657,17 +1660,23 @@ export default function Home() {
             role,
             text,
           })),
+          replyLength: replyLengthRef.current,
         }),
       });
       const route = (await routeResponse.json()) as {
         route?: JevRoute;
         contextMode?: ContextMode;
         turnState?: TurnState;
+        responseLength?: AdaptiveReplyLength;
       };
       if (!isCurrentTurn()) return;
       const selectedRoute = route.route ?? "realtime";
       const contextMode = route.contextMode ?? "continue";
       const turnState = allowWait ? (route.turnState ?? "complete") : "complete";
+      const responseLength = parseAdaptiveReplyLength(
+        route.responseLength,
+        replyLengthRef.current,
+      );
       if (turnState === "wait") {
         pendingUtteranceRef.current = {
           text: completeText,
@@ -1747,6 +1756,7 @@ export default function Home() {
               text: completeText,
               route: selectedRoute,
               replyLength: replyLengthRef.current,
+              responseLength,
             }),
           }),
         );
@@ -1771,6 +1781,7 @@ export default function Home() {
               text: completeText,
               route: selectedRoute,
               replyLength: replyLengthRef.current,
+              responseLength,
             }),
           }),
         );
@@ -1784,7 +1795,23 @@ export default function Home() {
         if (!isCurrentTurn()) return;
         sendTurnResponse("final_answer", reasoned.answer, true);
       } else {
-        sendTurnResponse("realtime_answer");
+        const carryover = sessionCarryoverRef.current
+          ? formatConversationCarryover(messagesRef.current)
+          : "";
+        sendTurnResponse(
+          "realtime_answer",
+          [
+            buildVoiceInstructions(memoriesRef.current),
+            replyLengthInstruction(replyLengthRef.current),
+            adaptiveReplyLengthInstruction(
+              replyLengthRef.current,
+              responseLength,
+            ),
+            carryover,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        );
       }
       if (isCurrentTurn()) setConnectionState("thinking");
     } catch (error) {

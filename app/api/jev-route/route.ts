@@ -1,4 +1,12 @@
 import { requireUser } from "@/lib/auth";
+import {
+  adaptiveReplyLengthChoices,
+  defaultAdaptiveReplyLength,
+  parseAdaptiveReplyLength,
+  parseReplyLength,
+  type AdaptiveReplyLength,
+  type ReplyLength,
+} from "@/lib/reply-length";
 import { getCurrentTimeContext } from "@/lib/time-context";
 
 type JevRoute =
@@ -150,6 +158,34 @@ function fallbackContextMode(text: string, recentMessages: RecentMessage[]): Con
   return "continue";
 }
 
+function fallbackResponseLength(
+  text: string,
+  preference: ReplyLength,
+  route: JevRoute,
+): AdaptiveReplyLength {
+  const choices = adaptiveReplyLengthChoices(preference);
+  if (route === "silence") return defaultAdaptiveReplyLength(preference);
+  if (route === "create_reminder" || route === "create_file") return choices[0];
+
+  const value = text.trim().toLocaleLowerCase();
+  const socialOrSimple =
+    value.length < 70 &&
+    /^(?:hi|hello|hey|thanks|thank you|okay|ok|sure|yes|no|嗨|哈囉|你好|謝謝|好|好的|可以|嗯|喔)/u.test(
+      value,
+    );
+  if (socialOrSimple) return choices[0];
+
+  const asksForDepth =
+    value.length > 320 ||
+    /\b(?:explain|analyze|compare|walk me through|in detail|why|trade-?offs?)\b/i.test(
+      value,
+    ) ||
+    /(?:詳細|解釋|分析|比較|為什麼|怎麼做|一步一步|優缺點|利弊)/u.test(value);
+  if (asksForDepth) return choices[choices.length - 1];
+
+  return choices[Math.floor((choices.length - 1) / 2)];
+}
+
 export async function POST(request: Request) {
   const auth = await requireUser(request);
   if ("response" in auth) return auth.response;
@@ -162,10 +198,12 @@ export async function POST(request: Request) {
     pendingTimings?: unknown[];
     allowWait?: boolean;
     recentMessages?: RecentMessage[];
+    replyLength?: unknown;
   };
   const text = body.text?.trim().slice(0, 6000) ?? "";
   const pendingText = body.pendingText?.trim().slice(0, 6000) ?? "";
   const allowWait = body.allowWait !== false;
+  const replyLength = parseReplyLength(body.replyLength);
   const completeText = [pendingText, text].filter(Boolean).join(" ").trim();
   const currentTiming = speechTiming(body.timing);
   const pendingTimings = Array.isArray(body.pendingTimings)
@@ -202,18 +240,21 @@ export async function POST(request: Request) {
       route: "silence",
       turnState: "complete",
       contextMode: "continue",
+      responseLength: defaultAdaptiveReplyLength(replyLength),
       source: "fallback",
     });
   }
 
   const apiKey = process.env.TYPESAFE_API_KEY;
   if (!apiKey) {
+    const route = fallbackRoute(completeText);
     return Response.json({
-      route: fallbackRoute(completeText),
+      route,
       turnState: allowWait ? fallbackTurnState(text, pendingText) : "complete",
       contextMode: pendingText
         ? "continue"
         : fallbackContextMode(text, recentMessages),
+      responseLength: fallbackResponseLength(completeText, replyLength, route),
       source: "fallback",
     });
   }
@@ -235,6 +276,7 @@ export async function POST(request: Request) {
           delivery_timing: timingSummary,
           recent_conversation: recentMessages,
           authoritative_clock: getCurrentTimeContext(),
+          reply_length_preference: replyLength,
         },
         questions: {
           turn_state: {
@@ -275,6 +317,23 @@ export async function POST(request: Request) {
                 "Start a fresh model context because this is clearly an independent topic and prior turns are unnecessary.",
             },
           },
+          response_length: {
+            type: "choice",
+            instructions:
+              `Choose the most natural amount for the assistant to say on this turn. The user's overall preference is ${replyLength}, which is a range rather than a fixed target. Let quick acknowledgements, greetings, simple facts, emotionally sensitive moments, and transactional confirmations stay compact. Use more room for teaching, nuanced explanations, comparisons, difficult decisions, or an explicit request for detail. Consider the recent conversation: avoid repeatedly choosing the same length when the moments differ, but never add filler just to create variety. Choose only from the provided criteria.`,
+            criteria: Object.fromEntries(
+              adaptiveReplyLengthChoices(replyLength).map((choice) => [
+                choice,
+                {
+                  minimal: "A phrase or one compact spoken sentence.",
+                  brief: "A direct answer in a small handful of spoken sentences.",
+                  standard: "A natural complete answer with moderate explanation.",
+                  detailed: "A developed conversational answer with useful context.",
+                  expansive: "A fuller spoken exploration with reasoning or examples.",
+                }[choice],
+              ]),
+            ),
+          },
         },
       }),
     });
@@ -285,6 +344,7 @@ export async function POST(request: Request) {
         turn_state?: { choice?: string; confidence?: number };
         route?: { choice?: string; confidence?: number };
         context_mode?: { choice?: string; confidence?: number };
+        response_length?: { choice?: string; confidence?: number };
       };
     };
     const choice = payload.answers?.route?.choice as JevRoute | undefined;
@@ -302,6 +362,10 @@ export async function POST(request: Request) {
       : contextChoice && CONTEXT_MODES.has(contextChoice)
         ? contextChoice
         : fallbackContextMode(text, recentMessages);
+    const responseLength = parseAdaptiveReplyLength(
+      payload.answers?.response_length?.choice,
+      replyLength,
+    );
 
     return Response.json({
       route: choice,
@@ -310,16 +374,21 @@ export async function POST(request: Request) {
       turnConfidence: payload.answers?.turn_state?.confidence ?? null,
       contextMode,
       contextConfidence: payload.answers?.context_mode?.confidence ?? null,
+      responseLength,
+      responseLengthConfidence:
+        payload.answers?.response_length?.confidence ?? null,
       source: "jev",
     });
   } catch (error) {
     console.error("Jev routing failed", error);
+    const route = fallbackRoute(completeText);
     return Response.json({
-      route: fallbackRoute(completeText),
+      route,
       turnState: allowWait ? fallbackTurnState(text, pendingText) : "complete",
       contextMode: pendingText
         ? "continue"
         : fallbackContextMode(text, recentMessages),
+      responseLength: fallbackResponseLength(completeText, replyLength, route),
       source: "fallback",
     });
   }

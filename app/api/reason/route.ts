@@ -1,7 +1,13 @@
 import { requireUser } from "@/lib/auth";
 import { formatMemoryContext } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
-import { parseReplyLength, replyLengthInstruction } from "@/lib/reply-length";
+import {
+  adaptiveReplyLengthInstruction,
+  adaptiveReplyLengthSettings,
+  parseAdaptiveReplyLength,
+  parseReplyLength,
+  replyLengthInstruction,
+} from "@/lib/reply-length";
 import { getCurrentTimeContext } from "@/lib/time-context";
 import { API_BUDGET_MESSAGE, isProviderBudgetError } from "@/lib/provider-error";
 
@@ -33,16 +39,19 @@ export async function POST(request: Request) {
     text?: string;
     route?: ReasonRoute;
     replyLength?: unknown;
+    responseLength?: unknown;
   };
   const text = body.text?.trim().slice(0, 12000) ?? "";
   const route = body.route;
   const replyLength = parseReplyLength(body.replyLength);
+  const responseLength = parseAdaptiveReplyLength(body.responseLength, replyLength);
   if (!text || !route) {
     return Response.json({ error: "A prompt and route are required." }, { status: 400 });
   }
 
   const isExpert = route === "expert_reasoning";
   const isWeb = route === "live_web";
+  const lengthSettings = adaptiveReplyLengthSettings(responseLength, isExpert);
   const model = isExpert ? "gpt-6-astra" : "gpt-5.6-terra";
   const remembered = await listMemories(auth.user.id, 24).catch((error) => {
     console.error("Reasoning without saved memory", error);
@@ -64,28 +73,13 @@ export async function POST(request: Request) {
         "Prepare an accurate answer for a voice assistant to speak aloud. Match the language of the user's substantive request. For Mandarin or Chinese input, answer in natural Taiwan Mandarin using Traditional Chinese, Taiwan vocabulary and phrasing, and no Mainland-specific wording. For English input, answer in English. Use plain language, spoken-friendly sentences, and no markdown. Do not mention model routing." +
         timeContext +
         memoryContext +
-        `\n\n${replyLengthInstruction(replyLength)}`,
+        `\n\n${replyLengthInstruction(replyLength)}` +
+        `\n\n${adaptiveReplyLengthInstruction(replyLength, responseLength)}`,
       reasoning: { effort: isExpert ? "high" : "low" },
       text: {
-        verbosity:
-          replyLength === "less"
-            ? "low"
-            : replyLength === "more"
-              ? "high"
-              : "medium",
+        verbosity: lengthSettings.verbosity,
       },
-      max_output_tokens:
-        replyLength === "less"
-          ? isExpert
-            ? 900
-            : 600
-          : replyLength === "more"
-            ? isExpert
-              ? 3000
-              : 2200
-            : isExpert
-              ? 1800
-              : 1000,
+      max_output_tokens: lengthSettings.maxOutputTokens,
       tools: isWeb ? [{ type: "web_search" }] : undefined,
       store: false,
     }),
