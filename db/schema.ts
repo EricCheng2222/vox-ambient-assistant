@@ -25,3 +25,22 @@ export const agentFiles = sqliteTable(
   },
   (table) => [index("idx_agent_files_created_at").on(table.createdAt)],
 );
+
+export const reminders = sqliteTable(
+  "reminders",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    notes: text("notes"),
+    dueAt: text("due_at").notNull(),
+    status: text("status").notNull().default("pending"),
+    source: text("source").notNull().default("conversation"),
+    notifiedAt: text("notified_at"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_reminders_due_at").on(table.dueAt),
+    index("idx_reminders_status_due_at").on(table.status, table.dueAt),
+  ],
+);

@@ -7,6 +7,7 @@ type JevRoute =
   | "balanced_reasoning"
   | "expert_reasoning"
   | "live_web"
+  | "create_reminder"
   | "create_file";
 
 const ROUTES = new Set<JevRoute>([
@@ -15,6 +16,7 @@ const ROUTES = new Set<JevRoute>([
   "balanced_reasoning",
   "expert_reasoning",
   "live_web",
+  "create_reminder",
   "create_file",
 ]);
 
@@ -27,6 +29,14 @@ function fallbackRoute(text: string): JevRoute {
       words.every((word) => /^(um+|uh+|hmm+|okay|right|yeah)$/.test(word)))
   ) {
     return "silence";
+  }
+  if (
+    /\b(remind me|set (?:a |an )?(?:reminder|alarm)|schedule (?:a |an )?reminder)\b/.test(
+      value,
+    ) ||
+    /(提醒我|設(?:定)?提醒|新增提醒|排程提醒)/.test(value)
+  ) {
+    return "create_reminder";
   }
   if (
     /\b(create|make|write|save|generate)\b.*\b(file|document|doc|checklist|plan|report|csv|json|html|script|code)\b/.test(
@@ -86,7 +96,7 @@ export async function POST(request: Request) {
           route: {
             type: "choice",
             instructions:
-              "Route this utterance for an ambient voice assistant. Choose silence when the speech is incidental, filler, background conversation, not directed at the assistant, or explicitly asks for no reply. Choose create_file only when the user explicitly wants the assistant to produce or save a downloadable file, document, checklist, report, table, data file, web page, or source-code file. Choose realtime for greetings, casual conversation, simple stable facts, brief clarifications, and questions about the current local time, date, or weekday because an authoritative clock is provided. Choose balanced_reasoning for multi-step analysis, comparisons, planning, or nuanced explanations that should be spoken rather than saved as a file. Choose expert_reasoning only for exceptionally difficult, high-stakes, or deeply technical work where maximum accuracy matters. Choose live_web when the answer depends on current, recent, changing, or location-specific information other than the supplied local time and date.",
+              "Route this utterance for an ambient voice assistant. Choose silence when the speech is incidental, filler, background conversation, not directed at the assistant, or explicitly asks for no reply. Choose create_reminder only when the user explicitly asks to be reminded or notified at a future time. Choose create_file only when the user explicitly wants the assistant to produce or save a downloadable file, document, checklist, report, table, data file, web page, or source-code file. Choose realtime for greetings, casual conversation, simple stable facts, brief clarifications, and questions about the current local time, date, or weekday because an authoritative clock is provided. Choose balanced_reasoning for multi-step analysis, comparisons, planning, or nuanced explanations that should be spoken rather than saved as a file. Choose expert_reasoning only for exceptionally difficult, high-stakes, or deeply technical work where maximum accuracy matters. Choose live_web when the answer depends on current, recent, changing, or location-specific information other than the supplied local time and date.",
             criteria: {
               silence: "The assistant should not speak.",
               realtime:
@@ -94,6 +104,8 @@ export async function POST(request: Request) {
               balanced_reasoning: "Use the balanced reasoning model.",
               expert_reasoning: "Use the most capable expert reasoning model.",
               live_web: "Use a model with live web search.",
+              create_reminder:
+                "Create a persistent reminder with a future due time and notification.",
               create_file: "Create and save a downloadable file for the user.",
             },
           },

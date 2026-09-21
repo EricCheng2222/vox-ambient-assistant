@@ -15,6 +15,13 @@
       "when": 1789973181683,
       "tag": "0001_gorgeous_metal_master",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789974377456,
+      "tag": "0002_salty_dreadnoughts",
+      "breakpoints": true
     }
   ]
 }

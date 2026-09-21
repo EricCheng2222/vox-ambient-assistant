@@ -55,3 +55,7 @@ Or, after the resources and secrets are configured, run `npm run deploy:cloudfla
 ## 5. Optional custom domain
 
 After the first deployment, attach a custom domain in Cloudflare Workers & Pages. HTTPS is required for browser microphone access and for the secure Vox session cookie.
+
+## Reminder delivery
+
+Reminder schedules are persisted in D1. The current notification worker runs in the open browser and checks the backend every 15 seconds, so no Cloudflare Cron Trigger is required. Browser alerts require the user to enable notification permission from the Reminders panel. For alerts while the app is fully closed, add a Web Push, email, or messaging delivery provider before relying on Vox for critical reminders.
