@@ -1,5 +1,11 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 export const memories = sqliteTable(
   "memories",
@@ -94,3 +100,30 @@ export const userPreferences = sqliteTable("user_preferences", {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+export const conversationThreads = sqliteTable("conversation_threads", {
+  ownerId: text("owner_id").primaryKey(),
+  generation: integer("generation").notNull().default(1),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const conversationMessages = sqliteTable(
+  "conversation_messages",
+  {
+    sequence: integer("sequence").primaryKey({ autoIncrement: true }),
+    id: text("id").notNull(),
+    ownerId: text("owner_id").notNull(),
+    role: text("role").notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    iv: text("iv").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("conversation_messages_id_unique").on(table.id),
+    index("idx_conversation_messages_owner_sequence").on(
+      table.ownerId,
+      table.sequence,
+    ),
+  ],
+);

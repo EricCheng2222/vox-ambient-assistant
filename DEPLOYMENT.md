@@ -42,6 +42,7 @@ npx wrangler secret put TYPESAFE_API_KEY --config dist/server/wrangler.deploy.js
 npx wrangler secret put VOX_MASTER_CODE --config dist/server/wrangler.deploy.json
 npx wrangler secret put VOX_SESSION_SECRET --config dist/server/wrangler.deploy.json
 npx wrangler secret put VOX_CONTACT_SECRET --config dist/server/wrangler.deploy.json
+npx wrangler secret put VOX_CONVERSATION_SECRET --config dist/server/wrangler.deploy.json
 ```
 
 `VOX_MASTER_CODE` signs in the owner account, which can create unlimited share
@@ -60,11 +61,15 @@ address is encrypted before it is stored in D1 and must match on later sign-ins.
 Use a separate long random value for `VOX_CONTACT_SECRET`; keep it stable so
 stored addresses remain available for future service-email delivery.
 
+Use another stable random value for `VOX_CONVERSATION_SECRET`. Vox encrypts
+each synchronized transcript message with it before writing to D1; changing or
+losing it makes existing synchronized conversations unreadable.
+
 Use a long random value for `VOX_SESSION_SECRET`. Changing it signs everyone out. Removing a user from `VOX_USERS_JSON` immediately invalidates that user's existing session. `VOX_ACCESS_CODE` remains supported only as a single-owner compatibility setting.
 
 ## Privacy and multiple users
 
-Every authenticated session is signed, expires after seven days, and resolves to one opaque owner ID. D1 queries for memories, reminders, file metadata, and activation codes always include the appropriate owner ID. Generated file bodies remain in private R2 storage. A user who guesses another record ID receives `404` and cannot read, update, claim, or delete it.
+Every authenticated session is signed, expires after seven days, and resolves to one opaque owner ID. D1 queries for conversations, memories, reminders, file metadata, and activation codes always include the appropriate owner ID. Synchronized transcript messages are encrypted individually before storage. Generated file bodies remain in private R2 storage. A user who guesses another record ID receives `404` and cannot read, update, claim, or delete it.
 
 The AI providers still receive the conversation content needed to answer, classify, transcribe, or create a requested file. OpenAI Responses calls use `store: false`; provider retention and organization-level data controls should be reviewed before inviting users. Keep D1 and R2 private, restrict Cloudflare account access, and enable rate limiting before a public launch.
 

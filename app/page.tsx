@@ -82,6 +82,7 @@ import {
   type Initiative,
   type UserPreferences,
 } from "@/lib/preferences";
+import type { ConversationMessage } from "@/lib/conversation";
 
 type ConnectionState =
   | "idle"
@@ -94,11 +95,7 @@ type ConnectionState =
   | "speaking"
   | "error";
 
-type Message = {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-};
+type Message = ConversationMessage;
 
 type JevRoute =
   | "silence"
@@ -482,6 +479,12 @@ export default function Home() {
   const preferenceSavesRef = useRef(0);
   const preferenceRevisionRef = useRef(0);
   const sessionCarryoverRef = useRef(false);
+  const conversationGenerationRef = useRef(0);
+  const conversationSyncInFlightRef = useRef(false);
+  const conversationClearPromiseRef = useRef<Promise<number> | null>(null);
+  const pendingMessageIdsRef = useRef(new Set<string>());
+  const messageSavesRef = useRef(new Set<string>());
+  const conversationSyncErrorShownRef = useRef(false);
   const routeTurnRef = useRef(0);
   const activeRouteTurnRef = useRef<number | null>(null);
   const activeResponseIdRef = useRef<string | null>(null);
@@ -565,7 +568,16 @@ export default function Home() {
     void loadReminders();
     void loadInviteStatus();
     void loadPreferences();
+    void syncConversation(false);
     // Loading is intentionally keyed to the authentication transition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authState]);
+
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    const timer = window.setInterval(() => void syncConversation(true), 5_000);
+    return () => window.clearInterval(timer);
+    // Synchronization is intentionally keyed to the authentication transition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authState]);
 
@@ -641,17 +653,125 @@ export default function Home() {
     return () => lifecycle.abort();
   }, []);
 
+  async function syncConversation(quiet = true) {
+    if (conversationSyncInFlightRef.current) return;
+    conversationSyncInFlightRef.current = true;
+    try {
+      const response = await fetch("/api/conversation", { cache: "no-store" });
+      const payload = (await response.json()) as {
+        generation?: number;
+        messages?: Message[];
+        error?: string;
+      };
+      if (
+        !response.ok ||
+        !Number.isSafeInteger(payload.generation) ||
+        !Array.isArray(payload.messages)
+      ) {
+        throw new Error(payload.error ?? "The conversation could not sync.");
+      }
+
+      const generation = payload.generation as number;
+      const previousGeneration = conversationGenerationRef.current;
+      if (previousGeneration > 0 && previousGeneration !== generation) {
+        pendingMessageIdsRef.current.clear();
+        resetRealtimeConversationContext();
+      }
+      const remoteMessages = payload.messages as Message[];
+      conversationGenerationRef.current = generation;
+      const remoteIds = new Set(remoteMessages.map((message) => message.id));
+      for (const id of remoteIds) pendingMessageIdsRef.current.delete(id);
+
+      const pendingMessages = messagesRef.current.filter(
+        (message) =>
+          pendingMessageIdsRef.current.has(message.id) &&
+          !remoteIds.has(message.id),
+      );
+      const next = [...remoteMessages, ...pendingMessages];
+      messagesRef.current = next;
+      setMessages(next);
+      conversationSyncErrorShownRef.current = false;
+
+      for (const message of pendingMessages) {
+        void persistConversationMessage(message);
+      }
+    } catch (error) {
+      if (!quiet && !conversationSyncErrorShownRef.current) {
+        conversationSyncErrorShownRef.current = true;
+        toast.error("Conversation sync is temporarily unavailable", {
+          description:
+            error instanceof Error ? error.message : "Please try again shortly.",
+        });
+      }
+    } finally {
+      conversationSyncInFlightRef.current = false;
+    }
+  }
+
+  async function persistConversationMessage(message: Message) {
+    if (messageSavesRef.current.has(message.id)) return;
+    messageSavesRef.current.add(message.id);
+    let staleGeneration = false;
+    try {
+      if (conversationClearPromiseRef.current) {
+        await conversationClearPromiseRef.current;
+      }
+      if (conversationGenerationRef.current < 1) {
+        await syncConversation(false);
+      }
+      const generation = conversationGenerationRef.current;
+      if (generation < 1) return;
+
+      const response = await fetch("/api/conversation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ generation, message }),
+      });
+      if (response.status === 409) {
+        staleGeneration = true;
+        return;
+      }
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "That message could not sync.");
+      }
+      pendingMessageIdsRef.current.delete(message.id);
+      conversationSyncErrorShownRef.current = false;
+    } catch (error) {
+      if (!conversationSyncErrorShownRef.current) {
+        conversationSyncErrorShownRef.current = true;
+        toast.error("Conversation will retry syncing", {
+          description:
+            error instanceof Error ? error.message : "Please try again shortly.",
+        });
+      }
+    } finally {
+      messageSavesRef.current.delete(message.id);
+    }
+
+    if (staleGeneration) {
+      await syncConversation(true);
+      if (pendingMessageIdsRef.current.has(message.id)) {
+        void persistConversationMessage(message);
+      }
+    }
+  }
+
   function addMessage(role: Message["role"], text: string) {
     const cleanText = text.trim();
     if (!cleanText) return;
+    const message: Message = {
+      id: crypto.randomUUID(),
+      role,
+      text: cleanText,
+    };
+    pendingMessageIdsRef.current.add(message.id);
     setMessages((current) => {
-      const next = [
-        ...current,
-        { id: crypto.randomUUID(), role, text: cleanText },
-      ];
+      const next = [...current, message];
       messagesRef.current = next;
       return next;
     });
+    void persistConversationMessage(message);
   }
 
   function quietThinkingCue(text: string) {
@@ -954,13 +1074,11 @@ export default function Home() {
     refreshRealtimeContext();
   }
 
-  function clearConversation() {
+  function resetRealtimeConversationContext() {
     routeTurnRef.current += 1;
     activeRouteTurnRef.current = null;
     pendingUtteranceRef.current = null;
     sessionCarryoverRef.current = false;
-    messagesRef.current = [];
-    setMessages([]);
     setThinkingCue("");
 
     const channel = channelRef.current;
@@ -975,6 +1093,47 @@ export default function Home() {
       }
       conversationItemsRef.current = [];
       refreshRealtimeContext();
+    }
+  }
+
+  async function clearConversation() {
+    resetRealtimeConversationContext();
+    pendingMessageIdsRef.current.clear();
+    conversationGenerationRef.current = 0;
+    messagesRef.current = [];
+    setMessages([]);
+
+    const clearPromise = (async () => {
+      const response = await fetch("/api/conversation", { method: "DELETE" });
+      const payload = (await response.json()) as {
+        generation?: number;
+        error?: string;
+      };
+      if (!response.ok || !Number.isSafeInteger(payload.generation)) {
+        throw new Error(payload.error ?? "The conversation could not be cleared.");
+      }
+      return payload.generation as number;
+    })();
+    conversationClearPromiseRef.current = clearPromise;
+
+    try {
+      conversationGenerationRef.current = await clearPromise;
+      conversationSyncErrorShownRef.current = false;
+      for (const message of messagesRef.current) {
+        if (pendingMessageIdsRef.current.has(message.id)) {
+          void persistConversationMessage(message);
+        }
+      }
+    } catch (error) {
+      toast.error("Conversation was not cleared everywhere", {
+        description:
+          error instanceof Error ? error.message : "Please try again shortly.",
+      });
+      await syncConversation(true);
+    } finally {
+      if (conversationClearPromiseRef.current === clearPromise) {
+        conversationClearPromiseRef.current = null;
+      }
     }
   }
 

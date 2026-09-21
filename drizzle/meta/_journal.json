@@ -57,6 +57,13 @@
       "when": 1789983922170,
       "tag": "0007_easy_darwin",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789985772514,
+      "tag": "0008_lovely_magdalene",
+      "breakpoints": true
     }
   ]
 }
