@@ -47,7 +47,7 @@ export async function POST(request: Request) {
                 type: "semantic_vad",
                 eagerness: "low",
                 create_response: false,
-                interrupt_response: true,
+                interrupt_response: false,
               },
             },
             output: { voice: "marin" },

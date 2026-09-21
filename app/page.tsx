@@ -105,6 +105,7 @@ type RealtimeEvent = {
   };
   error?: { message?: string };
   response?: {
+    id?: string;
     metadata?: Record<string, string>;
   };
 };
@@ -132,6 +133,13 @@ type ModelContext = {
 declare global {
   interface Document {
     readonly modelContext?: ModelContext;
+  }
+
+  interface Window {
+    __voxActiveVoiceSession?: {
+      ownerId: string;
+      close: () => void;
+    };
   }
 }
 
@@ -161,27 +169,32 @@ type BackgroundRoute = Exclude<JevRoute, "silence" | "realtime">;
 
 const frontVoiceConfig: Record<
   BackgroundRoute,
-  { workState: ConnectionState; task: string }
+  { workState: ConnectionState; zhBridge: string; enBridge: string }
 > = {
   balanced_reasoning: {
     workState: "thinking",
-    task: "think this through carefully",
+    zhBridge: "我先仔細想一下，等一下跟你說。",
+    enBridge: "Let me think this through carefully, then I’ll get back to you.",
   },
   expert_reasoning: {
     workState: "thinking",
-    task: "work through the difficult parts carefully",
+    zhBridge: "我先仔細想一下比較困難的部分，等一下跟你說。",
+    enBridge: "Let me work through the difficult parts carefully, then I’ll get back to you.",
   },
   live_web: {
     workState: "searching",
-    task: "check current sources",
+    zhBridge: "我先查一下最新資料，等一下跟你說結果。",
+    enBridge: "Let me check the latest sources, then I’ll share the result.",
   },
   create_reminder: {
     workState: "scheduling",
-    task: "work out the date and schedule the reminder",
+    zhBridge: "我先確認時間並設定提醒。",
+    enBridge: "Let me confirm the time and schedule that reminder.",
   },
   create_file: {
     workState: "creating",
-    task: "put the requested file together",
+    zhBridge: "我先幫你把檔案整理好。",
+    enBridge: "Let me put that file together for you.",
   },
 };
 
@@ -263,8 +276,12 @@ export default function Home() {
   const proactiveCountRef = useRef(0);
   const memoriesRef = useRef<MemoryRecord[]>([]);
   const routeTurnRef = useRef(0);
+  const activeRouteTurnRef = useRef<number | null>(null);
+  const activeResponseIdRef = useRef<string | null>(null);
   const frontVoiceWaitersRef = useRef(new Map<string, () => void>());
   const conversationItemsRef = useRef<Array<{ id: string; role: string }>>([]);
+  const processedUtterancesRef = useRef(new Map<string, number>());
+  const sessionOwnerRef = useRef<string | null>(null);
 
   const connected = [
     "listening",
@@ -385,6 +402,27 @@ export default function Home() {
       ...current,
       { id: crypto.randomUUID(), role, text: cleanText },
     ]);
+  }
+
+  function claimInputTranscription(text: string, itemId?: string) {
+    const normalized = text.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+    if (!normalized) return false;
+
+    const now = Date.now();
+    for (const [key, seenAt] of processedUtterancesRef.current) {
+      if (now - seenAt > 30_000) processedUtterancesRef.current.delete(key);
+    }
+
+    const itemKey = itemId ? `item:${itemId}` : undefined;
+    if (itemKey && processedUtterancesRef.current.has(itemKey)) return false;
+
+    const textKey = `text:${normalized}`;
+    const lastMatchingText = processedUtterancesRef.current.get(textKey);
+    if (lastMatchingText && now - lastMatchingText < 2_500) return false;
+
+    if (itemKey) processedUtterancesRef.current.set(itemKey, now);
+    processedUtterancesRef.current.set(textKey, now);
+    return true;
   }
 
   function setCurrentMemories(next: MemoryRecord[]) {
@@ -708,6 +746,7 @@ export default function Home() {
     if (
       mutedRef.current ||
       connectionStateRef.current !== "listening" ||
+      activeRouteTurnRef.current !== null ||
       presenceCheckInFlightRef.current ||
       proactiveCountRef.current >= 6 ||
       now - lastHumanMoment < timing.minimumQuietMs ||
@@ -760,7 +799,10 @@ export default function Home() {
       channel.send(
         JSON.stringify({
           type: "response.create",
-          response: { instructions },
+          response: {
+            metadata: { vox_kind: "proactive" },
+            instructions,
+          },
         }),
       );
       setConnectionState("thinking");
@@ -780,13 +822,39 @@ export default function Home() {
     if (!channel || channel.readyState !== "open") return;
     const openChannel = channel;
     const turnId = ++routeTurnRef.current;
+    activeRouteTurnRef.current = turnId;
     const isCurrentTurn = () => turnId === routeTurnRef.current;
+
+    function sendTurnResponse(
+      kind: string,
+      instructions?: string,
+      exactText = false,
+    ) {
+      if (!isCurrentTurn() || openChannel.readyState !== "open") return false;
+      const response: Record<string, unknown> = {
+        metadata: {
+          vox_kind: kind,
+          vox_turn_id: String(turnId),
+        },
+      };
+      if (instructions) {
+        response.instructions = exactText
+          ? `Read the following answer aloud exactly as written. Do not add, remove, correct, qualify, or summarize anything.\n\n${instructions}`
+          : instructions;
+        if (exactText) response.input = [];
+      }
+      openChannel.send(JSON.stringify({ type: "response.create", response }));
+      return true;
+    }
 
     async function runWithFrontVoice<T>(
       route: BackgroundRoute,
       task: () => Promise<T>,
     ) {
       const config = frontVoiceConfig[route];
+      const bridge = /[\u3400-\u9fff]/u.test(text)
+        ? config.zhBridge
+        : config.enBridge;
       setConnectionState(config.workState);
 
       const frontVoice = new Promise<void>((resolve) => {
@@ -807,6 +875,10 @@ export default function Home() {
             JSON.stringify({
               type: "response.create",
               response: {
+                conversation: "none",
+                input: [],
+                output_modalities: ["audio"],
+                max_output_tokens: 80,
                 metadata: {
                   vox_kind: "front_voice",
                   vox_response_id: responseId,
@@ -814,7 +886,7 @@ export default function Home() {
                   vox_work_state: config.workState,
                 },
                 instructions:
-                  `Speak one short, natural bridge sentence while background work begins. Tell the user you will ${config.task} and then return with the result. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese. Keep it under eight seconds. Do not answer the request yet, claim the work is finished, ask a filler question, mention model names, routing, Jev, or internal implementation.`,
+                  `Say exactly the following sentence and nothing else: ${JSON.stringify(bridge)}`,
               },
             }),
           );
@@ -852,6 +924,7 @@ export default function Home() {
       setLastContextMode(contextMode);
 
       if (selectedRoute === "silence") {
+        activeRouteTurnRef.current = null;
         setConnectionState("listening");
         return;
       }
@@ -866,51 +939,31 @@ export default function Home() {
             createScheduledReminder(text),
           );
           if (!isCurrentTurn()) return;
-          channel.send(
-            JSON.stringify({
-              type: "response.create",
-              response: {
-                instructions:
-                  `Briefly confirm that the reminder titled ${JSON.stringify(reminder.title)} is scheduled for ${formatReminderTime(reminder.dueAt)}. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese. Mention that browser notifications work while Vox is open. Do not mention model routing or storage internals.`,
-              },
-            }),
+          sendTurnResponse(
+            "final_answer",
+            `Briefly confirm that the reminder titled ${JSON.stringify(reminder.title)} is scheduled for ${formatReminderTime(reminder.dueAt)}. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese. Mention that browser notifications work while Vox is open. Do not mention model routing or storage internals.`,
           );
         } catch (error) {
           if (!isCurrentTurn()) return;
-          channel.send(
-            JSON.stringify({
-              type: "response.create",
-              response: {
-                instructions:
-                  "Briefly explain that the reminder could not be scheduled and ask the user to include a future date and time. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese. Error context: " +
-                  (error instanceof Error ? error.message : "Unknown error"),
-              },
-            }),
+          sendTurnResponse(
+            "final_error",
+            "Briefly explain that the reminder could not be scheduled and ask the user to include a future date and time. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese. Error context: " +
+              (error instanceof Error ? error.message : "Unknown error"),
           );
         }
       } else if (selectedRoute === "create_file") {
         try {
           const file = await runWithFrontVoice(selectedRoute, () => createFile(text));
           if (!isCurrentTurn()) return;
-          channel.send(
-            JSON.stringify({
-              type: "response.create",
-              response: {
-                instructions:
-                  `Briefly confirm that you created ${file.name} as a ${file.purpose.toLowerCase()} file and that it is ready in the Files panel. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese. Do not mention model routing or storage internals.`,
-              },
-            }),
+          sendTurnResponse(
+            "final_answer",
+            `Briefly confirm that you created ${file.name} as a ${file.purpose.toLowerCase()} file and that it is ready in the Files panel. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese. Do not mention model routing or storage internals.`,
           );
         } catch {
           if (!isCurrentTurn()) return;
-          channel.send(
-            JSON.stringify({
-              type: "response.create",
-              response: {
-                instructions:
-                  "Briefly explain that the file could not be created right now and invite the user to try again. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese.",
-              },
-            }),
+          sendTurnResponse(
+            "final_error",
+            "Briefly explain that the file could not be created right now and invite the user to try again. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese.",
           );
         }
       } else if (selectedRoute === "live_web") {
@@ -921,19 +974,15 @@ export default function Home() {
             body: JSON.stringify({ text, route: selectedRoute }),
           }),
         );
-        const searched = (await searchResponse.json()) as { answer?: string };
+        const searched = (await searchResponse.json()) as {
+          answer?: string;
+          error?: string;
+        };
+        if (!searchResponse.ok || !searched.answer?.trim()) {
+          throw new Error(searched.error ?? "Live research returned no answer.");
+        }
         if (!isCurrentTurn()) return;
-        channel.send(
-          JSON.stringify({
-            type: "response.create",
-            response: {
-              instructions:
-                "Give the user this web-researched answer in a natural conversational voice. Match the user's language. For Mandarin or Chinese, speak natural Taiwan Mandarin with Taiwan vocabulary and phrasing. Preserve source names and uncertainty. Do not mention model routing: " +
-                (searched.answer ??
-                  "Explain that live web research is temporarily unavailable."),
-            },
-          }),
-        );
+        sendTurnResponse("final_answer", searched.answer, true);
       } else if (
         selectedRoute === "balanced_reasoning" ||
         selectedRoute === "expert_reasoning"
@@ -945,26 +994,25 @@ export default function Home() {
             body: JSON.stringify({ text, route: selectedRoute }),
           }),
         );
-        const reasoned = (await reasonResponse.json()) as { answer?: string };
+        const reasoned = (await reasonResponse.json()) as {
+          answer?: string;
+          error?: string;
+        };
+        if (!reasonResponse.ok || !reasoned.answer?.trim()) {
+          throw new Error(reasoned.error ?? "Reasoning returned no answer.");
+        }
         if (!isCurrentTurn()) return;
-        channel.send(
-          JSON.stringify({
-            type: "response.create",
-            response: {
-              instructions:
-                "Give the user this prepared answer in a natural conversational voice. Match the user's language. For Mandarin or Chinese, speak natural Taiwan Mandarin with Taiwan vocabulary and phrasing. Preserve its meaning and do not mention model routing: " +
-                (reasoned.answer ??
-                  "Explain that you could not complete the deeper analysis."),
-            },
-          }),
-        );
+        sendTurnResponse("final_answer", reasoned.answer, true);
       } else {
-        channel.send(JSON.stringify({ type: "response.create" }));
+        sendTurnResponse("realtime_answer");
       }
       if (isCurrentTurn()) setConnectionState("thinking");
     } catch {
       if (!isCurrentTurn()) return;
-      channel.send(JSON.stringify({ type: "response.create" }));
+      const safeFailure = /[\u3400-\u9fff]/u.test(text)
+        ? "抱歉，我剛剛沒能可靠地完成這個查詢。請再試一次。"
+        : "Sorry, I could not complete that request reliably. Please try again.";
+      sendTurnResponse("final_error", safeFailure, true);
       setConnectionState("thinking");
     }
   }
@@ -973,6 +1021,19 @@ export default function Home() {
     switch (event.type) {
       case "input_audio_buffer.speech_started":
         routeTurnRef.current += 1;
+        activeRouteTurnRef.current = routeTurnRef.current;
+        if (activeResponseIdRef.current && channelRef.current?.readyState === "open") {
+          channelRef.current.send(
+            JSON.stringify({
+              type: "response.cancel",
+              response_id: activeResponseIdRef.current,
+            }),
+          );
+          channelRef.current.send(
+            JSON.stringify({ type: "output_audio_buffer.clear" }),
+          );
+          activeResponseIdRef.current = null;
+        }
         lastUserActivityRef.current = Date.now();
         setConnectionState("listening");
         break;
@@ -997,20 +1058,40 @@ export default function Home() {
           (item) => item.id !== event.item_id,
         );
         break;
-      case "conversation.item.input_audio_transcription.completed":
+      case "conversation.item.input_audio_transcription.completed": {
+        const transcript = event.transcript ?? "";
+        if (!claimInputTranscription(transcript, event.item_id)) break;
         lastUserActivityRef.current = Date.now();
-        addMessage("user", event.transcript ?? "");
-        void considerMemory(event.transcript ?? "");
+        addMessage("user", transcript);
+        void considerMemory(transcript);
         refreshRealtimeContext();
-        void routeAndRespond(event.transcript ?? "", event.item_id);
+        void routeAndRespond(transcript, event.item_id);
         break;
+      }
       case "conversation.item.input_audio_transcription.failed":
-        channelRef.current?.send(JSON.stringify({ type: "response.create" }));
+        activeRouteTurnRef.current = null;
+        setConnectionState("listening");
         break;
-      case "response.created":
+      case "response.created": {
+        const responseTurn = Number(event.response?.metadata?.vox_turn_id);
+        if (
+          event.response?.id &&
+          Number.isFinite(responseTurn) &&
+          responseTurn !== routeTurnRef.current
+        ) {
+          channelRef.current?.send(
+            JSON.stringify({
+              type: "response.cancel",
+              response_id: event.response.id,
+            }),
+          );
+          break;
+        }
+        activeResponseIdRef.current = event.response?.id ?? null;
         assistantDraftRef.current = "";
         setConnectionState("thinking");
         break;
+      }
       case "response.output_audio.delta":
         setConnectionState("speaking");
         break;
@@ -1026,10 +1107,20 @@ export default function Home() {
       }
       case "response.done": {
         lastAssistantAtRef.current = Date.now();
+        if (event.response?.id === activeResponseIdRef.current) {
+          activeResponseIdRef.current = null;
+        }
         if (event.response?.metadata?.vox_kind === "front_voice") {
           const responseId = event.response.metadata.vox_response_id;
           frontVoiceWaitersRef.current.get(responseId)?.();
           break;
+        }
+        const completedTurn = Number(event.response?.metadata?.vox_turn_id);
+        if (
+          Number.isFinite(completedTurn) &&
+          completedTurn === activeRouteTurnRef.current
+        ) {
+          activeRouteTurnRef.current = null;
         }
         setConnectionState("listening");
         break;
@@ -1047,6 +1138,11 @@ export default function Home() {
     if (connectionState === "connecting" || connected) return;
     setConnectionState("connecting");
     setErrorMessage("");
+
+    window.__voxActiveVoiceSession?.close();
+    delete window.__voxActiveVoiceSession;
+    const ownerId = crypto.randomUUID();
+    sessionOwnerRef.current = ownerId;
 
     try {
       const tokenResponse = await fetch("/api/realtime-token", {
@@ -1086,6 +1182,14 @@ export default function Home() {
 
       const channel = peer.createDataChannel("oai-events");
       channelRef.current = channel;
+      window.__voxActiveVoiceSession = {
+        ownerId,
+        close: () => {
+          channel.close();
+          peer.close();
+          stream.getTracks().forEach((track) => track.stop());
+        },
+      };
       channel.onmessage = (message) => {
         try {
           handleRealtimeEvent(JSON.parse(message.data) as RealtimeEvent);
@@ -1134,12 +1238,24 @@ export default function Home() {
 
   function disconnect(resetState = true) {
     routeTurnRef.current += 1;
+    activeRouteTurnRef.current = null;
+    activeResponseIdRef.current = null;
     for (const finish of frontVoiceWaitersRef.current.values()) finish();
     frontVoiceWaitersRef.current.clear();
     conversationItemsRef.current = [];
-    channelRef.current?.close();
-    peerRef.current?.close();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
+    processedUtterancesRef.current.clear();
+    if (
+      sessionOwnerRef.current &&
+      window.__voxActiveVoiceSession?.ownerId === sessionOwnerRef.current
+    ) {
+      window.__voxActiveVoiceSession.close();
+      delete window.__voxActiveVoiceSession;
+    } else {
+      channelRef.current?.close();
+      peerRef.current?.close();
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    }
+    sessionOwnerRef.current = null;
     channelRef.current = null;
     peerRef.current = null;
     streamRef.current = null;
