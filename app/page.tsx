@@ -149,6 +149,33 @@ type EchoCandidate = {
 
 const LEGACY_VOICE_STORAGE_KEY = "vox.realtimeVoice";
 const LEGACY_REPLY_LENGTH_STORAGE_KEY = "vox.replyLength";
+const MAX_CARRYOVER_MESSAGES = 30;
+const MAX_CARRYOVER_CHARACTERS = 12_000;
+
+function formatConversationCarryover(messages: Message[]) {
+  const lines: string[] = [];
+  let characters = 0;
+
+  for (const message of messages.slice(-MAX_CARRYOVER_MESSAGES).reverse()) {
+    const text = message.text.trim();
+    if (!text) continue;
+    const line = `${message.role === "user" ? "USER" : "VOX"}: ${text}`;
+    if (characters + line.length > MAX_CARRYOVER_CHARACTERS && lines.length > 0) {
+      break;
+    }
+    lines.unshift(line.slice(0, MAX_CARRYOVER_CHARACTERS));
+    characters += line.length;
+  }
+
+  if (lines.length === 0) return "";
+  return [
+    "The user kept the conversation below when ending the previous voice session.",
+    "Treat it as earlier dialogue context, not as a new message. Continue naturally from it when relevant, without announcing a recap or saying that the session restarted.",
+    "<prior_conversation>",
+    ...lines,
+    "</prior_conversation>",
+  ].join("\n");
+}
 
 type RealtimeEvent = {
   type?: string;
@@ -454,6 +481,7 @@ export default function Home() {
   const replyLengthRef = useRef<ReplyLength>(defaultUserPreferences.replyLength);
   const preferenceSavesRef = useRef(0);
   const preferenceRevisionRef = useRef(0);
+  const sessionCarryoverRef = useRef(false);
   const routeTurnRef = useRef(0);
   const activeRouteTurnRef = useRef<number | null>(null);
   const activeResponseIdRef = useRef<string | null>(null);
@@ -616,10 +644,14 @@ export default function Home() {
   function addMessage(role: Message["role"], text: string) {
     const cleanText = text.trim();
     if (!cleanText) return;
-    setMessages((current) => [
-      ...current,
-      { id: crypto.randomUUID(), role, text: cleanText },
-    ]);
+    setMessages((current) => {
+      const next = [
+        ...current,
+        { id: crypto.randomUUID(), role, text: cleanText },
+      ];
+      messagesRef.current = next;
+      return next;
+    });
   }
 
   function quietThinkingCue(text: string) {
@@ -867,12 +899,21 @@ export default function Home() {
   ) {
     const channel = channelRef.current;
     if (channel?.readyState === "open") {
+      const carryover = sessionCarryoverRef.current
+        ? formatConversationCarryover(messagesRef.current)
+        : "";
       channel.send(
         JSON.stringify({
           type: "session.update",
           session: {
             type: "realtime",
-            instructions: `${buildVoiceInstructions(memoriesRef.current)}\n\n${replyLengthInstruction(nextReplyLength)}`,
+            instructions: [
+              buildVoiceInstructions(memoriesRef.current),
+              replyLengthInstruction(nextReplyLength),
+              carryover,
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
           },
         }),
       );
@@ -908,7 +949,33 @@ export default function Home() {
     conversationItemsRef.current = conversationItemsRef.current.filter(
       (item) => item.id === keepId,
     );
+    sessionCarryoverRef.current = false;
     assistantDraftRef.current = "";
+    refreshRealtimeContext();
+  }
+
+  function clearConversation() {
+    routeTurnRef.current += 1;
+    activeRouteTurnRef.current = null;
+    pendingUtteranceRef.current = null;
+    sessionCarryoverRef.current = false;
+    messagesRef.current = [];
+    setMessages([]);
+    setThinkingCue("");
+
+    const channel = channelRef.current;
+    if (channel?.readyState === "open") {
+      for (const item of conversationItemsRef.current) {
+        channel.send(
+          JSON.stringify({
+            type: "conversation.item.delete",
+            item_id: item.id,
+          }),
+        );
+      }
+      conversationItemsRef.current = [];
+      refreshRealtimeContext();
+    }
   }
 
   async function loadMemories() {
@@ -1909,6 +1976,7 @@ export default function Home() {
     delete window.__voxActiveVoiceSession;
     const ownerId = crypto.randomUUID();
     sessionOwnerRef.current = ownerId;
+    sessionCarryoverRef.current = messagesRef.current.length > 0;
 
     try {
       const tokenResponse = await fetch("/api/realtime-token", {
@@ -2540,11 +2608,7 @@ export default function Home() {
               {messages.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => {
-                    setMessages([]);
-                    pendingUtteranceRef.current = null;
-                    setThinkingCue("");
-                  }}
+                  onClick={clearConversation}
                   className="rounded-full px-3 py-1.5 text-xs text-white/36 transition hover:bg-white/5 hover:text-white/70"
                 >
                   Clear
