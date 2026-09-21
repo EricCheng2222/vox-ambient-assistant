@@ -3,6 +3,11 @@ import { formatMemoryContext } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
 import { getCurrentTimeContext } from "@/lib/time-context";
 import {
+  API_BUDGET_MESSAGE,
+  isProviderBudgetError,
+  ProviderBudgetError,
+} from "@/lib/provider-error";
+import {
   deleteAgentFile,
   getAgentFile,
   listAgentFiles,
@@ -219,7 +224,10 @@ export async function POST(request: Request) {
       }),
     });
     const payload = (await response.json()) as Parameters<typeof readOutputText>[0];
-    if (!response.ok) throw new Error(`OpenAI returned ${response.status}`);
+    if (!response.ok) {
+      if (isProviderBudgetError(response, payload)) throw new ProviderBudgetError();
+      throw new Error(`OpenAI returned ${response.status}`);
+    }
     const generated = JSON.parse(readOutputText(payload)) as {
       title?: string;
       filename_base?: string;
@@ -243,7 +251,15 @@ export async function POST(request: Request) {
     return Response.json({ file, kind, source: "jev" }, { status: 201 });
   } catch (error) {
     console.error("File creation failed", error);
-    return Response.json({ error: "Vox could not create that file yet." }, { status: 502 });
+    return Response.json(
+      {
+        error:
+          error instanceof ProviderBudgetError
+            ? API_BUDGET_MESSAGE
+            : "Vox could not create that file yet.",
+      },
+      { status: error instanceof ProviderBudgetError ? 402 : 502 },
+    );
   }
 }
 

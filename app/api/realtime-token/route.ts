@@ -2,6 +2,8 @@ import { buildVoiceInstructions } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
 import { requireUser } from "@/lib/auth";
 import { parseRealtimeVoice } from "@/lib/realtime-voice";
+import { parseReplyLength, replyLengthInstruction } from "@/lib/reply-length";
+import { API_BUDGET_MESSAGE, isProviderBudgetError } from "@/lib/provider-error";
 
 const REALTIME_MODEL = "gpt-realtime-2.1";
 
@@ -12,15 +14,17 @@ export async function POST(request: Request) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     return Response.json(
-      { error: "The OpenAI API key has not been configured yet." },
+      { error: "The live voice service has not been configured yet." },
       { status: 503 },
     );
   }
 
   const requestBody = (await request.json().catch(() => ({}))) as {
     voice?: unknown;
+    replyLength?: unknown;
   };
   const voice = parseRealtimeVoice(requestBody.voice);
+  const replyLength = parseReplyLength(requestBody.replyLength);
 
   const remembered = await listMemories(auth.user.id, 24).catch((error) => {
     console.error("Starting Realtime without saved memory", error);
@@ -41,7 +45,7 @@ export async function POST(request: Request) {
           type: "realtime",
           model: REALTIME_MODEL,
           output_modalities: ["audio"],
-          instructions: buildVoiceInstructions(remembered),
+          instructions: `${buildVoiceInstructions(remembered)}\n\n${replyLengthInstruction(replyLength)}`,
           audio: {
             input: {
               transcription: {
@@ -67,7 +71,11 @@ export async function POST(request: Request) {
   if (!response.ok) {
     console.error("Realtime token request failed", response.status);
     return Response.json(
-      { error: "OpenAI could not start a Realtime session." },
+      {
+        error: isProviderBudgetError(response, payload)
+          ? API_BUDGET_MESSAGE
+          : "Vox could not start a live voice session.",
+      },
       { status: response.status },
     );
   }

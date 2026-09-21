@@ -7,6 +7,11 @@ import {
   updateReminderStatus,
 } from "@/lib/reminder-store";
 import { getCurrentTimeContext } from "@/lib/time-context";
+import {
+  API_BUDGET_MESSAGE,
+  isProviderBudgetError,
+  ProviderBudgetError,
+} from "@/lib/provider-error";
 
 function readOutputText(payload: {
   output_text?: string;
@@ -85,7 +90,10 @@ export async function POST(request: Request) {
       }),
     });
     const payload = (await response.json()) as Parameters<typeof readOutputText>[0];
-    if (!response.ok) throw new Error(`OpenAI returned ${response.status}`);
+    if (!response.ok) {
+      if (isProviderBudgetError(response, payload)) throw new ProviderBudgetError();
+      throw new Error(`OpenAI returned ${response.status}`);
+    }
     const parsed = JSON.parse(readOutputText(payload)) as {
       title?: string;
       notes?: string | null;
@@ -108,7 +116,15 @@ export async function POST(request: Request) {
     return Response.json({ reminder }, { status: 201 });
   } catch (error) {
     console.error("Reminder creation failed", error);
-    return Response.json({ error: "Vox could not schedule that reminder yet." }, { status: 502 });
+    return Response.json(
+      {
+        error:
+          error instanceof ProviderBudgetError
+            ? API_BUDGET_MESSAGE
+            : "Vox could not schedule that reminder yet.",
+      },
+      { status: error instanceof ProviderBudgetError ? 402 : 502 },
+    );
   }
 }
 

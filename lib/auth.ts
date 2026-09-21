@@ -1,10 +1,21 @@
+import { eq } from "drizzle-orm";
+
+import { activationCodes } from "../db/schema.ts";
+
 const COOKIE_NAME = "vox_session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
-const LOCAL_USER = { id: "owner", displayName: "Local user" } as const;
+const LOCAL_USER = {
+  id: "owner",
+  displayName: "Local user",
+  role: "master",
+} as const;
+
+export type UserRole = "master" | "member";
 
 export type AuthenticatedUser = {
   id: string;
   displayName: string;
+  role: UserRole;
 };
 
 type ConfiguredUser = AuthenticatedUser & {
@@ -17,6 +28,10 @@ type AuthConfig = {
 };
 
 function configuredUsers(): ConfiguredUser[] {
+  const masterCode = process.env.VOX_MASTER_CODE?.trim();
+  const master = masterCode
+    ? [{ id: "owner", displayName: "Owner", role: "master" as const, accessCode: masterCode }]
+    : [];
   const raw = process.env.VOX_USERS_JSON?.trim();
   if (raw) {
     try {
@@ -36,13 +51,19 @@ function configuredUsers(): ConfiguredUser[] {
         ) {
           return [];
         }
-        return [{ id, displayName: name.slice(0, 80) || "Vox user", accessCode }];
+        return [{
+          id,
+          displayName: name.slice(0, 80) || "Vox user",
+          role: "member" as const,
+          accessCode,
+        }];
       });
 
-      const uniqueIds = new Set(users.map((user) => user.id));
-      const uniqueCodes = new Set(users.map((user) => user.accessCode));
-      return uniqueIds.size === users.length && uniqueCodes.size === users.length
-        ? users
+      const combined = [...master, ...users];
+      const uniqueIds = new Set(combined.map((user) => user.id));
+      const uniqueCodes = new Set(combined.map((user) => user.accessCode));
+      return uniqueIds.size === combined.length && uniqueCodes.size === combined.length
+        ? combined
         : [];
     } catch {
       return [];
@@ -50,9 +71,16 @@ function configuredUsers(): ConfiguredUser[] {
   }
 
   const legacyCode = process.env.VOX_ACCESS_CODE?.trim();
-  return legacyCode
-    ? [{ id: "owner", displayName: "Owner", accessCode: legacyCode }]
-    : [];
+  return master.length > 0
+    ? master
+    : legacyCode
+      ? [{
+          id: "owner",
+          displayName: "Owner",
+          role: "master" as const,
+          accessCode: legacyCode,
+        }]
+      : [];
 }
 
 function authConfig(): AuthConfig | null {
@@ -98,6 +126,46 @@ async function hmac(value: string, secret: string) {
   return bytesToBase64Url(new Uint8Array(signature));
 }
 
+export async function hashAccessCode(code: string) {
+  const secret =
+    process.env.VOX_SESSION_SECRET?.trim() ||
+    (process.env.NODE_ENV !== "production" ? "vox-local-development-secret" : "");
+  if (!secret) throw new Error("Vox session security is not configured.");
+  return hmac(`code:${code}`, secret);
+}
+
+async function activationUserById(userId: string): Promise<AuthenticatedUser | null> {
+  try {
+    const { getDb } = await import("../db/index.ts");
+    const [record] = await getDb()
+      .select({ userId: activationCodes.userId, displayName: activationCodes.displayName })
+      .from(activationCodes)
+      .where(eq(activationCodes.userId, userId))
+      .limit(1);
+    return record
+      ? { id: record.userId, displayName: record.displayName, role: "member" }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function activationUserByHash(codeHash: string): Promise<AuthenticatedUser | null> {
+  try {
+    const { getDb } = await import("../db/index.ts");
+    const [record] = await getDb()
+      .select({ userId: activationCodes.userId, displayName: activationCodes.displayName })
+      .from(activationCodes)
+      .where(eq(activationCodes.codeHash, codeHash))
+      .limit(1);
+    return record
+      ? { id: record.userId, displayName: record.displayName, role: "member" }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function cookieValue(request: Request, name: string) {
   const cookie = request.headers.get("Cookie") ?? "";
   for (const part of cookie.split(";")) {
@@ -122,7 +190,7 @@ export function isAuthConfigured() {
 
 export async function createSessionToken(userId: string) {
   const config = authConfig();
-  if (!config || !config.users.some((user) => user.id === userId)) {
+  if (!config || !userId) {
     throw new Error("Vox access control is not configured for this user.");
   }
 
@@ -146,7 +214,14 @@ export async function verifyAccessCode(code: string): Promise<AuthenticatedUser 
     const expected = await hmac(`code:${user.accessCode}`, config.sessionSecret);
     if (constantTimeEqual(received, expected)) matched = user;
   }
-  return matched ? { id: matched.id, displayName: matched.displayName } : null;
+  if (matched) {
+    return {
+      id: matched.id,
+      displayName: matched.displayName,
+      role: matched.role,
+    };
+  }
+  return activationUserByHash(received);
 }
 
 export async function getAuthorizedUser(
@@ -171,7 +246,10 @@ export async function getAuthorizedUser(
     if (claims.v !== 1 || typeof claims.sub !== "string") return null;
     if (typeof claims.exp !== "number" || claims.exp <= Date.now()) return null;
     const user = config.users.find((candidate) => candidate.id === claims.sub);
-    return user ? { id: user.id, displayName: user.displayName } : null;
+    if (user) {
+      return { id: user.id, displayName: user.displayName, role: user.role };
+    }
+    return activationUserById(claims.sub);
   } catch {
     return null;
   }

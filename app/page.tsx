@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties, FormEvent } from "react";
+import type { FormEvent } from "react";
 import {
   ArrowUp,
   AudioLines,
@@ -9,11 +9,13 @@ import {
   Brain,
   CheckCircle2,
   Code2,
+  Copy,
   Download,
   FileText,
   FolderOpen,
   Globe2,
   Headphones,
+  KeyRound,
   Mic,
   MicOff,
   PhoneOff,
@@ -21,6 +23,7 @@ import {
   Sparkles,
   Table2,
   Trash2,
+  UserPlus,
   Volume2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -67,6 +70,13 @@ import {
   realtimeVoiceOptions,
   type RealtimeVoice,
 } from "@/lib/realtime-voice";
+import {
+  defaultReplyLength,
+  parseReplyLength,
+  replyLengthInstruction,
+  type ReplyLength,
+} from "@/lib/reply-length";
+import { API_BUDGET_MESSAGE } from "@/lib/provider-error";
 
 type ConnectionState =
   | "idle"
@@ -97,6 +107,11 @@ type JevRoute =
 type Initiative = "off" | "quiet" | "balanced" | "social";
 type PresenceAction = "stay_silent" | "check_in" | "continue_topic";
 type AuthState = "checking" | "authenticated" | "locked";
+type InviteStatus = {
+  generated: number;
+  unlimited: boolean;
+  canGenerate: boolean;
+};
 type ContextMode = "continue" | "fresh";
 type TurnState = "wait" | "complete";
 
@@ -123,7 +138,13 @@ type LiveSpeechTiming = {
   estimatedTrailingSoundMs?: number;
 };
 
+type EchoCandidate = {
+  itemId?: string;
+  confirmed: boolean;
+};
+
 const VOICE_STORAGE_KEY = "vox.realtimeVoice";
+const REPLY_LENGTH_STORAGE_KEY = "vox.replyLength";
 
 type RealtimeEvent = {
   type?: string;
@@ -137,7 +158,7 @@ type RealtimeEvent = {
     type?: string;
     role?: string;
   };
-  error?: { message?: string };
+  error?: { message?: string; code?: string };
   response?: {
     id?: string;
     metadata?: Record<string, string>;
@@ -182,7 +203,7 @@ const statusCopy: Record<ConnectionState, string> = {
   connecting: "Opening a private audio channel…",
   listening: "Listening",
   thinking: "Thinking with you",
-  searching: "Searching the live web with Jev",
+  searching: "Searching the live web",
   scheduling: "Scheduling your reminder",
   creating: "Creating your file",
   speaking: "Speaking — jump in anytime",
@@ -254,14 +275,116 @@ function FileGlyph({ file }: { file: AgentFile }) {
   return <FileText size={18} />;
 }
 
-function Waveform({ active }: { active: boolean }) {
+function isFillerOnly(text: string) {
+  const fragments = text
+    .trim()
+    .toLocaleLowerCase()
+    .split(/[\s,，.。!！?？、…:：;；~-]+/u)
+    .filter(Boolean);
+
+  return (
+    fragments.length > 0 &&
+    fragments.every((fragment) =>
+      /^(?:um+|uh+|h+m+|er+|ah+|eh+|嗯+|呃+|欸+|誒+|喔+|哦+|啊+|唔+)$/u.test(
+        fragment,
+      ),
+    )
+  );
+}
+
+function isLikelySelfEcho(text: string, assistantText: string) {
+  const normalize = (value: string) =>
+    value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const candidate = normalize(text);
+  const reference = normalize(assistantText);
+
+  return (
+    candidate.length >= 4 &&
+    reference.length >= 4 &&
+    (reference.includes(candidate) || candidate.includes(reference))
+  );
+}
+
+const WAVEFORM_BAR_COUNT = 17;
+
+function Waveform({
+  live,
+  analyserRef,
+}: {
+  live: boolean;
+  analyserRef: { current: AnalyserNode | null };
+}) {
+  const barsRef = useRef<Array<HTMLSpanElement | null>>([]);
+
+  useEffect(() => {
+    const levels = new Float32Array(WAVEFORM_BAR_COUNT);
+    let animationFrame = 0;
+
+    const reset = () => {
+      barsRef.current.forEach((bar) => bar?.style.setProperty("--wave-level", "0"));
+    };
+
+    if (!live || !analyserRef.current) {
+      reset();
+      return;
+    }
+
+    const analyser = analyserRef.current;
+    const samples = new Uint8Array(analyser.fftSize);
+
+    const draw = () => {
+      analyser.getByteTimeDomainData(samples);
+
+      let energy = 0;
+      for (const sample of samples) {
+        const centered = (sample - 128) / 128;
+        energy += centered * centered;
+      }
+
+      const rms = Math.sqrt(energy / samples.length);
+      const voiceLevel = Math.min(1, Math.max(0, (rms - 0.012) / 0.12));
+      const samplesPerBar = Math.floor(samples.length / WAVEFORM_BAR_COUNT);
+      const middle = (WAVEFORM_BAR_COUNT - 1) / 2;
+
+      for (let index = 0; index < WAVEFORM_BAR_COUNT; index += 1) {
+        const start = index * samplesPerBar;
+        const end = Math.min(samples.length, start + samplesPerBar);
+        let peak = 0;
+
+        for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
+          peak = Math.max(peak, Math.abs((samples[sampleIndex] - 128) / 128));
+        }
+
+        const shape = 0.58 + 0.42 * (1 - Math.abs(index - middle) / middle);
+        const localLevel = Math.min(1, Math.max(0, (peak - 0.015) / 0.22));
+        const target = Math.min(1, Math.max(voiceLevel * 0.45, localLevel) * shape);
+        const smoothing = target > levels[index] ? 0.48 : 0.2;
+        levels[index] += (target - levels[index]) * smoothing;
+        barsRef.current[index]?.style.setProperty(
+          "--wave-level",
+          levels[index].toFixed(3),
+        );
+      }
+
+      animationFrame = window.requestAnimationFrame(draw);
+    };
+
+    draw();
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      reset();
+    };
+  }, [analyserRef, live]);
+
   return (
     <div className="waveform" aria-hidden="true">
-      {Array.from({ length: 17 }, (_, index) => (
+      {Array.from({ length: WAVEFORM_BAR_COUNT }, (_, index) => (
         <span
           key={index}
-          className={active ? "wave-bar is-active" : "wave-bar"}
-          style={{ "--bar-index": index } as CSSProperties}
+          ref={(bar) => {
+            barsRef.current[index] = bar;
+          }}
+          className={live ? "wave-bar is-live" : "wave-bar"}
         />
       ))}
     </div>
@@ -270,6 +393,7 @@ function Waveform({ active }: { active: boolean }) {
 
 export default function Home() {
   const [authState, setAuthState] = useState<AuthState>("checking");
+  const [email, setEmail] = useState("");
   const [accessCode, setAccessCode] = useState("");
   const [authError, setAuthError] = useState("");
   const [authSubmitting, setAuthSubmitting] = useState(false);
@@ -279,10 +403,10 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [muted, setMuted] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  const [lastRoute, setLastRoute] = useState<JevRoute | null>(null);
-  const [lastContextMode, setLastContextMode] = useState<ContextMode | null>(null);
   const [initiative, setInitiative] = useState<Initiative>("balanced");
   const [voice, setVoice] = useState<RealtimeVoice>(defaultRealtimeVoice);
+  const [replyLength, setReplyLength] =
+    useState<ReplyLength>(defaultReplyLength);
   const [thinkingCue, setThinkingCue] = useState("");
   const [memories, setMemories] = useState<MemoryRecord[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(true);
@@ -295,11 +419,19 @@ export default function Home() {
   const [remindersOpen, setRemindersOpen] = useState(false);
   const [remindersLoading, setRemindersLoading] = useState(true);
   const [remindersError, setRemindersError] = useState("");
+  const [invitesOpen, setInvitesOpen] = useState(false);
+  const [inviteStatus, setInviteStatus] = useState<InviteStatus | null>(null);
+  const [inviteName, setInviteName] = useState("");
+  const [newInviteCode, setNewInviteCode] = useState("");
+  const [inviteLoading, setInviteLoading] = useState(true);
+  const [inviteCreating, setInviteCreating] = useState(false);
+  const [inviteError, setInviteError] = useState("");
 
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const inputAnalyserRef = useRef<AnalyserNode | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const assistantDraftRef = useRef("");
   const messagesRef = useRef<Message[]>([]);
@@ -311,6 +443,7 @@ export default function Home() {
   const presenceCheckInFlightRef = useRef(false);
   const proactiveCountRef = useRef(0);
   const memoriesRef = useRef<MemoryRecord[]>([]);
+  const replyLengthRef = useRef<ReplyLength>(defaultReplyLength);
   const routeTurnRef = useRef(0);
   const activeRouteTurnRef = useRef<number | null>(null);
   const activeResponseIdRef = useRef<string | null>(null);
@@ -320,6 +453,14 @@ export default function Home() {
   const sessionOwnerRef = useRef<string | null>(null);
   const pendingUtteranceRef = useRef<PendingUtterance | null>(null);
   const userSpeakingRef = useRef(false);
+  const speechAwaitingTranscriptRef = useRef(false);
+  const interruptedWorkStateRef = useRef<ConnectionState | null>(null);
+  const echoCandidateRef = useRef<EchoCandidate | null>(null);
+  const bargeInTimerRef = useRef<number | null>(null);
+  const inputRmsRef = useRef(0);
+  const assistantEchoFloorRef = useRef(0);
+  const assistantSpeakingSinceRef = useRef<number | null>(null);
+  const lastAssistantTranscriptRef = useRef("");
   const audioContextRef = useRef<AudioContext | null>(null);
   const speechMonitorTimerRef = useRef<number | null>(null);
   const currentSoundStartedAtRef = useRef<number | null>(null);
@@ -363,7 +504,14 @@ export default function Home() {
     const savedVoice = parseRealtimeVoice(
       window.localStorage.getItem(VOICE_STORAGE_KEY),
     );
-    const timer = window.setTimeout(() => setVoice(savedVoice), 0);
+    const savedReplyLength = parseReplyLength(
+      window.localStorage.getItem(REPLY_LENGTH_STORAGE_KEY),
+    );
+    replyLengthRef.current = savedReplyLength;
+    const timer = window.setTimeout(() => {
+      setVoice(savedVoice);
+      setReplyLength(savedReplyLength);
+    }, 0);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -392,6 +540,7 @@ export default function Home() {
     void loadMemories();
     void loadFiles();
     void loadReminders();
+    void loadInviteStatus();
     // Loading is intentionally keyed to the authentication transition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authState]);
@@ -474,6 +623,7 @@ export default function Home() {
     analyser.smoothingTimeConstant = 0.15;
     source.connect(analyser);
     audioContextRef.current = audioContext;
+    inputAnalyserRef.current = analyser;
 
     const samples = new Uint8Array(analyser.fftSize);
     speechMonitorTimerRef.current = window.setInterval(() => {
@@ -484,6 +634,15 @@ export default function Home() {
         energy += centered * centered;
       }
       const rms = Math.sqrt(energy / samples.length);
+      inputRmsRef.current = rms;
+      if (
+        connectionStateRef.current === "speaking" &&
+        !echoCandidateRef.current
+      ) {
+        assistantEchoFloorRef.current = assistantEchoFloorRef.current
+          ? assistantEchoFloorRef.current * 0.82 + rms * 0.18
+          : rms;
+      }
       const now = performance.now();
 
       if (rms >= 0.028) {
@@ -511,6 +670,10 @@ export default function Home() {
     }
     void audioContextRef.current?.close().catch(() => undefined);
     audioContextRef.current = null;
+    inputAnalyserRef.current = null;
+    inputRmsRef.current = 0;
+    assistantEchoFloorRef.current = 0;
+    assistantSpeakingSinceRef.current = null;
     currentSoundStartedAtRef.current = null;
     lastLoudMomentRef.current = null;
     lastTrailingSoundDurationRef.current = 0;
@@ -559,6 +722,14 @@ export default function Home() {
     }
   }
 
+  function chooseReplyLength(value: string) {
+    const nextReplyLength = parseReplyLength(value);
+    replyLengthRef.current = nextReplyLength;
+    setReplyLength(nextReplyLength);
+    window.localStorage.setItem(REPLY_LENGTH_STORAGE_KEY, nextReplyLength);
+    refreshRealtimeContext(nextReplyLength);
+  }
+
   function claimInputTranscription(text: string, itemId?: string) {
     const normalized = text.trim().toLocaleLowerCase().replace(/\s+/g, " ");
     if (!normalized) return false;
@@ -586,7 +757,9 @@ export default function Home() {
     refreshRealtimeContext();
   }
 
-  function refreshRealtimeContext() {
+  function refreshRealtimeContext(
+    nextReplyLength: ReplyLength = replyLengthRef.current,
+  ) {
     const channel = channelRef.current;
     if (channel?.readyState === "open") {
       channel.send(
@@ -594,7 +767,7 @@ export default function Home() {
           type: "session.update",
           session: {
             type: "realtime",
-            instructions: buildVoiceInstructions(memoriesRef.current),
+            instructions: `${buildVoiceInstructions(memoriesRef.current)}\n\n${replyLengthInstruction(nextReplyLength)}`,
           },
         }),
       );
@@ -707,6 +880,65 @@ export default function Home() {
       );
     } finally {
       setRemindersLoading(false);
+    }
+  }
+
+  async function loadInviteStatus() {
+    try {
+      const response = await fetch("/api/invites", { cache: "no-store" });
+      const payload = (await response.json()) as InviteStatus & { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Share codes could not load.");
+      }
+      setInviteStatus(payload);
+      setInviteError("");
+    } catch (error) {
+      setInviteError(
+        error instanceof Error ? error.message : "Share codes could not load.",
+      );
+    } finally {
+      setInviteLoading(false);
+    }
+  }
+
+  async function createShareCode() {
+    if (inviteCreating || inviteStatus?.canGenerate === false) return;
+    setInviteCreating(true);
+    setInviteError("");
+    try {
+      const response = await fetch("/api/invites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: inviteName }),
+      });
+      const payload = (await response.json()) as {
+        code?: string;
+        status?: InviteStatus;
+        error?: string;
+      };
+      if (!response.ok || !payload.code || !payload.status) {
+        throw new Error(payload.error ?? "The share code could not be created.");
+      }
+      setNewInviteCode(payload.code);
+      setInviteStatus(payload.status);
+      setInviteName("");
+      toast.success("Share code created");
+    } catch (error) {
+      setInviteError(
+        error instanceof Error ? error.message : "The share code could not be created.",
+      );
+    } finally {
+      setInviteCreating(false);
+    }
+  }
+
+  async function copyInviteCode() {
+    if (!newInviteCode) return;
+    try {
+      await navigator.clipboard.writeText(newInviteCode);
+      toast.success("Share code copied");
+    } catch {
+      toast.error("Could not copy the code");
     }
   }
 
@@ -849,7 +1081,7 @@ export default function Home() {
       ];
       setCurrentMemories(next);
       toast.success(
-        decision.action === "update" ? "Jev updated a memory" : "Jev remembered that",
+        decision.action === "update" ? "Memory updated" : "Remembered for later",
         { description: decision.memory.content },
       );
     } catch {
@@ -987,13 +1219,16 @@ export default function Home() {
     const completeText = [pendingText, text].filter(Boolean).join(" ").trim();
     const pendingTimings = pending?.timings ?? [];
     const completeTimings = [...pendingTimings, ...(timing ? [timing] : [])];
+    const budgetFailureText = () =>
+      /[\u3400-\u9fff]/u.test(completeText)
+        ? "Vox 的 API 額度暫時用完了，不過應該很快就會恢復。"
+        : API_BUDGET_MESSAGE;
 
     function sendTurnResponse(
       kind: string,
       instructions?: string,
       exactText = false,
     ) {
-      if (!isCurrentTurn() || openChannel.readyState !== "open") return false;
       const response: Record<string, unknown> = {
         metadata: {
           vox_kind: kind,
@@ -1006,7 +1241,19 @@ export default function Home() {
           : instructions;
         if (exactText) response.input = [];
       }
-      openChannel.send(JSON.stringify({ type: "response.create", response }));
+
+      const dispatch = (attempt = 0) => {
+        if (!isCurrentTurn() || openChannel.readyState !== "open") return;
+        if (speechAwaitingTranscriptRef.current && attempt < 80) {
+          window.setTimeout(() => dispatch(attempt + 1), 100);
+          return;
+        }
+        if (!speechAwaitingTranscriptRef.current) {
+          openChannel.send(JSON.stringify({ type: "response.create", response }));
+        }
+      };
+
+      dispatch();
       return true;
     }
 
@@ -1090,9 +1337,6 @@ export default function Home() {
       const selectedRoute = route.route ?? "realtime";
       const contextMode = route.contextMode ?? "continue";
       const turnState = allowWait ? (route.turnState ?? "complete") : "complete";
-      setLastRoute(selectedRoute);
-      setLastContextMode(contextMode);
-
       if (turnState === "wait") {
         pendingUtteranceRef.current = {
           text: completeText,
@@ -1132,6 +1376,10 @@ export default function Home() {
           );
         } catch (error) {
           if (!isCurrentTurn()) return;
+          if (error instanceof Error && error.message === API_BUDGET_MESSAGE) {
+            sendTurnResponse("final_error", budgetFailureText(), true);
+            return;
+          }
           sendTurnResponse(
             "final_error",
             "Briefly explain that the reminder could not be scheduled and ask the user to include a future date and time. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese. Error context: " +
@@ -1148,8 +1396,12 @@ export default function Home() {
             "final_answer",
             `Briefly confirm that you created ${file.name} as a ${file.purpose.toLowerCase()} file and that it is ready in the Files panel. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese. Do not mention model routing or storage internals.`,
           );
-        } catch {
+        } catch (error) {
           if (!isCurrentTurn()) return;
+          if (error instanceof Error && error.message === API_BUDGET_MESSAGE) {
+            sendTurnResponse("final_error", budgetFailureText(), true);
+            return;
+          }
           sendTurnResponse(
             "final_error",
             "Briefly explain that the file could not be created right now and invite the user to try again. Match the user's language. For Mandarin or Chinese, use natural Taiwan Mandarin and Traditional Chinese.",
@@ -1160,7 +1412,11 @@ export default function Home() {
           fetch("/api/reason", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: completeText, route: selectedRoute }),
+            body: JSON.stringify({
+              text: completeText,
+              route: selectedRoute,
+              replyLength: replyLengthRef.current,
+            }),
           }),
         );
         const searched = (await searchResponse.json()) as {
@@ -1180,7 +1436,11 @@ export default function Home() {
           fetch("/api/reason", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: completeText, route: selectedRoute }),
+            body: JSON.stringify({
+              text: completeText,
+              route: selectedRoute,
+              replyLength: replyLengthRef.current,
+            }),
           }),
         );
         const reasoned = (await reasonResponse.json()) as {
@@ -1196,20 +1456,57 @@ export default function Home() {
         sendTurnResponse("realtime_answer");
       }
       if (isCurrentTurn()) setConnectionState("thinking");
-    } catch {
+    } catch (error) {
       if (!isCurrentTurn()) return;
-      const safeFailure = /[\u3400-\u9fff]/u.test(completeText)
-        ? "抱歉，我剛剛沒能可靠地完成這個查詢。請再試一次。"
-        : "Sorry, I could not complete that request reliably. Please try again.";
+      const safeFailure =
+        error instanceof Error && error.message === API_BUDGET_MESSAGE
+          ? budgetFailureText()
+          : /[\u3400-\u9fff]/u.test(completeText)
+            ? "抱歉，我剛剛沒能可靠地完成這個查詢。請再試一次。"
+            : "Sorry, I could not complete that request reliably. Please try again.";
       sendTurnResponse("final_error", safeFailure, true);
       setConnectionState("thinking");
     }
   }
 
+  function interruptActiveVoiceResponse() {
+    if (bargeInTimerRef.current !== null) {
+      window.clearTimeout(bargeInTimerRef.current);
+      bargeInTimerRef.current = null;
+    }
+    if (activeResponseIdRef.current && channelRef.current?.readyState === "open") {
+      channelRef.current.send(
+        JSON.stringify({
+          type: "response.cancel",
+          response_id: activeResponseIdRef.current,
+        }),
+      );
+      channelRef.current.send(JSON.stringify({ type: "output_audio_buffer.clear" }));
+      activeResponseIdRef.current = null;
+    }
+    assistantSpeakingSinceRef.current = null;
+    assistantEchoFloorRef.current = 0;
+    lastUserActivityRef.current = Date.now();
+    connectionStateRef.current = "listening";
+    setConnectionState("listening");
+  }
+
   function handleRealtimeEvent(event: RealtimeEvent) {
     switch (event.type) {
       case "input_audio_buffer.speech_started": {
+        const assistantWasSpeaking =
+          connectionStateRef.current === "speaking" &&
+          activeResponseIdRef.current !== null;
+        const echoFloor = assistantEchoFloorRef.current;
         userSpeakingRef.current = true;
+        speechAwaitingTranscriptRef.current = true;
+        interruptedWorkStateRef.current =
+          activeRouteTurnRef.current !== null &&
+          ["thinking", "searching", "scheduling", "creating"].includes(
+            connectionStateRef.current,
+          )
+            ? connectionStateRef.current
+            : null;
         lastTrailingSoundDurationRef.current = 0;
         const speechStartedAt = Date.now();
         const liveTiming: LiveSpeechTiming = {
@@ -1223,22 +1520,37 @@ export default function Home() {
         };
         activeSpeechTimingRef.current = liveTiming;
         if (event.item_id) speechTimingsRef.current.set(event.item_id, liveTiming);
-        routeTurnRef.current += 1;
-        activeRouteTurnRef.current = routeTurnRef.current;
-        if (activeResponseIdRef.current && channelRef.current?.readyState === "open") {
-          channelRef.current.send(
-            JSON.stringify({
-              type: "response.cancel",
-              response_id: activeResponseIdRef.current,
-            }),
-          );
-          channelRef.current.send(
-            JSON.stringify({ type: "output_audio_buffer.clear" }),
-          );
-          activeResponseIdRef.current = null;
+
+        if (assistantWasSpeaking) {
+          const candidate: EchoCandidate = {
+            itemId: event.item_id,
+            confirmed: false,
+          };
+          echoCandidateRef.current = candidate;
+          if (bargeInTimerRef.current !== null) {
+            window.clearTimeout(bargeInTimerRef.current);
+          }
+          bargeInTimerRef.current = window.setTimeout(() => {
+            bargeInTimerRef.current = null;
+            if (!userSpeakingRef.current || echoCandidateRef.current !== candidate) {
+              return;
+            }
+            const currentRms = inputRmsRef.current;
+            const clearHumanSpeech =
+              currentRms >= 0.035 &&
+              (echoFloor < 0.018 ||
+                currentRms >= echoFloor * 1.65 ||
+                currentRms - echoFloor >= 0.018);
+            if (clearHumanSpeech) {
+              candidate.confirmed = true;
+              interruptActiveVoiceResponse();
+            }
+          }, 280);
+          break;
         }
+
+        interruptActiveVoiceResponse();
         lastUserActivityRef.current = Date.now();
-        setThinkingCue("");
         setConnectionState("listening");
         break;
       }
@@ -1262,7 +1574,13 @@ export default function Home() {
           if (event.item_id) speechTimingsRef.current.set(event.item_id, stoppedTiming);
         }
         previousSpeechStoppedAtRef.current = speechStoppedAt;
-        setConnectionState("thinking");
+        setConnectionState(
+          echoCandidateRef.current &&
+            !echoCandidateRef.current.confirmed &&
+            activeResponseIdRef.current
+            ? "speaking"
+            : "thinking",
+        );
         break;
       }
       case "conversation.item.added":
@@ -1285,12 +1603,69 @@ export default function Home() {
         break;
       case "conversation.item.input_audio_transcription.completed": {
         const transcript = event.transcript ?? "";
-        if (!claimInputTranscription(transcript, event.item_id)) break;
+        speechAwaitingTranscriptRef.current = false;
+        if (!claimInputTranscription(transcript, event.item_id)) {
+          interruptedWorkStateRef.current = null;
+          break;
+        }
         const timing = completedSpeechTiming(event.item_id);
+        const echoCandidate = echoCandidateRef.current;
+        const matchesEchoCandidate =
+          echoCandidate &&
+          (!echoCandidate.itemId ||
+            !event.item_id ||
+            echoCandidate.itemId === event.item_id);
+        if (matchesEchoCandidate) {
+          echoCandidateRef.current = null;
+          const assistantText = [
+            lastAssistantTranscriptRef.current,
+            assistantDraftRef.current,
+          ]
+            .filter(Boolean)
+            .join(" ");
+          if (
+            !echoCandidate.confirmed &&
+            isLikelySelfEcho(transcript, assistantText)
+          ) {
+            if (event.item_id && channelRef.current?.readyState === "open") {
+              channelRef.current.send(
+                JSON.stringify({
+                  type: "conversation.item.delete",
+                  item_id: event.item_id,
+                }),
+              );
+              conversationItemsRef.current = conversationItemsRef.current.filter(
+                (item) => item.id !== event.item_id,
+              );
+            }
+            interruptedWorkStateRef.current = null;
+            setConnectionState(
+              activeResponseIdRef.current ? "speaking" : "listening",
+            );
+            break;
+          }
+          if (!echoCandidate.confirmed) {
+            echoCandidate.confirmed = true;
+            interruptActiveVoiceResponse();
+          }
+        }
         lastUserActivityRef.current = Date.now();
         addMessage("user", transcript);
         refreshRealtimeContext();
         const earlierFragment = pendingUtteranceRef.current;
+        const interruptedWorkState = interruptedWorkStateRef.current;
+        interruptedWorkStateRef.current = null;
+
+        if (
+          interruptedWorkState &&
+          !earlierFragment &&
+          isFillerOnly(transcript) &&
+          activeRouteTurnRef.current !== null
+        ) {
+          setConnectionState(interruptedWorkState);
+          break;
+        }
+
         if (userSpeakingRef.current) {
           pendingUtteranceRef.current = {
             text: [earlierFragment?.text, transcript].filter(Boolean).join(" "),
@@ -1308,13 +1683,40 @@ export default function Home() {
         };
         break;
       }
-      case "conversation.item.input_audio_transcription.failed":
+      case "conversation.item.input_audio_transcription.failed": {
+        speechAwaitingTranscriptRef.current = false;
+        const echoCandidate = echoCandidateRef.current;
+        const matchesEchoCandidate =
+          echoCandidate &&
+          (!echoCandidate.itemId ||
+            !event.item_id ||
+            echoCandidate.itemId === event.item_id);
+        if (matchesEchoCandidate && !echoCandidate.confirmed) {
+          echoCandidateRef.current = null;
+          if (event.item_id && channelRef.current?.readyState === "open") {
+            channelRef.current.send(
+              JSON.stringify({
+                type: "conversation.item.delete",
+                item_id: event.item_id,
+              }),
+            );
+            conversationItemsRef.current = conversationItemsRef.current.filter(
+              (item) => item.id !== event.item_id,
+            );
+          }
+          interruptedWorkStateRef.current = null;
+          setConnectionState(activeResponseIdRef.current ? "speaking" : "listening");
+          break;
+        }
+        echoCandidateRef.current = null;
+        interruptedWorkStateRef.current = null;
         activeRouteTurnRef.current = null;
         if (pendingUtteranceRef.current) {
           setThinkingCue(quietThinkingCue(pendingUtteranceRef.current.text));
         }
         setConnectionState("listening");
         break;
+      }
       case "response.created": {
         const responseTurn = Number(event.response?.metadata?.vox_turn_id);
         if (
@@ -1336,15 +1738,22 @@ export default function Home() {
         break;
       }
       case "response.output_audio.delta":
+        if (assistantSpeakingSinceRef.current === null) {
+          assistantSpeakingSinceRef.current = performance.now();
+          assistantEchoFloorRef.current = inputRmsRef.current;
+        }
+        connectionStateRef.current = "speaking";
         setConnectionState("speaking");
         break;
       case "response.output_audio_transcript.delta":
         assistantDraftRef.current += event.delta ?? "";
+        connectionStateRef.current = "speaking";
         setConnectionState("speaking");
         break;
       case "response.output_audio_transcript.done": {
         const transcript = event.transcript ?? assistantDraftRef.current;
         addMessage("assistant", transcript);
+        lastAssistantTranscriptRef.current = transcript;
         assistantDraftRef.current = "";
         break;
       }
@@ -1352,6 +1761,8 @@ export default function Home() {
         lastAssistantAtRef.current = Date.now();
         if (event.response?.id === activeResponseIdRef.current) {
           activeResponseIdRef.current = null;
+          assistantSpeakingSinceRef.current = null;
+          assistantEchoFloorRef.current = 0;
         }
         if (event.response?.metadata?.vox_kind === "front_voice") {
           const responseId = event.response.metadata.vox_response_id;
@@ -1365,13 +1776,20 @@ export default function Home() {
         ) {
           activeRouteTurnRef.current = null;
         }
+        connectionStateRef.current = "listening";
         setConnectionState("listening");
         break;
       }
       case "error":
         for (const finish of frontVoiceWaitersRef.current.values()) finish();
         frontVoiceWaitersRef.current.clear();
-        setErrorMessage(event.error?.message ?? "The live session hit an error.");
+        setErrorMessage(
+          /quota|billing|credit|budget|payment/i.test(
+            `${event.error?.code ?? ""} ${event.error?.message ?? ""}`,
+          )
+            ? API_BUDGET_MESSAGE
+            : (event.error?.message ?? "The live session hit an error."),
+        );
         setConnectionState("error");
         break;
     }
@@ -1391,7 +1809,7 @@ export default function Home() {
       const tokenResponse = await fetch("/api/realtime-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ voice }),
+        body: JSON.stringify({ voice, replyLength: replyLengthRef.current }),
       });
       const tokenPayload = (await tokenResponse.json()) as RealtimeTokenPayload;
       if (!tokenResponse.ok || !tokenPayload.value) {
@@ -1466,7 +1884,7 @@ export default function Home() {
         },
       );
       if (!realtimeResponse.ok) {
-        throw new Error("OpenAI declined the live audio connection.");
+        throw new Error("The live audio service declined the connection.");
       }
       await peer.setRemoteDescription({
         type: "answer",
@@ -1496,6 +1914,15 @@ export default function Home() {
     processedUtterancesRef.current.clear();
     pendingUtteranceRef.current = null;
     userSpeakingRef.current = false;
+    speechAwaitingTranscriptRef.current = false;
+    interruptedWorkStateRef.current = null;
+    echoCandidateRef.current = null;
+    if (bargeInTimerRef.current !== null) {
+      window.clearTimeout(bargeInTimerRef.current);
+      bargeInTimerRef.current = null;
+    }
+    assistantSpeakingSinceRef.current = null;
+    assistantEchoFloorRef.current = 0;
     stopSpeechTimingMonitor();
     setThinkingCue("");
     if (
@@ -1556,7 +1983,8 @@ export default function Home() {
   async function unlock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const code = accessCode.trim();
-    if (!code || authSubmitting) return;
+    const normalizedEmail = email.trim();
+    if (!code || !normalizedEmail || authSubmitting) return;
 
     setAuthSubmitting(true);
     setAuthError("");
@@ -1564,10 +1992,11 @@ export default function Home() {
       const response = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code, email: normalizedEmail }),
       });
       const payload = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Access could not be verified.");
+      setEmail("");
       setAccessCode("");
       setAuthState("authenticated");
     } catch (error) {
@@ -1579,11 +2008,11 @@ export default function Home() {
 
   if (authState !== "authenticated") {
     return (
-      <main className="relative grid min-h-dvh place-items-center overflow-hidden bg-background px-5 text-foreground">
+      <main className="relative grid min-h-dvh place-items-center overflow-hidden bg-background px-4 py-5 text-foreground sm:px-5">
         <Toaster position="top-center" richColors />
         <div className="ambient ambient-one" />
         <div className="ambient ambient-two" />
-        <section className="relative z-10 w-full max-w-md rounded-[2rem] border border-white/10 bg-white/[0.045] p-7 shadow-2xl backdrop-blur-xl sm:p-9">
+        <section className="relative z-10 w-full max-w-md rounded-[1.65rem] border border-white/10 bg-white/[0.045] p-6 shadow-2xl backdrop-blur-xl sm:rounded-[2rem] sm:p-9">
           <div className="brand-mark" aria-hidden="true">
             <AudioLines size={19} strokeWidth={2.2} />
           </div>
@@ -1601,6 +2030,20 @@ export default function Home() {
 
           {authState === "locked" && (
             <form onSubmit={unlock} className="mt-7 space-y-4">
+              <label htmlFor="email" className="sr-only">
+                Email address
+              </label>
+              <input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="Email address"
+                autoComplete="email"
+                autoFocus
+                required
+                className="h-13 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none transition placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
+              />
               <label htmlFor="access-code" className="sr-only">
                 Access code
               </label>
@@ -1611,14 +2054,17 @@ export default function Home() {
                 onChange={(event) => setAccessCode(event.target.value)}
                 placeholder="Access code"
                 autoComplete="current-password"
-                autoFocus
-                className="h-13 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-white outline-none transition placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
+                className="h-13 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none transition placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
               />
+              <p className="text-xs leading-5 text-white/38">
+                Your email is encrypted before storage and is collected so Vox can
+                send service notices. It will not be shown to other members.
+              </p>
               {authError && <p className="text-sm text-[#ff9d96]">{authError}</p>}
               <Button
                 type="submit"
                 size="lg"
-                disabled={!accessCode.trim() || authSubmitting}
+                disabled={!email.trim() || !accessCode.trim() || authSubmitting}
                 className="h-12 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
               >
                 <ShieldCheck />
@@ -1632,13 +2078,13 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-dvh overflow-hidden bg-background text-foreground">
+    <main className="min-h-dvh overflow-x-hidden bg-background text-foreground">
       <audio ref={audioRef} autoPlay className="sr-only" />
       <Toaster position="top-center" richColors />
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
 
-      <header className="relative z-10 flex h-20 items-center justify-between border-b border-white/8 px-5 sm:px-8 lg:px-12">
+      <header className="vox-header relative z-10 flex min-h-16 items-center justify-between border-b border-white/8 px-4 py-3 sm:h-20 sm:px-8 sm:py-0 lg:px-12">
         <div className="flex items-center gap-3">
           <div className="brand-mark" aria-hidden="true">
             <AudioLines size={19} strokeWidth={2.2} />
@@ -1650,31 +2096,174 @@ export default function Home() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/58">
-          <span className={connected ? "live-dot" : "idle-dot"} />
-          {connected ? "Private live session" : "Offline"}
+        <div className="flex items-center gap-2">
+          <Sheet
+            open={invitesOpen}
+            onOpenChange={(open) => {
+              setInvitesOpen(open);
+              if (!open) setNewInviteCode("");
+            }}
+          >
+            <SheetTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
+                aria-label="Create a share code"
+              >
+                <UserPlus />
+                <span className="hidden sm:inline">Invite</span>
+              </Button>
+            </SheetTrigger>
+            <SheetContent className="w-[min(94vw,440px)] border-white/10 bg-[#10111b] text-white sm:max-w-[440px]">
+              <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
+                <div className="flex items-center gap-2 text-[#f4ff74]">
+                  <KeyRound size={18} />
+                  <SheetTitle className="font-display text-xl text-white">
+                    Share access
+                  </SheetTitle>
+                </div>
+                <SheetDescription className="mt-2 leading-6 text-white/46">
+                  Create a private sign-in code for one person. Vox stores only a
+                  secure hash, so this code cannot be recovered later.
+                </SheetDescription>
+              </SheetHeader>
+
+              <div className="flex-1 overflow-y-auto px-5 py-5">
+                {inviteLoading ? (
+                  <p className="py-10 text-center text-sm text-white/40">
+                    Checking invitations…
+                  </p>
+                ) : inviteError && !inviteStatus ? (
+                  <div className="rounded-2xl border border-[#ff766c]/20 bg-[#ff766c]/[0.06] p-4">
+                    <p className="text-sm text-[#ffaaa4]">{inviteError}</p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="mt-3 border-white/10 bg-white/[0.04] text-white"
+                      onClick={() => void loadInviteStatus()}
+                    >
+                      Try again
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-5">
+                    <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
+                      <p className="text-sm font-semibold text-white/82">
+                        {inviteStatus?.unlimited
+                          ? "Master invitations"
+                          : inviteStatus?.canGenerate
+                            ? "One invitation available"
+                            : "Invitation already created"}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-white/44">
+                        {inviteStatus?.unlimited
+                          ? `You can create as many codes as needed. ${inviteStatus.generated} created so far.`
+                          : inviteStatus?.canGenerate
+                            ? "Your account may create one share code. The person who receives it will also be able to invite one person."
+                            : "Regular accounts can create one share code total."}
+                      </p>
+                    </div>
+
+                    {newInviteCode ? (
+                      <div className="rounded-2xl border border-[#f4ff74]/20 bg-[#f4ff74]/[0.06] p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#f4ff74]/70">
+                          New share code
+                        </p>
+                        <p className="mt-3 break-all font-mono text-sm leading-6 text-white/88">
+                          {newInviteCode}
+                        </p>
+                        <Button
+                          type="button"
+                          className="mt-4 h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                          onClick={() => void copyInviteCode()}
+                        >
+                          <Copy /> Copy code
+                        </Button>
+                        {inviteStatus?.unlimited && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="mt-2 h-11 w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+                            onClick={() => setNewInviteCode("")}
+                          >
+                            <UserPlus /> Create another
+                          </Button>
+                        )}
+                        <p className="mt-3 text-xs leading-5 text-white/38">
+                          Save or send it now. For privacy, Vox will not show this
+                          exact code again after you close this panel.
+                        </p>
+                      </div>
+                    ) : inviteStatus?.canGenerate ? (
+                      <div className="space-y-3">
+                        <label htmlFor="invite-name" className="text-sm text-white/68">
+                          Name or label <span className="text-white/32">(optional)</span>
+                        </label>
+                        <input
+                          id="invite-name"
+                          value={inviteName}
+                          onChange={(event) => setInviteName(event.target.value)}
+                          maxLength={80}
+                          placeholder="Friend, teammate…"
+                          className="h-12 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
+                        />
+                        <Button
+                          type="button"
+                          className="h-12 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                          disabled={inviteCreating}
+                          onClick={() => void createShareCode()}
+                        >
+                          <UserPlus />
+                          {inviteCreating ? "Creating…" : "Create share code"}
+                        </Button>
+                      </div>
+                    ) : null}
+
+                    {inviteError && inviteStatus && (
+                      <p className="text-sm text-[#ffaaa4]">{inviteError}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </SheetContent>
+          </Sheet>
+
+          <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/58">
+            <span className={connected ? "live-dot" : "idle-dot"} />
+            {connected ? (
+              <>
+                <span className="min-[380px]:hidden">Live</span>
+                <span className="hidden min-[380px]:inline">Private live session</span>
+              </>
+            ) : (
+              "Offline"
+            )}
+          </div>
         </div>
       </header>
 
       <section className="relative z-10 mx-auto grid min-h-[calc(100dvh-5rem)] max-w-[1440px] grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="flex min-h-[620px] flex-col items-center justify-between px-5 py-10 sm:px-10 sm:py-12 lg:min-h-0 lg:px-14 lg:py-16">
+        <div className="flex min-h-0 flex-col items-center justify-between px-4 py-7 sm:min-h-[620px] sm:px-10 sm:py-12 lg:min-h-0 lg:px-14 lg:py-16">
           <div className="max-w-2xl self-start">
             <div className="eyebrow">
-              <Sparkles size={14} /> OpenAI voice · Jev instant routing
+              <Sparkles size={14} /> Private voice · adaptive conversation
             </div>
-            <h1 className="font-display mt-5 text-[clamp(2.7rem,7vw,6.5rem)] font-medium leading-[0.88] tracking-[-0.075em] text-balance">
+            <h1 className="font-display mt-5 text-[clamp(2.5rem,13vw,6.5rem)] font-medium leading-[0.9] tracking-[-0.07em] text-balance sm:text-[clamp(2.7rem,7vw,6.5rem)] sm:leading-[0.88] sm:tracking-[-0.075em]">
               No turns.
               <br />
               Just <span className="text-gradient">talk.</span>
             </h1>
-            <p className="mt-6 max-w-lg text-base leading-7 text-white/52 sm:text-lg">
+            <p className="mt-5 max-w-lg text-[0.95rem] leading-6 text-white/52 sm:mt-6 sm:text-lg sm:leading-7">
               Speak naturally, pause to think, or interrupt mid-sentence. Even when
-              you say nothing, Jev can decide whether the moment calls for a useful
+              you say nothing, Vox can decide whether the moment calls for a useful
               thought—or for Vox to stay quietly present.
             </p>
           </div>
 
-          <div className="my-10 flex w-full max-w-[620px] flex-col items-center">
+          <div className="my-8 flex w-full max-w-[620px] flex-col items-center sm:my-10">
             <button
               type="button"
               className={`orb ${active ? "is-active" : ""}`}
@@ -1702,7 +2291,7 @@ export default function Home() {
               </span>
             </button>
 
-            <div className="mt-10 text-center" aria-live="polite">
+            <div className="mt-7 text-center sm:mt-10" aria-live="polite">
               <p className="font-display text-xl font-medium tracking-tight sm:text-2xl">
                 {statusCopy[connectionState]}
               </p>
@@ -1718,23 +2307,17 @@ export default function Home() {
                         : "Listening for you — and for a useful moment to speak"
                     : "Tap the orb to begin")}
               </p>
-              {lastRoute && connected && (
-                <p className="mt-3 text-[0.66rem] font-semibold uppercase tracking-[0.16em] text-[#c8bcff]/55">
-                  Jev route · {lastRoute.replaceAll("_", " ")}
-                  {lastContextMode === "fresh" ? " · fresh topic" : ""}
-                </p>
-              )}
             </div>
 
-            <Waveform active={active && !muted} />
+            <Waveform live={connected && !muted} analyserRef={inputAnalyserRef} />
 
-            <div className="mt-7 flex items-center gap-3">
+            <div className="mt-6 flex w-full items-center justify-center gap-3 sm:mt-7 sm:w-auto">
               {!connected ? (
                 <Button
                   size="lg"
                   onClick={connect}
                   disabled={connectionState === "connecting"}
-                  className="h-12 rounded-full bg-[#f4ff74] px-7 font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                  className="h-12 w-full max-w-[260px] rounded-full bg-[#f4ff74] px-7 font-semibold text-[#10111b] hover:bg-[#ebf969] sm:w-auto"
                 >
                   <Headphones className="mr-1" />
                   {connectionState === "connecting" ? "Connecting…" : "Start talking"}
@@ -1764,12 +2347,32 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="flex w-full flex-wrap items-center justify-between gap-4 border-t border-white/8 pt-5 text-xs text-white/36">
+          <div className="flex w-full flex-col items-stretch gap-4 border-t border-white/8 pt-5 text-xs text-white/36 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <span className="flex items-center gap-2">
               <Volume2 size={14} /> Headphones recommended
             </span>
-            <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-3">
-              <div className="flex items-center gap-3">
+            <div className="grid w-full gap-2.5 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end sm:gap-x-4 sm:gap-y-3">
+              <div className="flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
+                <label htmlFor="reply-length" className="whitespace-nowrap">
+                  Reply length
+                </label>
+                <Select value={replyLength} onValueChange={chooseReplyLength}>
+                  <SelectTrigger
+                    id="reply-length"
+                    size="sm"
+                    className="h-11 w-[132px] border-white/10 bg-white/[0.04] text-white/70 shadow-none sm:h-auto sm:w-[112px]"
+                    aria-label="How much Vox says"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="border-white/10 bg-[#171823] text-white">
+                    <SelectItem value="less">Less</SelectItem>
+                    <SelectItem value="balanced">Balanced</SelectItem>
+                    <SelectItem value="more">More</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
                 <label htmlFor="voice" className="whitespace-nowrap">
                   Voice
                 </label>
@@ -1777,7 +2380,7 @@ export default function Home() {
                   <SelectTrigger
                     id="voice"
                     size="sm"
-                    className="w-[112px] border-white/10 bg-white/[0.04] text-white/70 shadow-none"
+                    className="h-11 w-[132px] border-white/10 bg-white/[0.04] text-white/70 shadow-none sm:h-auto sm:w-[112px]"
                     aria-label="Vox voice"
                   >
                     <SelectValue />
@@ -1791,7 +2394,7 @@ export default function Home() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
                 <label htmlFor="initiative" className="whitespace-nowrap">
                   Initiative
                 </label>
@@ -1802,7 +2405,7 @@ export default function Home() {
                   <SelectTrigger
                     id="initiative"
                     size="sm"
-                    className="w-[118px] border-white/10 bg-white/[0.04] text-white/70 shadow-none"
+                    className="h-11 w-[132px] border-white/10 bg-white/[0.04] text-white/70 shadow-none sm:h-auto sm:w-[118px]"
                     aria-label="How often Vox may speak first"
                   >
                     <SelectValue />
@@ -1819,8 +2422,8 @@ export default function Home() {
           </div>
         </div>
 
-        <aside className="transcript-panel flex min-h-[560px] flex-col border-t border-white/8 p-5 sm:p-7 lg:min-h-0 lg:border-l lg:border-t-0 lg:p-8">
-          <div className="flex items-start justify-between gap-5">
+        <aside className="transcript-panel flex flex-col border-t border-white/8 p-4 sm:min-h-[560px] sm:p-7 lg:min-h-0 lg:border-l lg:border-t-0 lg:p-8">
+          <div className="flex items-start justify-between gap-3 sm:gap-5">
             <div>
               <p className="font-display text-xl font-medium tracking-tight">Conversation</p>
               <p className="mt-1 text-sm text-white/40">A lightweight live transcript</p>
@@ -2057,7 +2660,7 @@ export default function Home() {
                         </div>
                         <p className="mt-4 font-display text-lg">No files yet</p>
                         <p className="mt-2 max-w-64 text-sm leading-6 text-white/40">
-                          Ask during a voice or typed conversation. Jev will choose
+                          Ask during a voice or typed conversation. Vox will choose
                           the useful format and Vox will create it here.
                         </p>
                       </div>
@@ -2162,7 +2765,7 @@ export default function Home() {
                       </SheetTitle>
                     </div>
                     <SheetDescription className="mt-2 leading-6 text-white/46">
-                      Jev decides what will be useful later and whether a new detail
+                      Vox decides what will be useful later and whether a new detail
                       should replace an older one. You stay in control.
                     </SheetDescription>
                   </SheetHeader>
@@ -2197,7 +2800,7 @@ export default function Home() {
                         </div>
                         <p className="mt-4 font-display text-lg">Nothing saved yet</p>
                         <p className="mt-2 max-w-64 text-sm leading-6 text-white/40">
-                          Talk naturally. Jev will only keep details that can make a
+                          Talk naturally. Vox will only keep details that can make a
                           future conversation better.
                         </p>
                       </div>
@@ -2268,7 +2871,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div ref={transcriptRef} className="transcript-scroll mt-8 flex-1 space-y-6 overflow-y-auto pr-2">
+          <div ref={transcriptRef} className="transcript-scroll mt-5 flex-1 space-y-5 overflow-y-auto pr-1 sm:mt-8 sm:space-y-6 sm:pr-2">
             {messages.length === 0 ? (
               <div className="empty-transcript">
                 <div className="empty-icon">
@@ -2305,7 +2908,7 @@ export default function Home() {
             )}
           </div>
 
-          <form onSubmit={sendText} className="mt-6">
+          <form onSubmit={sendText} className="mt-4 pb-[env(safe-area-inset-bottom)] sm:mt-6 sm:pb-0">
             <label htmlFor="message" className="sr-only">
               Type a message
             </label>

@@ -29,6 +29,7 @@ export const agentFiles = sqliteTable(
     mimeType: text("mime_type").notNull(),
     size: integer("size").notNull(),
     objectKey: text("object_key").notNull().unique(),
+    content: text("content").notNull().default(""),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
@@ -59,3 +60,28 @@ export const reminders = sqliteTable(
     ),
   ],
 );
+
+export const activationCodes = sqliteTable(
+  "activation_codes",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().unique(),
+    codeHash: text("code_hash").notNull().unique(),
+    displayName: text("display_name").notNull().default("Vox member"),
+    createdBy: text("created_by").notNull(),
+    creatorSlot: text("creator_slot").notNull().unique(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_activation_codes_created_by").on(table.createdBy),
+  ],
+);
+
+export const userContacts = sqliteTable("user_contacts", {
+  userId: text("user_id").primaryKey(),
+  emailHash: text("email_hash").notNull().unique(),
+  emailCiphertext: text("email_ciphertext").notNull(),
+  emailIv: text("email_iv").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});

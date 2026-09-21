@@ -77,14 +77,20 @@
 }
 
 * { box-sizing: border-box; }
-html { background: var(--background); }
+html {
+  background: var(--background);
+  -webkit-text-size-adjust: 100%;
+}
 body {
   margin: 0;
   background: var(--background);
   color: var(--foreground);
   font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
 }
-button, input { font: inherit; }
+button, input {
+  font: inherit;
+  touch-action: manipulation;
+}
 .font-display { font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif; }
 
 .ambient {
@@ -213,16 +219,17 @@ button, input { font: inherit; }
   margin-top: 1.5rem;
 }
 .wave-bar {
+  --wave-level: 0;
   width: 0.18rem;
-  height: 0.25rem;
+  height: calc(0.25rem + var(--wave-level) * 1.85rem);
   border-radius: 999px;
   background: rgb(255 255 255 / 18%);
-  transition: height 250ms ease, background 250ms ease;
+  opacity: calc(0.48 + var(--wave-level) * 0.52);
+  transition: height 70ms linear, background 250ms ease, opacity 120ms ease;
 }
-.wave-bar.is-active {
+.wave-bar.is-live {
   background: linear-gradient(to top, #8f78ff, #f4ff74);
-  animation: wave 900ms ease-in-out infinite alternate;
-  animation-delay: calc(var(--bar-index) * -47ms);
+  box-shadow: 0 0 calc(var(--wave-level) * 0.6rem) rgb(190 174 255 / 35%);
 }
 
 .transcript-panel {
@@ -304,17 +311,47 @@ button, input { font: inherit; }
   24% { opacity: 0.7; }
   100% { transform: scale(1.34); opacity: 0; }
 }
-@keyframes wave {
-  from { height: 0.3rem; }
-  to { height: 1.8rem; }
-}
-
 @media (max-width: 1023px) {
-  .transcript-panel { min-height: 42rem; }
+  .transcript-panel {
+    height: clamp(28rem, 72dvh, 40rem);
+    min-height: 28rem;
+  }
 }
 @media (max-width: 640px) {
-  .ambient-one { left: -14rem; }
-  .orb { width: 8.7rem; height: 8.7rem; }
+  .ambient {
+    filter: blur(76px);
+  }
+  .ambient-one {
+    left: -14rem;
+  }
+  .brand-mark {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+  .eyebrow {
+    max-width: 100%;
+    padding: 0.5rem 0.72rem;
+    font-size: 0.67rem;
+    line-height: 1.35;
+  }
+  .orb {
+    width: 8rem;
+    height: 8rem;
+  }
+  .orb-core {
+    width: 4.9rem;
+    height: 4.9rem;
+  }
+  .waveform {
+    margin-top: 1rem;
+  }
+  .empty-transcript {
+    min-height: 15rem;
+    padding: 1.5rem;
+  }
+  .composer input {
+    font-size: 1rem;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

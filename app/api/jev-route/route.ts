@@ -55,9 +55,27 @@ function speechTiming(value: unknown): SpeechTiming | null {
   };
 }
 
+function isFillerOnly(text: string) {
+  const fragments = text
+    .trim()
+    .toLocaleLowerCase()
+    .split(/[\s,，.。!！?？、…:：;；~-]+/u)
+    .filter(Boolean);
+
+  return (
+    fragments.length > 0 &&
+    fragments.every((fragment) =>
+      /^(?:um+|uh+|h+m+|er+|ah+|eh+|嗯+|呃+|欸+|誒+|喔+|哦+|啊+|唔+)$/u.test(
+        fragment,
+      ),
+    )
+  );
+}
+
 function fallbackTurnState(text: string, pendingText: string): TurnState {
   const value = [pendingText, text].filter(Boolean).join(" ").trim();
   if (!value) return "complete";
+  if (!pendingText && isFillerOnly(text)) return "complete";
 
   if (/[?？!！。]\s*$/.test(value)) return "complete";
   if (/(?:\.{3,}|…+)\s*$/.test(value)) return "wait";
@@ -80,12 +98,7 @@ function fallbackTurnState(text: string, pendingText: string): TurnState {
 
 function fallbackRoute(text: string): JevRoute {
   const value = text.trim().toLowerCase();
-  const words = value.replace(/[^a-z\s]/g, "").split(/\s+/).filter(Boolean);
-  if (
-    !value ||
-    (words.length > 0 &&
-      words.every((word) => /^(um+|uh+|hmm+|okay|right|yeah)$/.test(word)))
-  ) {
+  if (!value || isFillerOnly(value)) {
     return "silence";
   }
   if (
@@ -227,7 +240,7 @@ export async function POST(request: Request) {
           turn_state: {
             type: "choice",
             instructions:
-              "Decide whether the person has finished the thought and the assistant should answer now. Choose wait only when voice pause detection is enabled and the current speech is likely a thinking pause, self-correction, trailing clause, unfinished list, or otherwise semantically incomplete. A pending utterance is an earlier fragment that the assistant deliberately waited on; combine it with the current utterance when judging completion. Use delivery_timing as supporting evidence: a filler or conspicuously prolonged trailing sound in the current fragment can strengthen the case for wait. Once a pending thought receives a semantically complete continuation, choose complete regardless of how long or hesitant the earlier fragment was. Timing is approximate and must never override clearly complete words. transcriptReadyDelayMs is processing delay, not proof that the person was thinking. Do not choose wait merely because a complete request is short, hesitant, informal, slow, or lacks punctuation. Greetings and complete questions should be complete. When genuinely uncertain whether the person is still formulating the same thought, prefer wait once so the assistant does not interrupt. If voice pause detection is disabled, always choose complete.",
+              "Decide whether the person has finished the thought and the assistant should answer now. Choose wait only when voice pause detection is enabled and the current speech is likely a thinking pause, self-correction, trailing clause, unfinished list, or otherwise semantically incomplete. A pending utterance is an earlier fragment that the assistant deliberately waited on; combine it with the current utterance when judging completion. Use delivery_timing as supporting evidence: a filler or conspicuously prolonged trailing sound in the current fragment can strengthen the case for wait when it follows a pending thought. A standalone filler such as um, uh, 嗯, 呃, or 欸 with no pending utterance should be complete and routed to silence, not wait, because it does not justify showing a new waiting cue. Once a pending thought receives a semantically complete continuation, choose complete regardless of how long or hesitant the earlier fragment was. Timing is approximate and must never override clearly complete words. transcriptReadyDelayMs is processing delay, not proof that the person was thinking. Do not choose wait merely because a complete request is short, hesitant, informal, slow, or lacks punctuation. Greetings and complete questions should be complete. When genuinely uncertain whether the person is still formulating the same thought, prefer wait once so the assistant does not interrupt. If voice pause detection is disabled, always choose complete.",
             criteria: {
               wait:
                 "Stay vocally silent, show only a subtle text cue, and wait for the person to continue the same thought.",

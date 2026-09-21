@@ -1,0 +1,1 @@
+ALTER TABLE `agent_files` ADD `content` text DEFAULT '' NOT NULL;

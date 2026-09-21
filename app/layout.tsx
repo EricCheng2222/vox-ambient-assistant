@@ -1,14 +1,21 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Vox — Ambient AI Voice Assistant",
   description:
-    "A continuous, interruptible AI voice assistant with Jev-powered model routing.",
+    "A continuous, interruptible AI voice companion with adaptive responses.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#0b0c14",
 };
 
 export default function RootLayout({

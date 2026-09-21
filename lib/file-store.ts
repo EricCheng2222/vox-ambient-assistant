@@ -8,6 +8,7 @@ import type { AgentFile } from "@/lib/agent-file";
 type StoredAgentFile = AgentFile & {
   ownerId: string;
   objectKey: string;
+  content: string;
 };
 
 const publicFile = {

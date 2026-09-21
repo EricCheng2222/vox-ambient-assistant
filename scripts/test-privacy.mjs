@@ -18,10 +18,12 @@ assert.equal(isAuthConfigured(), true);
 assert.deepEqual(await verifyAccessCode("alpha-test-code-123"), {
   id: "user-alpha",
   displayName: "Alpha",
+  role: "member",
 });
 assert.deepEqual(await verifyAccessCode("beta-test-code-456"), {
   id: "user-beta",
   displayName: "Beta",
+  role: "member",
 });
 assert.equal(await verifyAccessCode("wrong-test-code"), null);
 

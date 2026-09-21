@@ -1,7 +1,9 @@
 import { requireUser } from "@/lib/auth";
 import { formatMemoryContext } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
+import { parseReplyLength, replyLengthInstruction } from "@/lib/reply-length";
 import { getCurrentTimeContext } from "@/lib/time-context";
+import { API_BUDGET_MESSAGE, isProviderBudgetError } from "@/lib/provider-error";
 
 type ReasonRoute = "balanced_reasoning" | "expert_reasoning" | "live_web";
 
@@ -24,15 +26,17 @@ export async function POST(request: Request) {
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return Response.json({ error: "OpenAI is not configured." }, { status: 503 });
+    return Response.json({ error: "The reasoning service is not configured." }, { status: 503 });
   }
 
   const body = (await request.json().catch(() => ({}))) as {
     text?: string;
     route?: ReasonRoute;
+    replyLength?: unknown;
   };
   const text = body.text?.trim().slice(0, 12000) ?? "";
   const route = body.route;
+  const replyLength = parseReplyLength(body.replyLength);
   if (!text || !route) {
     return Response.json({ error: "A prompt and route are required." }, { status: 400 });
   }
@@ -57,12 +61,31 @@ export async function POST(request: Request) {
       model,
       input: text,
       instructions:
-        "Prepare a concise, accurate answer for a voice assistant to speak aloud. Match the language of the user's substantive request. For Mandarin or Chinese input, answer in natural Taiwan Mandarin using Traditional Chinese, Taiwan vocabulary and phrasing, and no Mainland-specific wording. For English input, answer in English. Use plain language, short sentences, and no markdown. Do not mention model routing." +
+        "Prepare an accurate answer for a voice assistant to speak aloud. Match the language of the user's substantive request. For Mandarin or Chinese input, answer in natural Taiwan Mandarin using Traditional Chinese, Taiwan vocabulary and phrasing, and no Mainland-specific wording. For English input, answer in English. Use plain language, spoken-friendly sentences, and no markdown. Do not mention model routing." +
         timeContext +
-        memoryContext,
+        memoryContext +
+        `\n\n${replyLengthInstruction(replyLength)}`,
       reasoning: { effort: isExpert ? "high" : "low" },
-      text: { verbosity: "low" },
-      max_output_tokens: isExpert ? 1800 : 1000,
+      text: {
+        verbosity:
+          replyLength === "less"
+            ? "low"
+            : replyLength === "more"
+              ? "high"
+              : "medium",
+      },
+      max_output_tokens:
+        replyLength === "less"
+          ? isExpert
+            ? 900
+            : 600
+          : replyLength === "more"
+            ? isExpert
+              ? 3000
+              : 2200
+            : isExpert
+              ? 1800
+              : 1000,
       tools: isWeb ? [{ type: "web_search" }] : undefined,
       store: false,
     }),
@@ -72,7 +95,11 @@ export async function POST(request: Request) {
   if (!response.ok) {
     console.error("Reasoning request failed", response.status);
     return Response.json(
-      { error: "The selected reasoning model could not answer." },
+      {
+        error: isProviderBudgetError(response, payload)
+          ? API_BUDGET_MESSAGE
+          : "The selected reasoning model could not answer.",
+      },
       { status: response.status },
     );
   }
