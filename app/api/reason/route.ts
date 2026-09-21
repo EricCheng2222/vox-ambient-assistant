@@ -10,6 +10,10 @@ import {
 } from "@/lib/reply-length";
 import { getCurrentTimeContext } from "@/lib/time-context";
 import { API_BUDGET_MESSAGE, isProviderBudgetError } from "@/lib/provider-error";
+import {
+  responseLanguageInstruction,
+  selectResponseLanguage,
+} from "@/lib/response-language";
 
 type ReasonRoute = "balanced_reasoning" | "expert_reasoning" | "live_web";
 
@@ -59,6 +63,9 @@ export async function POST(request: Request) {
   });
   const memoryContext = remembered.length ? `\n\n${formatMemoryContext(remembered)}` : "";
   const timeContext = `\n\n${getCurrentTimeContext()}`;
+  const languageInstruction = responseLanguageInstruction(
+    selectResponseLanguage(text),
+  );
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -70,7 +77,8 @@ export async function POST(request: Request) {
       model,
       input: text,
       instructions:
-        "Prepare an accurate answer for a voice assistant to speak aloud. Match the language of the user's substantive request. For Mandarin or Chinese input, answer in natural Taiwan Mandarin using Traditional Chinese, Taiwan vocabulary and phrasing, and no Mainland-specific wording. For English input, answer in English. Use plain language, spoken-friendly sentences, and no markdown. Do not mention model routing." +
+        "Prepare an accurate answer for a voice assistant to speak aloud. Use plain language, spoken-friendly sentences, and no markdown. Do not mention model routing.\n\n" +
+        languageInstruction +
         timeContext +
         memoryContext +
         `\n\n${replyLengthInstruction(replyLength)}` +
