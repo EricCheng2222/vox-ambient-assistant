@@ -28,6 +28,7 @@ import {
   PhoneOff,
   ShieldCheck,
   Sparkles,
+  SwitchCamera,
   Table2,
   Trash2,
   UserPlus,
@@ -120,6 +121,8 @@ import {
   createVisionItemId,
   type VisionNeed,
 } from "@/lib/vision";
+
+type CameraFacingMode = "user" | "environment";
 
 type ConnectionState =
   | "idle"
@@ -538,6 +541,8 @@ export default function Home() {
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [cameraError, setCameraError] = useState("");
+  const [cameraFacingMode, setCameraFacingMode] =
+    useState<CameraFacingMode>("user");
   const [sessionFramesSent, setSessionFramesSent] = useState(0);
   const [frameCaptureNotice, setFrameCaptureNotice] = useState<{
     id: string;
@@ -556,6 +561,7 @@ export default function Home() {
   const cameraCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const cameraActiveRef = useRef(false);
   const cameraStartingRef = useRef(false);
+  const cameraFacingModeRef = useRef<CameraFacingMode>("user");
   const frameCaptureNoticeTimerRef = useRef<number | null>(null);
   const pendingVisionAcksRef = useRef(new Map<string, PendingVisionAck>());
   const visionItemByTurnRef = useRef(new Map<number, string>());
@@ -1045,46 +1051,104 @@ export default function Home() {
     void savePreferences({ theme: nextTheme });
   }
 
-  async function startCameraPreview(quiet = false) {
-    if (cameraActiveRef.current || cameraStartingRef.current) return true;
+  async function startCameraPreview(
+    quiet = false,
+    requestedFacingMode = cameraFacingModeRef.current,
+  ) {
+    if (cameraStartingRef.current) return false;
+    if (
+      cameraActiveRef.current &&
+      requestedFacingMode === cameraFacingModeRef.current
+    ) {
+      return true;
+    }
+    const previousStream = cameraStreamRef.current;
+    const wasActive = cameraActiveRef.current;
+    let nextStream: MediaStream | null = null;
     cameraStartingRef.current = true;
     setCameraStarting(true);
     setCameraError("");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      if (wasActive) {
+        previousStream?.getTracks().forEach((track) => track.stop());
+        if (cameraVideoRef.current) cameraVideoRef.current.srcObject = null;
+      }
+      nextStream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
-          facingMode: "user",
+          facingMode: wasActive
+            ? { exact: requestedFacingMode }
+            : { ideal: requestedFacingMode },
           width: { ideal: 640 },
           height: { ideal: 360 },
         },
       });
-      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
-      cameraStreamRef.current = stream;
       if (cameraVideoRef.current) {
-        cameraVideoRef.current.srcObject = stream;
+        cameraVideoRef.current.srcObject = nextStream;
         await cameraVideoRef.current.play();
       }
+      cameraStreamRef.current = nextStream;
+      cameraFacingModeRef.current = requestedFacingMode;
+      setCameraFacingMode(requestedFacingMode);
       cameraActiveRef.current = true;
       setCameraActive(true);
       return true;
     } catch (error) {
-      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
-      cameraStreamRef.current = null;
-      if (cameraVideoRef.current) cameraVideoRef.current.srcObject = null;
-      cameraActiveRef.current = false;
-      setCameraActive(false);
+      nextStream?.getTracks().forEach((track) => track.stop());
+      let restoredStream: MediaStream | null = null;
+      if (wasActive) {
+        try {
+          restoredStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              facingMode: { ideal: cameraFacingModeRef.current },
+              width: { ideal: 640 },
+              height: { ideal: 360 },
+            },
+          });
+          cameraStreamRef.current = restoredStream;
+          if (cameraVideoRef.current) {
+            cameraVideoRef.current.srcObject = restoredStream;
+            await cameraVideoRef.current.play();
+          }
+        } catch {
+          restoredStream?.getTracks().forEach((track) => track.stop());
+          cameraStreamRef.current = null;
+          if (cameraVideoRef.current) cameraVideoRef.current.srcObject = null;
+          cameraActiveRef.current = false;
+          setCameraActive(false);
+        }
+      } else {
+        cameraStreamRef.current = null;
+        if (cameraVideoRef.current) cameraVideoRef.current.srcObject = null;
+        cameraActiveRef.current = false;
+        setCameraActive(false);
+      }
       const message =
         error instanceof DOMException && error.name === "NotAllowedError"
           ? "Camera permission was not granted. Voice still works normally."
-          : "The camera preview could not start. Voice still works normally.";
+          : wasActive && restoredStream
+            ? "This device could not switch cameras. The current camera is still on."
+            : wasActive
+              ? "This device could not switch cameras, so the camera preview was turned off."
+            : "The camera preview could not start. Voice still works normally.";
       setCameraError(message);
-      if (!quiet) toast.error("Camera unavailable", { description: message });
+      if (!quiet) {
+        toast.error(wasActive ? "Could not switch camera" : "Camera unavailable", {
+          description: message,
+        });
+      }
       return false;
     } finally {
       cameraStartingRef.current = false;
       setCameraStarting(false);
     }
+  }
+
+  function switchCameraFacingMode() {
+    const nextFacingMode =
+      cameraFacingModeRef.current === "user" ? "environment" : "user";
+    void startCameraPreview(false, nextFacingMode);
   }
 
   function stopCameraPreview() {
@@ -3254,7 +3318,7 @@ export default function Home() {
                 role="img"
                 aria-label={
                   cameraActive
-                    ? "Live local camera preview. A still is sent only when you ask Vox to look."
+                    ? `Live local ${cameraFacingMode === "user" ? "front" : "rear"} camera preview. A still is sent only when you ask Vox to look.`
                     : "Camera preview is off."
                 }
               >
@@ -3264,7 +3328,7 @@ export default function Home() {
                   muted
                   playsInline
                   aria-hidden="true"
-                  className={`size-full scale-x-[-1] object-cover transition-opacity ${cameraActive ? "opacity-100" : "opacity-0"}`}
+                  className={`size-full object-cover transition-opacity ${cameraFacingMode === "user" ? "scale-x-[-1]" : ""} ${cameraActive ? "opacity-100" : "opacity-0"}`}
                 />
                 {!cameraActive && (
                   <div className="absolute inset-0 grid place-items-center text-center text-white/38">
@@ -3275,6 +3339,19 @@ export default function Home() {
                       </p>
                     </div>
                   </div>
+                )}
+                {cameraActive && (
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="outline"
+                    onClick={switchCameraFacingMode}
+                    disabled={cameraStarting}
+                    className="absolute right-2 top-2 z-10 rounded-full border-white/20 bg-black/55 text-white shadow-lg backdrop-blur hover:bg-black/70 hover:text-white"
+                    aria-label={`Switch to ${cameraFacingMode === "user" ? "rear" : "front"} camera`}
+                  >
+                    <SwitchCamera className="size-4" />
+                  </Button>
                 )}
                 {cameraActive && (
                   <div className="absolute inset-x-2 bottom-2 flex items-center gap-1.5 rounded-full bg-black/55 px-2 py-1 text-[0.58rem] font-medium uppercase tracking-[0.09em] text-white/76 backdrop-blur">
