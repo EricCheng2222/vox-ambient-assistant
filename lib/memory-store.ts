@@ -50,11 +50,17 @@ export async function createMemory(
   return memory as MemoryRecord;
 }
 
-export async function updateMemory(ownerId: string, id: string, content: string) {
+export async function updateMemory(
+  ownerId: string,
+  id: string,
+  content: string,
+  source?: string,
+) {
   const [memory] = await getDb()
     .update(memories)
     .set({
       content,
+      ...(source ? { source } : {}),
       updatedAt: new Date().toISOString(),
       revision: sql`${memories.revision} + 1`,
     })

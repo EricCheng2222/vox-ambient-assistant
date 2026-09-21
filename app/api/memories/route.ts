@@ -16,6 +16,7 @@ const CATEGORIES: MemoryCategory[] = [
   "constraint",
   "context",
 ];
+const SUMMARIZED_SOURCE = "summary_v1";
 
 function storageError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unexpected error";
@@ -137,7 +138,12 @@ export async function POST(request: Request) {
         previousContent: target.content,
       });
       if (looksLikeSecret(summary)) throw new Error("Unsafe memory summary");
-      const memory = await updateMemory(auth.user.id, target.id, summary);
+      const memory = await updateMemory(
+        auth.user.id,
+        target.id,
+        summary,
+        SUMMARIZED_SOURCE,
+      );
       if (!memory) throw new Error("The selected memory no longer exists");
       return Response.json({ action: "update", memory, confidence, source: "jev" });
     }
@@ -151,7 +157,11 @@ export async function POST(request: Request) {
         utterance: text,
       });
       if (looksLikeSecret(summary)) throw new Error("Unsafe memory summary");
-      const memory = await createMemory(auth.user.id, { category, content: summary });
+      const memory = await createMemory(auth.user.id, {
+        category,
+        content: summary,
+        source: SUMMARIZED_SOURCE,
+      });
       return Response.json(
         { action: "create", memory, confidence, source: "jev" },
         { status: 201 },
@@ -162,6 +172,52 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Memory decision or summarization failed", error);
     return Response.json({ action: "ignore", source: "fallback" });
+  }
+}
+
+export async function PATCH(request: Request) {
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return Response.json({ error: "Memory summarization is unavailable." }, { status: 503 });
+  }
+
+  try {
+    const existing = await listMemories(auth.user.id, 24);
+    const legacy = existing
+      .filter((memory) => memory.source !== SUMMARIZED_SOURCE)
+      .slice(0, 8);
+
+    let compacted = 0;
+    for (const memory of legacy) {
+      try {
+        const summary = await summarizeMemory({
+          apiKey,
+          category: memory.category,
+          utterance: memory.content,
+        });
+        if (looksLikeSecret(summary)) continue;
+        const updated = await updateMemory(
+          auth.user.id,
+          memory.id,
+          summary,
+          SUMMARIZED_SOURCE,
+        );
+        if (updated) compacted += 1;
+      } catch (error) {
+        console.error("Legacy memory summarization failed", error);
+      }
+    }
+
+    return Response.json({
+      memories: await listMemories(auth.user.id),
+      compacted,
+    });
+  } catch (error) {
+    console.error("Legacy memory compaction failed", error);
+    return Response.json({ error: storageError(error) }, { status: 503 });
   }
 }
 

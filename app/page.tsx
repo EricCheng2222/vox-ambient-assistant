@@ -1174,8 +1174,21 @@ export default function Home() {
         error?: string;
       };
       if (!response.ok) throw new Error(payload.error ?? "Memory could not load.");
-      setCurrentMemories(payload.memories ?? []);
+      const loadedMemories = payload.memories ?? [];
+      setCurrentMemories(loadedMemories);
       setMemoryError("");
+      if (loadedMemories.some((memory) => memory.source !== "summary_v1")) {
+        void fetch("/api/memories", { method: "PATCH" })
+          .then(async (compactResponse) => {
+            const compactPayload = (await compactResponse.json()) as {
+              memories?: MemoryRecord[];
+            };
+            if (compactResponse.ok && compactPayload.memories) {
+              setCurrentMemories(compactPayload.memories);
+            }
+          })
+          .catch(() => undefined);
+      }
     } catch (error) {
       setMemoryError(
         error instanceof Error ? error.message : "Memory could not load.",
