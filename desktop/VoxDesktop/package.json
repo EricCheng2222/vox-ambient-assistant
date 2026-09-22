@@ -1,7 +1,7 @@
 {
   "name": "vox-desktop",
-  "version": "0.2.2",
-  "description": "Vox desktop companion with a secure local Codex bridge",
+  "version": "0.3.0",
+  "description": "Vox desktop companion with secure local Codex and smart-home bridges",
   "author": "Vox",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
@@ -9,13 +9,15 @@
   "main": "src/main.mjs",
   "scripts": {
     "start": "electron .",
-    "check": "node scripts/check.mjs && node --test scripts/computer-use-session.test.mjs scripts/local-web-server.test.mjs && node scripts/personal-api.test.mjs && node scripts/personal-route.test.mjs",
+    "check": "node scripts/check.mjs && node --test scripts/computer-use-session.test.mjs scripts/local-web-server.test.mjs scripts/dyson-local.test.mjs scripts/smart-home-hub.test.mjs && node scripts/personal-api.test.mjs && node scripts/personal-route.test.mjs",
     "prepare:web": "npm --prefix ../.. run build",
     "package": "electron-builder --dir",
     "dist": "npm run prepare:web && electron-builder"
   },
   "dependencies": {
-    "@openai/codex-sdk": "0.155.1"
+    "@openai/codex-sdk": "0.155.1",
+    "bonjour-service": "^1.4.4",
+    "mqtt": "^5.16.0"
   },
   "devDependencies": {
     "electron": "44.4.3",
@@ -36,7 +38,9 @@
       {
         "from": "../../dist",
         "to": "vox-web",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {
@@ -51,7 +55,11 @@
       "entitlementsInherit": "resources/entitlements.mac.plist",
       "extendInfo": {
         "NSCameraUsageDescription": "Vox uses the camera only when you enable visual conversation.",
-        "NSMicrophoneUsageDescription": "Vox uses the microphone for private voice conversations."
+        "NSMicrophoneUsageDescription": "Vox uses the microphone for private voice conversations.",
+        "NSLocalNetworkUsageDescription": "Vox connects directly to smart-home devices that you configure on your local Wi-Fi network.",
+        "NSBonjourServices": [
+          "_dyson_mqtt._tcp"
+        ]
       }
     },
     "win": {

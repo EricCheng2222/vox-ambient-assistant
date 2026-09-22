@@ -20,6 +20,28 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
   routePersonalTurn: (request) => ipcRenderer.invoke("vox-connection:personal-route", request),
   decidePersonalPresence: (request) =>
     ipcRenderer.invoke("vox-connection:personal-presence", request),
+  getSmartHomeStatus: () => ipcRenderer.invoke("vox-smart-home:status"),
+  discoverSmartHomeDevices: (adapter) =>
+    ipcRenderer.invoke("vox-smart-home:discover", typeof adapter === "string" ? adapter.slice(0, 80) : ""),
+  saveSmartHomeDevice: (device) =>
+    ipcRenderer.invoke("vox-smart-home:save-device", {
+      adapter: typeof device?.adapter === "string" ? device.adapter.slice(0, 80) : "",
+      method: device?.method === "sticker" ? "sticker" : "manual",
+      name: typeof device?.name === "string" ? device.name.slice(0, 80) : "",
+      host: typeof device?.host === "string" ? device.host.slice(0, 253) : "",
+      wifiSsid: typeof device?.wifiSsid === "string" ? device.wifiSsid.slice(0, 100) : "",
+      wifiPassword: typeof device?.wifiPassword === "string" ? device.wifiPassword.slice(0, 100) : "",
+      serial: typeof device?.serial === "string" ? device.serial.slice(0, 40) : "",
+      productType: typeof device?.productType === "string" ? device.productType.slice(0, 8) : "",
+      credential: typeof device?.credential === "string" ? device.credential.slice(0, 512) : "",
+    }),
+  removeSmartHomeDevice: (deviceId) =>
+    ipcRenderer.invoke("vox-smart-home:remove-device", typeof deviceId === "string" ? deviceId.slice(0, 100) : ""),
+  runSmartHomeCommand: (request) =>
+    ipcRenderer.invoke("vox-smart-home:command", {
+      deviceId: typeof request?.deviceId === "string" ? request.deviceId.slice(0, 100) : "",
+      prompt: typeof request?.prompt === "string" ? request.prompt.slice(0, 4_000) : "",
+    }),
   resolveApp: (text) => ipcRenderer.invoke("vox-desktop:resolve-app", typeof text === "string" ? text.slice(0, 12000) : ""),
   runTask: (request) =>
     ipcRenderer.invoke("vox-codex:voice-run", {

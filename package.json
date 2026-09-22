@@ -23,6 +23,7 @@
     "test:local-codex-route": "node --experimental-strip-types scripts/test-local-codex-route.mjs",
     "test:desktop-action-route": "node --experimental-strip-types scripts/test-desktop-action-route.mjs",
     "test:desktop-control-route": "node --experimental-strip-types scripts/test-desktop-control-route.mjs",
+    "test:smart-home-route": "node --experimental-strip-types scripts/test-smart-home-route.mjs",
     "db:generate": "drizzle-kit generate",
     "deploy:prepare": "node scripts/prepare-cloudflare-deploy.mjs",
     "deploy:migrate": "wrangler d1 migrations apply DB --remote --config dist/server/wrangler.deploy.json",

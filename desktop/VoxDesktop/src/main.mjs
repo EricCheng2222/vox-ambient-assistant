@@ -30,6 +30,13 @@ import {
 } from "./personal-route.mjs";
 import { startLocalVoxServer } from "./local-web-server.mjs";
 import {
+  availableSmartHomeAdapters,
+  configureSmartHomeDevice,
+  discoverSmartHomeDevices,
+  publicSmartHomeDevice,
+  runSmartHomeCommand,
+} from "./smart-home-hub.mjs";
+import {
   approvedDesktopApp,
   currentDesktopActionText,
   hasRunningDesktopApp,
@@ -60,6 +67,7 @@ let activeTask = null;
 let taskLaunchPending = false;
 let lastWorkspaceOpenAt = 0;
 let lastDesktopControlAt = 0;
+let lastSmartHomeCommandAt = 0;
 
 function isTrustedSender(event) {
   if (!mainWindow || event.sender !== mainWindow.webContents) return false;
@@ -165,6 +173,51 @@ function readEncryptedSetting(settings, name, label, legacyName) {
     return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
   } catch {
     throw new Error(`The saved ${label} could not be unlocked. Replace it and try again.`);
+  }
+}
+
+function savedSmartHomeDevices(settings) {
+  return Array.isArray(settings.smartHomeDevices)
+    ? settings.smartHomeDevices.filter((device) => device && typeof device === "object")
+    : [];
+}
+
+function publicSavedSmartHomeDevices(settings) {
+  return savedSmartHomeDevices(settings)
+    .map((device) => {
+      try {
+        const publicDevice = publicSmartHomeDevice(unlockSmartHomeDevice(settings, device.id));
+        return publicDevice ? { id: device.id, ...publicDevice } : null;
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function unlockSmartHomeDevice(settings, id) {
+  const device = savedSmartHomeDevices(settings).find((candidate) => candidate.id === id);
+  if (!device) throw new Error("Choose a configured smart-home device first.");
+  if (!secureStorageAvailable()) {
+    throw new Error("Secure system storage is unavailable on this computer.");
+  }
+  try {
+    if (typeof device.encryptedConfiguration === "string" && device.encryptedConfiguration) {
+      const decrypted = safeStorage.decryptString(Buffer.from(device.encryptedConfiguration, "base64"));
+      const configuration = JSON.parse(decrypted);
+      const unlocked = { ...device, ...configuration };
+      if (!publicSmartHomeDevice(unlocked) || typeof unlocked.credential !== "string") {
+        throw new Error("Invalid encrypted device configuration.");
+      }
+      return unlocked;
+    }
+    if (typeof device.encryptedCredential === "string" && device.encryptedCredential) {
+      const credential = safeStorage.decryptString(Buffer.from(device.encryptedCredential, "base64"));
+      return { ...device, credential };
+    }
+    throw new Error("Missing encrypted device configuration.");
+  } catch {
+    throw new Error("The saved device connection could not be unlocked. Configure this device again.");
   }
 }
 
@@ -593,6 +646,106 @@ function registerIpcHandlers() {
     }
     const apiKey = readEncryptedSetting(settings, "personalTypeSafeKey", "TypeSafe API key");
     return createPersonalPresence(apiKey, request);
+  });
+
+  ipcMain.handle("vox-smart-home:status", async (event) => {
+    requireTrustedVoxSender(event);
+    const settings = await readSettings();
+    return {
+      available: true,
+      secureStorageAvailable: secureStorageAvailable(),
+      adapters: availableSmartHomeAdapters(),
+      devices: publicSavedSmartHomeDevices(settings),
+    };
+  });
+
+  ipcMain.handle("vox-smart-home:discover", async (event, rawAdapter) => {
+    requireTrustedVoxSender(event);
+    const adapter = typeof rawAdapter === "string" ? rawAdapter.slice(0, 80) : "";
+    return { devices: await discoverSmartHomeDevices(adapter || "dyson-local") };
+  });
+
+  ipcMain.handle("vox-smart-home:save-device", async (event, rawDevice) => {
+    requireTrustedVoxSender(event);
+    if (!secureStorageAvailable()) {
+      throw new Error("Secure system storage is unavailable on this computer.");
+    }
+    const configured = configureSmartHomeDevice(rawDevice);
+    const settings = await readSettings();
+    const currentDevices = savedSmartHomeDevices(settings);
+    const existing = currentDevices.find((device) => {
+      if (device.adapter !== configured.adapter) return false;
+      try {
+        return unlockSmartHomeDevice(settings, device.id).serial === configured.serial;
+      } catch {
+        return false;
+      }
+    });
+    const encryptedConfiguration = safeStorage.encryptString(JSON.stringify({
+      host: configured.host,
+      serial: configured.serial,
+      productType: configured.productType,
+      credential: configured.credential,
+    })).toString("base64");
+    const savedDevice = {
+      id: existing?.id ?? randomUUID(),
+      adapter: configured.adapter,
+      kind: configured.kind,
+      name: configured.name,
+      encryptedConfiguration,
+    };
+    const nextDevices = currentDevices.filter((device) => device.id !== savedDevice.id);
+    nextDevices.push(savedDevice);
+    await saveSettings({ ...settings, smartHomeDevices: nextDevices });
+
+    try {
+      const status = await runSmartHomeCommand(configured, "Dyson purifier status");
+      return { device: { id: savedDevice.id, ...publicSmartHomeDevice(configured) }, connected: true, status };
+    } catch (error) {
+      return {
+        device: { id: savedDevice.id, ...publicSmartHomeDevice(configured) },
+        connected: false,
+        warning: error instanceof Error ? error.message : "The device was saved but could not be reached.",
+      };
+    }
+  });
+
+  ipcMain.handle("vox-smart-home:remove-device", async (event, rawId) => {
+    requireTrustedVoxSender(event);
+    const id = typeof rawId === "string" ? rawId.slice(0, 100) : "";
+    if (!id) throw new Error("Choose a smart-home device to remove.");
+    const settings = await readSettings();
+    const currentDevices = savedSmartHomeDevices(settings);
+    const nextDevices = currentDevices.filter((device) => device.id !== id);
+    if (nextDevices.length === currentDevices.length) {
+      throw new Error("That smart-home device is not configured.");
+    }
+    await saveSettings({ ...settings, smartHomeDevices: nextDevices });
+    return { removed: true };
+  });
+
+  ipcMain.handle("vox-smart-home:command", async (event, rawRequest) => {
+    requireTrustedVoxSender(event);
+    const now = Date.now();
+    if (now - lastSmartHomeCommandAt < 750) {
+      throw new Error("A smart-home command was just requested.");
+    }
+    const prompt = typeof rawRequest?.prompt === "string" ? rawRequest.prompt.trim().slice(0, 4_000) : "";
+    const id = typeof rawRequest?.deviceId === "string" ? rawRequest.deviceId.slice(0, 100) : "";
+    if (!prompt) throw new Error("Say what you want the smart-home device to do.");
+    const settings = await readSettings();
+    const availableDevices = savedSmartHomeDevices(settings);
+    const promptLower = prompt.toLocaleLowerCase();
+    const namedDevice = availableDevices.find((device) =>
+      typeof device.name === "string" && promptLower.includes(device.name.toLocaleLowerCase()),
+    );
+    const selectedId = id || namedDevice?.id || (availableDevices.length === 1 ? availableDevices[0].id : "");
+    if (!selectedId && availableDevices.length > 1) {
+      throw new Error("Say the saved device name so Vox knows which one to control.");
+    }
+    const device = unlockSmartHomeDevice(settings, selectedId);
+    lastSmartHomeCommandAt = now;
+    return runSmartHomeCommand(device, prompt);
   });
 
   ipcMain.handle("vox-codex:set-panel-open", (event, open) => {

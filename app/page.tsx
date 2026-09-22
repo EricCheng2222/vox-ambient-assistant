@@ -22,6 +22,7 @@ import {
   FolderOpen,
   Globe2,
   Headphones,
+  House,
   KeyRound,
   Mic,
   MicOff,
@@ -33,6 +34,8 @@ import {
   Trash2,
   UserPlus,
   Volume2,
+  Wifi,
+  Wind,
 } from "lucide-react";
 import { toast } from "sonner";
 import { speechText } from "@/lib/speech-text";
@@ -137,6 +140,7 @@ import {
   type VisionNeed,
 } from "@/lib/vision";
 import { isLocalCodexTask } from "@/lib/local-codex-route";
+import { isSmartHomeControlRequest } from "@/lib/smart-home-route";
 
 type CameraFacingMode = "user" | "environment";
 
@@ -164,6 +168,7 @@ type JevRoute =
   | "create_file"
   | "desktop_action"
   | "desktop_control"
+  | "smart_home"
   | "local_codex";
 
 type PresenceAction =
@@ -180,6 +185,34 @@ type InviteStatus = {
   unlimited: boolean;
   canGenerate: boolean;
 };
+type SmartHomeAdapter = {
+  id: string;
+  kind: string;
+  label: string;
+};
+type SmartHomeDevice = {
+  id: string;
+  adapter: string;
+  kind: string;
+  name: string;
+  host: string;
+  serial: string;
+  productType: string;
+};
+type SmartHomeStatus = {
+  available: boolean;
+  secureStorageAvailable: boolean;
+  adapters: SmartHomeAdapter[];
+  devices: SmartHomeDevice[];
+};
+type SmartHomeDiscoveredDevice = {
+  adapter: string;
+  kind: string;
+  name: string;
+  host: string;
+  serial?: string;
+};
+type DysonSetupMethod = "sticker" | "manual";
 type ContextMode = "continue" | "fresh";
 type TurnState = "wait" | "complete";
 type RouteDecision = {
@@ -375,6 +408,30 @@ declare global {
       decidePersonalPresence?: (request: Record<string, unknown>) => Promise<{
         action?: PresenceAction;
       }>;
+      getSmartHomeStatus?: () => Promise<SmartHomeStatus>;
+      discoverSmartHomeDevices?: (adapter: string) => Promise<{
+        devices: SmartHomeDiscoveredDevice[];
+      }>;
+      saveSmartHomeDevice?: (device: {
+        adapter: string;
+        method: DysonSetupMethod;
+        name: string;
+        host: string;
+        wifiSsid: string;
+        wifiPassword: string;
+        serial: string;
+        productType: string;
+        credential: string;
+      }) => Promise<{
+        device: SmartHomeDevice;
+        connected: boolean;
+        warning?: string;
+      }>;
+      removeSmartHomeDevice?: (deviceId: string) => Promise<{ removed: boolean }>;
+      runSmartHomeCommand?: (request: {
+        deviceId?: string;
+        prompt: string;
+      }) => Promise<{ answer?: string }>;
       resolveApp?: (text: string) => Promise<{ id: `installed:${string}`; name: string; appOnly: boolean } | null>;
       runTask: (request: { prompt: string }) => Promise<{
         canceled: boolean;
@@ -433,6 +490,11 @@ const frontVoiceConfig: Record<
     workState: "working",
     zhBridge: "好，收到，我來幫你操作。",
     enBridge: "Got it—I’ll take care of that now.",
+  },
+  smart_home: {
+    workState: "working",
+    zhBridge: "好，我來連線到家裡的裝置。",
+    enBridge: "Got it—I’ll contact the device on your local network.",
   },
   balanced_reasoning: {
     workState: "thinking",
@@ -653,6 +715,19 @@ export default function Home() {
   const [inviteLoading, setInviteLoading] = useState(true);
   const [inviteCreating, setInviteCreating] = useState(false);
   const [inviteError, setInviteError] = useState("");
+  const [smartHomeOpen, setSmartHomeOpen] = useState(false);
+  const [smartHomeStatus, setSmartHomeStatus] = useState<SmartHomeStatus | null>(null);
+  const [smartHomeBusy, setSmartHomeBusy] = useState(false);
+  const [smartHomeError, setSmartHomeError] = useState("");
+  const [smartHomeDiscovery, setSmartHomeDiscovery] = useState<SmartHomeDiscoveredDevice[]>([]);
+  const [dysonSetupMethod, setDysonSetupMethod] = useState<DysonSetupMethod>("sticker");
+  const [dysonName, setDysonName] = useState("Dyson purifier");
+  const [dysonHost, setDysonHost] = useState("");
+  const [dysonWifiSsid, setDysonWifiSsid] = useState("");
+  const [dysonWifiPassword, setDysonWifiPassword] = useState("");
+  const [dysonSerial, setDysonSerial] = useState("");
+  const [dysonProductType, setDysonProductType] = useState("");
+  const [dysonCredential, setDysonCredential] = useState("");
   const [conversationWidth, setConversationWidth] = useState(
     DEFAULT_CONVERSATION_WIDTH,
   );
@@ -1243,6 +1318,105 @@ export default function Home() {
     const nextTheme = parseVisualTheme(value);
     setTheme(nextTheme);
     void savePreferences({ theme: nextTheme });
+  }
+
+  async function loadSmartHomeStatus(quiet = false) {
+    const bridge = window.voxLocalCodex;
+    if (!bridge?.getSmartHomeStatus) return;
+    try {
+      const status = await bridge.getSmartHomeStatus();
+      setSmartHomeStatus(status);
+      if (!status.secureStorageAvailable) {
+        setSmartHomeError("macOS secure storage is unavailable, so device credentials cannot be saved.");
+      } else if (!quiet) {
+        setSmartHomeError("");
+      }
+    } catch (error) {
+      if (!quiet) {
+        setSmartHomeError(error instanceof Error ? error.message : "Smart-home settings could not load.");
+      }
+    }
+  }
+
+  function changeSmartHomeOpen(open: boolean) {
+    setSmartHomeOpen(open);
+    if (open) void loadSmartHomeStatus();
+  }
+
+  async function discoverSmartHome() {
+    const bridge = window.voxLocalCodex;
+    if (!bridge?.discoverSmartHomeDevices) return;
+    setSmartHomeBusy(true);
+    setSmartHomeError("");
+    try {
+      const result = await bridge.discoverSmartHomeDevices("dyson-local");
+      setSmartHomeDiscovery(result.devices);
+      if (result.devices.length === 0) {
+        setSmartHomeError("No Dyson purifier answered on this Wi-Fi network. You can still enter its local address manually.");
+      }
+    } catch (error) {
+      setSmartHomeError(error instanceof Error ? error.message : "Local device discovery failed.");
+    } finally {
+      setSmartHomeBusy(false);
+    }
+  }
+
+  function selectDiscoveredSmartHomeDevice(device: SmartHomeDiscoveredDevice) {
+    setDysonHost(device.host);
+    if (device.serial) setDysonSerial(device.serial);
+    if (device.name) setDysonName(device.name);
+    setSmartHomeError("");
+  }
+
+  async function saveDysonDevice(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const bridge = window.voxLocalCodex;
+    if (!bridge?.saveSmartHomeDevice) return;
+    setSmartHomeBusy(true);
+    setSmartHomeError("");
+    try {
+      const result = await bridge.saveSmartHomeDevice({
+        adapter: "dyson-local",
+        method: dysonSetupMethod,
+        name: dysonName,
+        host: dysonHost,
+        wifiSsid: dysonWifiSsid,
+        wifiPassword: dysonWifiPassword,
+        serial: dysonSerial,
+        productType: dysonProductType,
+        credential: dysonCredential,
+      });
+      setDysonWifiPassword("");
+      setDysonCredential("");
+      await loadSmartHomeStatus(true);
+      if (result.connected) {
+        toast.success("Dyson purifier connected", {
+          description: "You can now control it by voice from Vox Desktop.",
+        });
+      } else {
+        setSmartHomeError(result.warning ?? "The device was saved, but it did not answer the connection test.");
+      }
+    } catch (error) {
+      setSmartHomeError(error instanceof Error ? error.message : "The Dyson purifier could not be saved.");
+    } finally {
+      setSmartHomeBusy(false);
+    }
+  }
+
+  async function removeSmartHomeDevice(deviceId: string) {
+    const bridge = window.voxLocalCodex;
+    if (!bridge?.removeSmartHomeDevice) return;
+    setSmartHomeBusy(true);
+    setSmartHomeError("");
+    try {
+      await bridge.removeSmartHomeDevice(deviceId);
+      await loadSmartHomeStatus(true);
+      toast.success("Device removed from this Mac");
+    } catch (error) {
+      setSmartHomeError(error instanceof Error ? error.message : "The device could not be removed.");
+    } finally {
+      setSmartHomeBusy(false);
+    }
   }
 
   async function startCameraPreview(
@@ -2471,6 +2645,48 @@ export default function Home() {
         return;
       }
       if (pendingDesktopAction) pendingDesktopActionRef.current = null;
+
+      if (isSmartHomeControlRequest(completeText)) {
+        pendingUtteranceRef.current = null;
+        setThinkingCue("");
+        const smartHomeBridge = window.voxLocalCodex;
+        if (!smartHomeBridge?.runSmartHomeCommand) {
+          sendTurnResponse(
+            "smart_home_unavailable",
+            turnLanguage === "taiwan_mandarin"
+              ? "智慧家庭控制目前只能在 Vox Desktop 使用。"
+              : "Smart-home control is currently available only in Vox Desktop.",
+            true,
+          );
+          setConnectionState("thinking");
+          return;
+        }
+        try {
+          const result = await runWithFrontVoice("smart_home", () =>
+            smartHomeBridge.runSmartHomeCommand!({ prompt: completeText }),
+          );
+          if (!isCurrentTurn()) return;
+          sendTurnResponse(
+            "smart_home_completed",
+            result.answer?.trim() || (turnLanguage === "taiwan_mandarin"
+              ? "裝置已收到本機指令。"
+              : "The device received the local command."),
+            true,
+          );
+        } catch (error) {
+          if (!isCurrentTurn()) return;
+          const detail = error instanceof Error ? error.message : "The device could not be reached.";
+          sendTurnResponse(
+            "smart_home_failed",
+            turnLanguage === "taiwan_mandarin"
+              ? `目前無法控制家裡的裝置。${detail}`
+              : `I could not control the home device. ${detail}`,
+            true,
+          );
+        }
+        setConnectionState("thinking");
+        return;
+      }
 
       let route: RouteDecision;
       if (connectionMode === "personal") {
@@ -3905,6 +4121,266 @@ export default function Home() {
               </div>
             </SheetContent>
           </Sheet>}
+
+          {desktopPersonalAvailable && (
+            <Sheet open={smartHomeOpen} onOpenChange={changeSmartHomeOpen}>
+              <SheetTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
+                  aria-label="Open home devices"
+                >
+                  <House />
+                  <span className="hidden sm:inline">Home</span>
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="w-[min(94vw,480px)] border-white/10 bg-[#10111b] text-white sm:max-w-[480px]">
+                <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
+                  <div className="flex items-center gap-2 text-[#f4ff74]">
+                    <House size={18} />
+                    <SheetTitle className="font-display text-xl text-white">
+                      Home devices
+                    </SheetTitle>
+                  </div>
+                  <SheetDescription className="mt-2 leading-6 text-white/46">
+                    A local smart-home hub for Vox Desktop. Dyson purifier support is
+                    the first device adapter; more device types can be added later.
+                  </SheetDescription>
+                </SheetHeader>
+
+                <div className="flex-1 overflow-y-auto px-5 py-5">
+                  <div className="mb-5 flex items-start gap-2 rounded-xl border border-emerald-300/12 bg-emerald-300/[0.045] px-3.5 py-3 text-xs leading-5 text-white/56">
+                    <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-300" />
+                    Device control stays on this Mac and your Wi-Fi network. Credentials
+                    are encrypted with macOS secure storage and are never sent to Vox Cloud.
+                  </div>
+
+                  {smartHomeStatus?.devices.map((device) => (
+                    <article
+                      key={device.id}
+                      className="mb-3 rounded-2xl border border-white/9 bg-white/[0.035] p-4"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-sky-300/15 bg-sky-300/[0.06] text-sky-200">
+                          <Wind size={18} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-white/82">{device.name}</p>
+                          <p className="mt-1 text-xs text-white/40">Dyson purifier · local Wi-Fi</p>
+                          <p className="mt-2 truncate font-mono text-[0.66rem] text-white/28">
+                            {device.host} · {device.productType}
+                          </p>
+                        </div>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              type="button"
+                              size="icon-sm"
+                              variant="ghost"
+                              className="shrink-0 rounded-full text-white/32 hover:bg-[#ff766c]/10 hover:text-[#ff9d96]"
+                              aria-label={`Remove ${device.name}`}
+                            >
+                              <Trash2 />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent className="border-white/10 bg-[#171823] text-white">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Remove this home device?</AlertDialogTitle>
+                              <AlertDialogDescription className="leading-6 text-white/46">
+                                Vox will delete the encrypted local credential for “{device.name}” from this Mac.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel className="border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white">
+                                Keep it
+                              </AlertDialogCancel>
+                              <AlertDialogAction
+                                variant="destructive"
+                                disabled={smartHomeBusy}
+                                onClick={() => void removeSmartHomeDevice(device.id)}
+                              >
+                                Remove
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </article>
+                  ))}
+
+                  <div className="my-5 border-t border-white/8" />
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white/82">Add a Dyson purifier</p>
+                      <p className="mt-1 text-xs text-white/38">The purifier must already be on the same Wi-Fi.</p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={smartHomeBusy}
+                      onClick={() => void discoverSmartHome()}
+                      className="rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+                    >
+                      <Wifi /> {smartHomeBusy ? "Looking…" : "Discover"}
+                    </Button>
+                  </div>
+
+                  {smartHomeDiscovery.length > 0 && (
+                    <div className="mb-4 space-y-2">
+                      {smartHomeDiscovery.map((device) => (
+                        <button
+                          key={`${device.adapter}:${device.host}`}
+                          type="button"
+                          onClick={() => selectDiscoveredSmartHomeDevice(device)}
+                          className="flex w-full items-center justify-between rounded-xl border border-sky-300/12 bg-sky-300/[0.04] px-3.5 py-3 text-left transition hover:bg-sky-300/[0.08]"
+                        >
+                          <span>
+                            <span className="block text-sm text-white/76">{device.name}</span>
+                            <span className="mt-1 block font-mono text-[0.65rem] text-white/30">{device.host}</span>
+                          </span>
+                          <span className="text-xs text-sky-200/70">Use</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <form onSubmit={saveDysonDevice} className="space-y-3.5">
+                    <div className="grid grid-cols-2 gap-2 rounded-xl bg-black/20 p-1">
+                      <button
+                        type="button"
+                        onClick={() => setDysonSetupMethod("sticker")}
+                        className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${dysonSetupMethod === "sticker" ? "bg-white/10 text-white" : "text-white/38 hover:text-white/65"}`}
+                      >
+                        Older sticker setup
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDysonSetupMethod("manual")}
+                        className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${dysonSetupMethod === "manual" ? "bg-white/10 text-white" : "text-white/38 hover:text-white/65"}`}
+                      >
+                        Local credential
+                      </button>
+                    </div>
+
+                    <label className="block text-xs text-white/50">
+                      Device name
+                      <input
+                        value={dysonName}
+                        onChange={(event) => setDysonName(event.target.value)}
+                        maxLength={80}
+                        required
+                        className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                        placeholder="Living room purifier"
+                      />
+                    </label>
+                    <label className="block text-xs text-white/50">
+                      Local IP address or hostname
+                      <input
+                        value={dysonHost}
+                        onChange={(event) => setDysonHost(event.target.value)}
+                        maxLength={253}
+                        required
+                        className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 font-mono text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                        placeholder="192.168.1.40"
+                      />
+                    </label>
+
+                    {dysonSetupMethod === "sticker" ? (
+                      <>
+                        <label className="block text-xs text-white/50">
+                          Purifier sticker network name
+                          <input
+                            value={dysonWifiSsid}
+                            onChange={(event) => setDysonWifiSsid(event.target.value)}
+                            maxLength={100}
+                            required
+                            autoComplete="off"
+                            className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 font-mono text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                            placeholder="DYSON-ABC-TW-12345678-438K"
+                          />
+                        </label>
+                        <label className="block text-xs text-white/50">
+                          Purifier sticker Wi-Fi code
+                          <input
+                            type="password"
+                            value={dysonWifiPassword}
+                            onChange={(event) => setDysonWifiPassword(event.target.value)}
+                            maxLength={100}
+                            required
+                            autoComplete="new-password"
+                            className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                            placeholder="Code printed on the purifier label"
+                          />
+                        </label>
+                        <p className="text-[0.68rem] leading-5 text-white/34">
+                          This is the purifier’s own printed setup code—not your home Wi-Fi password. Vox derives a local credential and never stores the printed code.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-[1fr_110px] gap-2.5">
+                          <label className="block text-xs text-white/50">
+                            Serial number
+                            <input
+                              value={dysonSerial}
+                              onChange={(event) => setDysonSerial(event.target.value)}
+                              maxLength={40}
+                              required
+                              className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 font-mono text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                              placeholder="ABC-TW-12345678"
+                            />
+                          </label>
+                          <label className="block text-xs text-white/50">
+                            Product type
+                            <input
+                              value={dysonProductType}
+                              onChange={(event) => setDysonProductType(event.target.value)}
+                              maxLength={8}
+                              required
+                              className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 font-mono text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                              placeholder="438K"
+                            />
+                          </label>
+                        </div>
+                        <label className="block text-xs text-white/50">
+                          Local device credential
+                          <input
+                            type="password"
+                            value={dysonCredential}
+                            onChange={(event) => setDysonCredential(event.target.value)}
+                            maxLength={512}
+                            required
+                            autoComplete="new-password"
+                            className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                            placeholder="Credential exported for local Dyson control"
+                          />
+                        </label>
+                        <p className="text-[0.68rem] leading-5 text-white/34">
+                          Newer Dyson models require their local device credential. Vox does not ask for or store your MyDyson account password.
+                        </p>
+                      </>
+                    )}
+
+                    {smartHomeError && (
+                      <p className="rounded-xl border border-[#ff766c]/16 bg-[#ff766c]/[0.055] px-3.5 py-3 text-xs leading-5 text-[#ffaaa4]">
+                        {smartHomeError}
+                      </p>
+                    )}
+                    <Button
+                      type="submit"
+                      disabled={smartHomeBusy || smartHomeStatus?.secureStorageAvailable === false}
+                      className="h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                    >
+                      <Wind /> {smartHomeBusy ? "Connecting…" : "Save and test locally"}
+                    </Button>
+                  </form>
+                </div>
+              </SheetContent>
+            </Sheet>
+          )}
 
           {desktopPersonalAvailable && (
             <Button

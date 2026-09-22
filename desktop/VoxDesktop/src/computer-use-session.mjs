@@ -150,7 +150,7 @@ export async function runComputerUseSession({ executable, cwd, prompt, bundleId,
   try {
     if (signal.aborted) throw new Error("Computer Use task cancelled.");
     await request("initialize", {
-      clientInfo: { name: "vox_desktop", version: "0.2.2" },
+      clientInfo: { name: "vox_desktop", version: "0.3.0" },
       capabilities: { experimentalApi: true },
     });
     send({ method: "initialized", params: {} });

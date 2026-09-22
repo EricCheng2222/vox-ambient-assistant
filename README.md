@@ -47,12 +47,12 @@ npm --prefix desktop/VoxDesktop run dist
 When the build finishes, the installer is here:
 
 ```text
-desktop/VoxDesktop/dist/Vox-0.2.2-arm64.dmg
+desktop/VoxDesktop/dist/Vox-0.3.0-arm64.dmg
 ```
 
 #### 2. Install the app
 
-1. Open `Vox-0.2.2-arm64.dmg`.
+1. Open `Vox-0.3.0-arm64.dmg`.
 2. Drag **Vox** into **Applications**.
 3. Open Vox from Applications.
 
@@ -73,6 +73,17 @@ Long-lived keys stay in the desktop main process and are encrypted with the oper
 Vox can pass an explicit local task to Codex and can request Computer Use for installed applications. Codex keeps its own sign-in and permission boundary; Vox does not read or copy Codex credentials.
 
 Install and sign in to Codex separately, then grant only the macOS permissions needed for the apps you want it to control. Ordinary voice conversation does not require Codex.
+
+#### 5. Optional: connect a local Dyson purifier
+
+Open **Home** in Vox Desktop and choose **Discover**. The purifier must already be connected to the same Wi-Fi network as the Mac.
+
+- Older supported models can use the purifier label’s `DYSON-…` setup network name and printed Wi-Fi code. Vox derives the local device credential and does not retain the printed code.
+- Newer supported models require the purifier’s local device credential, serial number, and product type. Vox never asks for or stores the MyDyson account password.
+
+After pairing, voice commands can turn the purifier on or off, set speed 1–10, toggle auto/night/oscillation, and read available local sensor status. Heat controls and filter resets are deliberately excluded from this first version.
+
+Smart-home control is desktop-only and local-first: device credentials are encrypted with macOS secure storage, commands stay on the LAN, and no device credential or command is sent through the Vox backend. Dyson is the first adapter behind a general smart-home hub boundary intended to support more local device types later.
 
 ## Connection modes
 
@@ -95,6 +106,7 @@ Personal mode currently keeps the transcript and preferences on one device. Clou
 - Natural response-length variance and conversational-move selection, so advice is not the default
 - Optional cloud memory, reminders, generated files, invitations, and cross-device transcript sync
 - Desktop-local Codex and constrained Computer Use integration
+- Desktop-local smart-home hub with an initial Dyson Wi-Fi purifier adapter
 
 ## Troubleshooting
 
@@ -143,7 +155,7 @@ VOX_DESKTOP_DEV_URL=http://localhost:5173 npm start
 
 - `app/` — web interface and Vox Cloud API routes
 - `lib/` — shared routing, language, memory, privacy, and conversation policies
-- `desktop/VoxDesktop/` — Electron shell, local Codex bridge, secure Personal-mode provider bridge, and locally bundled web server
+- `desktop/VoxDesktop/` — Electron shell, local Codex bridge, secure Personal-mode provider bridge, local smart-home hub, and bundled web server
 - `ios/` — early iOS shell sharing the cloud backend contract
 - `migrations/` — Cloudflare D1 schema
 - `scripts/` — tests and deployment preparation
@@ -155,6 +167,7 @@ VOX_DESKTOP_DEV_URL=http://localhost:5173 npm start
 - Generated file bodies stay in private R2.
 - Personal provider keys are encrypted locally and are never returned to the renderer.
 - Personal-mode provider requests originate in the desktop main process.
+- Smart-home credentials are encrypted with operating-system secure storage; commands stay on the local network.
 - Computer actions are limited by local policy, installed-app resolution, and the Codex sandbox.
 - Secrets, local state, build output, and installers are excluded from Git.
 - GitHub secret scanning and push protection are enabled for this repository.
