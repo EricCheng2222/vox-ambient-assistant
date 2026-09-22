@@ -1,6 +1,6 @@
 {
   "name": "vox-desktop",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Vox desktop companion with a secure local Codex bridge",
   "author": "Vox",
   "private": true,
@@ -9,7 +9,7 @@
   "main": "src/main.mjs",
   "scripts": {
     "start": "electron .",
-    "check": "node scripts/check.mjs && node --test scripts/computer-use-session.test.mjs && node scripts/personal-api.test.mjs && node scripts/personal-route.test.mjs",
+    "check": "node scripts/check.mjs && node --test scripts/computer-use-session.test.mjs scripts/local-web-server.test.mjs && node scripts/personal-api.test.mjs && node scripts/personal-route.test.mjs",
     "prepare:web": "npm --prefix ../.. run build",
     "package": "electron-builder --dir",
     "dist": "npm run prepare:web && electron-builder"

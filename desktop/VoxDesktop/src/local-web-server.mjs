@@ -17,8 +17,9 @@ const contentTypes = new Map([
 
 function safeAssetPath(clientRoot, pathname) {
   const decoded = decodeURIComponent(pathname).replace(/^\/+/, "");
-  const resolved = path.resolve(clientRoot, decoded);
-  return resolved === clientRoot || resolved.startsWith(`${clientRoot}${path.sep}`)
+  const resolvedRoot = path.resolve(clientRoot);
+  const resolved = path.resolve(resolvedRoot, decoded);
+  return resolved === resolvedRoot || resolved.startsWith(`${resolvedRoot}${path.sep}`)
     ? resolved
     : null;
 }
@@ -91,6 +92,13 @@ export async function startLocalVoxServer(webRoot) {
           response,
         );
         return;
+      }
+      if (webRequest.method === "GET") {
+        const assetResponse = await assets.fetch(webRequest);
+        if (assetResponse.status !== 404) {
+          await writeResponse(assetResponse, response);
+          return;
+        }
       }
       const webResponse = await worker.fetch(webRequest, { ASSETS: assets }, {
         waitUntil(promise) {
