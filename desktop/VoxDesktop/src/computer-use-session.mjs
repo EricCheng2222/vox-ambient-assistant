@@ -28,7 +28,7 @@ export function computerUseModelSettings(mode) {
     : { model: "gpt-5.6-terra", effort: "medium" };
 }
 
-export async function runComputerUseSession({ executable, cwd, prompt, bundleId, mode, signal, onItem, onDiagnostic = () => {} }) {
+export async function runComputerUseSession({ executable, cwd, prompt, bundleId, mode, signal, onItem, onDiagnostic = () => {}, completionCheck, completionAnswer = "" }) {
   const settings = computerUseModelSettings(mode);
   const child = spawn(executable, ["app-server"], { stdio: ["pipe", "pipe", "pipe"] });
   const pending = new Map();
@@ -37,6 +37,7 @@ export async function runComputerUseSession({ executable, cwd, prompt, bundleId,
   let answer = "";
   let finished = false;
   let stalledTool;
+  let completionCheckRunning = false;
   let resolveTurn;
   let rejectTurn;
   const completed = new Promise((resolve, reject) => { resolveTurn = resolve; rejectTurn = reject; });
@@ -58,6 +59,22 @@ export async function runComputerUseSession({ executable, cwd, prompt, bundleId,
     child.kill();
   };
   const abort = () => { fail(new Error("Computer Use task cancelled.")); child.kill(); };
+  const completeIfSatisfied = async () => {
+    if (finished || completionCheckRunning || typeof completionCheck !== "function") return;
+    completionCheckRunning = true;
+    try {
+      if (await completionCheck()) {
+        finished = true;
+        clearTimeout(stalledTool);
+        resolveTurn(completionAnswer || answer);
+        child.kill();
+      }
+    } catch {
+      // A failed completion probe must not turn a usable Computer Use task into a false failure.
+    } finally {
+      completionCheckRunning = false;
+    }
+  };
   const timeout = setTimeout(() => { fail(new Error("Computer Use task timed out.")); child.kill(); }, 180_000);
   child.stderr.resume();
   child.on("error", fail);
@@ -104,9 +121,11 @@ export async function runComputerUseSession({ executable, cwd, prompt, bundleId,
         onItem({ ...item, type: "mcp_tool_call" });
         const failure = computerUseFailure(item);
         if (failure) fail(new Error(failure));
+        else void completeIfSatisfied();
       }
     }
     if (message.method === "turn/completed") {
+      if (finished) return;
       finished = true;
       const turn = message.params.turn;
       if (turn.status === "completed") resolveTurn(answer);
@@ -117,7 +136,7 @@ export async function runComputerUseSession({ executable, cwd, prompt, bundleId,
   try {
     if (signal.aborted) throw new Error("Computer Use task cancelled.");
     await request("initialize", {
-      clientInfo: { name: "vox_desktop", version: "0.1.0" },
+      clientInfo: { name: "vox_desktop", version: "0.1.3" },
       capabilities: { experimentalApi: true },
     });
     send({ method: "initialized", params: {} });

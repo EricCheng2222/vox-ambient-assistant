@@ -1,4 +1,5 @@
 import { buildVoiceInstructions } from "@/lib/memory";
+import { transcriptionConfig } from "@/lib/transcription-language";
 import { listMemories } from "@/lib/memory-store";
 import { requireUser } from "@/lib/auth";
 import { parseRealtimeVoice } from "@/lib/realtime-voice";
@@ -22,6 +23,7 @@ export async function POST(request: Request) {
   const requestBody = (await request.json().catch(() => ({}))) as {
     voice?: unknown;
     replyLength?: unknown;
+    mandarinTranscription?: unknown;
   };
   const voice = parseRealtimeVoice(requestBody.voice);
   const replyLength = parseReplyLength(requestBody.replyLength);
@@ -48,11 +50,7 @@ export async function POST(request: Request) {
           instructions: `${buildVoiceInstructions(remembered)}\n\n${replyLengthInstruction(replyLength)}`,
           audio: {
             input: {
-              transcription: {
-                model: "gpt-4o-mini-transcribe",
-                prompt:
-                  "The speaker may use English or Mandarin. Transcribe verbatim in the language spoken and never translate. Preserve hesitation sounds, filler words, self-corrections, and trailing speech such as um, uh, hmm, er, 嗯, 呃, 欸, 那個, and 就是 instead of silently removing them. If a final sound or word is conspicuously prolonged, preserve that delivery with a natural repeated sound or ellipsis instead of polishing it into a finished sentence. When the speech is Mandarin or Chinese, always write it in Traditional Chinese as used in Taiwan, with Taiwan wording and punctuation. 使用者可能說英文或華語；請依原語言逐字轉錄，不要翻譯，並保留嗯、呃、欸、那個、就是等語助詞、停頓、自我修正與拖長音。華語內容一律使用台灣繁體中文、台灣用詞與標點。",
-              },
+              transcription: transcriptionConfig(requestBody.mandarinTranscription === true),
               turn_detection: {
                 type: "semantic_vad",
                 eagerness: "low",

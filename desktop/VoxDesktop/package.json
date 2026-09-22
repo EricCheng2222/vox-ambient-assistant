@@ -1,16 +1,18 @@
 {
   "name": "vox-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Vox desktop companion with a secure local Codex bridge",
   "author": "Vox",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "main": "src/main.mjs",
   "scripts": {
     "start": "electron .",
-    "check": "node scripts/check.mjs",
+    "check": "node scripts/check.mjs && node scripts/personal-api.test.mjs && node scripts/personal-route.test.mjs",
+    "prepare:web": "npm --prefix ../.. run build",
     "package": "electron-builder --dir",
-    "dist": "electron-builder"
+    "dist": "npm run prepare:web && electron-builder"
   },
   "dependencies": {
     "@openai/codex-sdk": "0.155.1"
@@ -30,7 +32,15 @@
       "src/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "../../dist",
+        "to": "vox-web",
+        "filter": ["**/*"]
+      }
+    ],
     "mac": {
+      "icon": "resources/icon.icns",
       "category": "public.app-category.productivity",
       "target": [
         "dmg",

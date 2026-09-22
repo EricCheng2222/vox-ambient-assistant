@@ -1,0 +1,18 @@
+import assert from "node:assert/strict";
+import { shouldLockMandarin, mandarinFromHistory, transcriptionConfig } from "../lib/transcription-language.ts";
+assert.equal(shouldLockMandarin("帮我打开LINE"), true);
+assert.equal(shouldLockMandarin("幫我打開LINE"), true);
+assert.equal(shouldLockMandarin("嗯"), true);
+assert.equal(shouldLockMandarin("Open LINE"), false);
+assert.equal(shouldLockMandarin("LINE", true), true);
+assert.equal(shouldLockMandarin("", true), true);
+assert.equal(shouldLockMandarin("日本語です"), false);
+assert.equal(transcriptionConfig(true).language, "zh");
+assert.equal("language" in transcriptionConfig(false), false);
+assert.match(transcriptionConfig(true).prompt, /繁體中文/);
+assert.match(transcriptionConfig(true).prompt, /never translate/);
+assert.equal(mandarinFromHistory([{role:"assistant",text:"中文"}]), false);
+assert.equal(mandarinFromHistory([{role:"user",text:"幫我打開LINE"},{role:"user",text:"LINE"}]), true);
+assert.equal(mandarinFromHistory([{role:"user",text:"你好"},{role:"user",text:"Let us speak English"}]), false);
+assert.equal(mandarinFromHistory([]), false);
+console.log("Mandarin transcription lock checks passed");

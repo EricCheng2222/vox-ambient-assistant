@@ -33,3 +33,11 @@ export function classifyVoiceConfirmation(text: string): VoiceConfirmation {
 
   return "unknown";
 }
+
+export function isStandaloneVoiceConfirmation(text: string) {
+  const value = text
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[\s.,!?，。！？、]+/gu, "");
+  return /^(?:yes|yeah|yep|sure|okay|ok|goahead|pleasedo|doit|好|好的|可以|沒問題|没问题|對|对|是|是的)$/iu.test(value);
+}

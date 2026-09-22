@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { computerUseFailure, permitsConfirmedApp, computerUseModelSettings } from "../src/computer-use-session.mjs";
+import {
+  currentDesktopActionText,
+  hasRunningDesktopApp,
+  isClosingDesktopApp,
+} from "../src/desktop-control-policy.mjs";
 
 test("only supported task tiers choose models; missing or invalid tiers retain Terra", () => {
   assert.deepEqual(computerUseModelSettings("fast"), {model: "gpt-5.6-luna", effort: "low"});
@@ -31,4 +36,19 @@ test("spoken confirmation is scoped to the selected app and current task", () =>
     assert.equal(permitsConfirmedApp(action, "com.apple.finder", "task"), false);
   }
   assert.equal(permitsConfirmedApp({ ...request, _meta: { ...request._meta, tool_name: "run_shell" } }, "com.apple.Safari", "task"), false);
+});
+
+test("macOS running-app probes do not mistake an empty result for a running app", () => {
+  assert.equal(hasRunningDesktopApp('ASN:0x0-0xce2ce2-"LINE":'), true);
+  assert.equal(hasRunningDesktopApp(""), false);
+  assert.equal(hasRunningDesktopApp("()"), false);
+  assert.equal(hasRunningDesktopApp(undefined), false);
+});
+
+test("only the current request can turn a contextual desktop prompt into a close action", () => {
+  const prompt = 'Recent task context: {"request":"close LINE"}\nInspect the current app before acting.\n\nCurrent user request: OK, 翻譯工作結束, 謝謝。';
+  const current = currentDesktopActionText(prompt);
+  assert.equal(current, "OK, 翻譯工作結束, 謝謝。");
+  assert.equal(isClosingDesktopApp(current), false);
+  assert.equal(isClosingDesktopApp(currentDesktopActionText("Current user request: 幫我關掉 LINE")), true);
 });

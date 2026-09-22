@@ -35,6 +35,8 @@ import {
   Volume2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { speechText } from "@/lib/speech-text";
+import { mandarinFromHistory, shouldLockMandarin, transcriptionConfig } from "@/lib/transcription-language";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -70,6 +72,7 @@ import {
   containsBlockedDesktopAction,
   isRoutineDesktopAction,
   inferredDesktopControl,
+  detectApprovedDesktopApp,
   type DesktopControlRequest,
 } from "@/lib/desktop-control-route";
 import {
@@ -86,6 +89,7 @@ import {
 } from "@/lib/realtime-voice";
 import {
   adaptiveReplyLengthInstruction,
+  mirroredAdaptiveReplyLength,
   parseReplyLength,
   parseAdaptiveReplyLength,
   replyLengthInstruction,
@@ -99,6 +103,7 @@ import {
   type ResponseLanguage,
 } from "@/lib/response-language";
 import {
+  fallbackResponsePosture,
   parseResponsePosture,
   responsePostureInstruction,
   type ResponsePosture,
@@ -125,11 +130,13 @@ import {
   type VisualTheme,
 } from "@/lib/visual-theme";
 import {
+  fallbackVisionNeed,
   parseVisionNeed,
   visualTurnInstruction,
   createVisionItemId,
   type VisionNeed,
 } from "@/lib/vision";
+import { isLocalCodexTask } from "@/lib/local-codex-route";
 
 type CameraFacingMode = "user" | "environment";
 
@@ -166,7 +173,8 @@ type PresenceAction =
   | "natural_callback"
   | "emotional_followup"
   | "morning_hello";
-type AuthState = "checking" | "authenticated" | "locked";
+type AuthState = "checking" | "selecting" | "authenticated" | "locked";
+type ConnectionMode = "cloud" | "personal";
 type InviteStatus = {
   generated: number;
   unlimited: boolean;
@@ -174,6 +182,20 @@ type InviteStatus = {
 };
 type ContextMode = "continue" | "fresh";
 type TurnState = "wait" | "complete";
+type RouteDecision = {
+  route?: JevRoute;
+  computerUseMode?: "fast" | "standard";
+  desktopApp?: string;
+  desktopAppConfidence?: number;
+  contextMode?: ContextMode;
+  turnState?: TurnState;
+  responseLength?: AdaptiveReplyLength;
+  responsePosture?: ResponsePosture;
+  memoryUse?: MemoryUse;
+  ritual?: ConversationRitual;
+  visionNeed?: VisionNeed;
+  visionBlocked?: string | null;
+};
 
 type PendingUtterance = {
   text: string;
@@ -214,6 +236,8 @@ const MAX_CONVERSATION_WIDTH = 720;
 const MIN_VOICE_CONSOLE_WIDTH = 520;
 const PANEL_DIVIDER_WIDTH = 10;
 const CONVERSATION_WIDTH_STORAGE_KEY = "vox-conversation-panel-width";
+const PERSONAL_CONVERSATION_STORAGE_KEY = "vox.personal.conversation";
+const PERSONAL_PREFERENCES_STORAGE_KEY = "vox.personal.preferences";
 
 function clampConversationWidth(value: number, containerWidth: number) {
   const availableMaximum = Math.max(
@@ -264,6 +288,7 @@ function formatConversationCarryover(messages: Message[]) {
 type RealtimeEvent = {
   type?: string;
   event_id?: string;
+  response_id?: string;
   transcript?: string;
   delta?: string;
   item_id?: string;
@@ -322,6 +347,35 @@ declare global {
     };
     readonly voxLocalCodex?: {
       available: boolean;
+      getConnectionStatus?: () => Promise<{
+        mode: ConnectionMode | null;
+        personalKeyConfigured: boolean;
+        openAIKeyConfigured: boolean;
+        typeSafeKeyConfigured: boolean;
+        secureStorageAvailable: boolean;
+      }>;
+      setConnectionMode?: (mode: ConnectionMode) => Promise<{
+        mode: ConnectionMode;
+        personalKeyConfigured: boolean;
+      }>;
+      savePersonalKeys?: (keys: {
+        openAIKey: string;
+        typeSafeKey: string;
+      }) => Promise<{
+        mode: "personal";
+        personalKeyConfigured: true;
+      }>;
+      removePersonalKeys?: () => Promise<{ removed: boolean }>;
+      createPersonalRealtimeToken?: (request: {
+        voice: RealtimeVoice;
+        instructions: string;
+        mandarinTranscription: boolean;
+      }) => Promise<RealtimeTokenPayload>;
+      routePersonalTurn?: (request: Record<string, unknown>) => Promise<RouteDecision>;
+      decidePersonalPresence?: (request: Record<string, unknown>) => Promise<{
+        action?: PresenceAction;
+      }>;
+      resolveApp?: (text: string) => Promise<{ id: `installed:${string}`; name: string; appOnly: boolean } | null>;
       runTask: (request: { prompt: string }) => Promise<{
         canceled: boolean;
         answer?: string;
@@ -553,6 +607,12 @@ function Waveform({
 
 export default function Home() {
   const [authState, setAuthState] = useState<AuthState>("checking");
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode | null>(null);
+  const [desktopPersonalAvailable, setDesktopPersonalAvailable] = useState(false);
+  const [secureStorageAvailable, setSecureStorageAvailable] = useState(true);
+  const [personalKeyConfigured, setPersonalKeyConfigured] = useState(false);
+  const [personalOpenAIKey, setPersonalOpenAIKey] = useState("");
+  const [personalTypeSafeKey, setPersonalTypeSafeKey] = useState("");
   const [email, setEmail] = useState("");
   const [accessCode, setAccessCode] = useState("");
   const [authError, setAuthError] = useState("");
@@ -628,6 +688,9 @@ export default function Home() {
   const inputAnalyserRef = useRef<AnalyserNode | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const assistantDraftRef = useRef("");
+  const mandarinTranscriptionRef = useRef(false);
+  const displayAnswersRef = useRef(new Map<string, string>());
+  const responseDisplayKeysRef = useRef(new Map<string, string>());
   const messagesRef = useRef<Message[]>([]);
   const connectionStateRef = useRef<ConnectionState>("idle");
   const mutedRef = useRef(false);
@@ -656,6 +719,7 @@ export default function Home() {
   const sessionOwnerRef = useRef<string | null>(null);
   const pendingUtteranceRef = useRef<PendingUtterance | null>(null);
   const pendingDesktopActionRef = useRef<PendingDesktopAction | null>(null);
+  const desktopClarificationRef = useRef<{ text: string; at: number } | null>(null);
   const desktopContextRef = useRef<{ control: DesktopControlRequest; prompt: string; answer: string; at: number } | null>(null);
   const userSpeakingRef = useRef(false);
   const speechAwaitingTranscriptRef = useRef(false);
@@ -748,19 +812,39 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
-    void fetch("/api/auth", { cache: "no-store" })
-      .then(async (response) => {
+    void (async () => {
+      try {
+        const bridge = window.voxLocalCodex;
+        if (bridge?.getConnectionStatus) {
+          const status = await bridge.getConnectionStatus();
+          if (!active) return;
+          setDesktopPersonalAvailable(true);
+          setSecureStorageAvailable(status.secureStorageAvailable);
+          setPersonalKeyConfigured(status.personalKeyConfigured);
+          if (!status.mode) {
+            setAuthState("selecting");
+            return;
+          }
+          setConnectionMode(status.mode);
+          if (status.mode === "personal") {
+            setAuthState(status.personalKeyConfigured ? "authenticated" : "locked");
+            return;
+          }
+        }
+
+        setConnectionMode("cloud");
+        const response = await fetch("/api/auth", { cache: "no-store" });
         const payload = (await response.json()) as { authenticated?: boolean };
         if (active) {
           setAuthState(payload.authenticated ? "authenticated" : "locked");
         }
-      })
-      .catch(() => {
+      } catch {
         if (active) {
-          setAuthError("Vox could not verify access. Please try again.");
+          setAuthError("Vox could not verify this connection. Please try again.");
           setAuthState("locked");
         }
-      });
+      }
+    })();
     return () => {
       active = false;
     };
@@ -768,6 +852,45 @@ export default function Home() {
 
   useEffect(() => {
     if (authState !== "authenticated") return;
+    if (connectionMode === "personal") {
+      const storedPreferences = window.localStorage.getItem(PERSONAL_PREFERENCES_STORAGE_KEY);
+      if (storedPreferences) {
+        try {
+          applyPreferences(parseUserPreferences(JSON.parse(storedPreferences)));
+        } catch {
+          window.localStorage.removeItem(PERSONAL_PREFERENCES_STORAGE_KEY);
+        }
+      }
+      const storedConversation = window.localStorage.getItem(PERSONAL_CONVERSATION_STORAGE_KEY);
+      if (storedConversation) {
+        try {
+          const parsed = JSON.parse(storedConversation);
+          if (Array.isArray(parsed)) {
+            const localMessages = parsed
+              .filter((message): message is Message =>
+                Boolean(
+                  message &&
+                    typeof message.id === "string" &&
+                    (message.role === "user" || message.role === "assistant") &&
+                    typeof message.text === "string",
+                ),
+              )
+              .slice(-200);
+            messagesRef.current = localMessages;
+            queueMicrotask(() => setMessages(localMessages));
+          }
+        } catch {
+          window.localStorage.removeItem(PERSONAL_CONVERSATION_STORAGE_KEY);
+        }
+      }
+      queueMicrotask(() => {
+        setMemoryLoading(false);
+        setFilesLoading(false);
+        setRemindersLoading(false);
+        setInviteLoading(false);
+      });
+      return;
+    }
     void loadMemories();
     void loadFiles();
     void loadReminders();
@@ -776,18 +899,18 @@ export default function Home() {
     void syncConversation(false);
     // Loading is intentionally keyed to the authentication transition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authState]);
+  }, [authState, connectionMode]);
 
   useEffect(() => {
-    if (authState !== "authenticated") return;
+    if (authState !== "authenticated" || connectionMode !== "cloud") return;
     const timer = window.setInterval(() => void syncConversation(true), 5_000);
     return () => window.clearInterval(timer);
     // Synchronization is intentionally keyed to the authentication transition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authState]);
+  }, [authState, connectionMode]);
 
   useEffect(() => {
-    if (authState !== "authenticated") return;
+    if (authState !== "authenticated" || connectionMode !== "cloud") return;
     const syncWhenVisible = () => {
       if (document.visibilityState === "visible" && preferenceSavesRef.current === 0) {
         void loadPreferences(true);
@@ -801,20 +924,22 @@ export default function Home() {
     };
     // Loading is intentionally keyed to the authentication transition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authState]);
+  }, [authState, connectionMode]);
 
   useEffect(() => {
-    if (authState !== "authenticated") return;
+    if (authState !== "authenticated" || connectionMode !== "cloud") return;
     void checkDueReminders();
     const timer = window.setInterval(() => void checkDueReminders(), 15_000);
     return () => window.clearInterval(timer);
-  }, [authState]);
+  }, [authState, connectionMode]);
 
   useEffect(() => {
-    if (!connected || initiative === "off") return;
+    if (!connected || initiative === "off" || !connectionMode) return;
     const timer = window.setInterval(() => void checkPresence(initiative), 5_000);
     return () => window.clearInterval(timer);
-  }, [connected, initiative]);
+    // The interval is intentionally recreated only when connection or initiative state changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, initiative, connectionMode]);
 
   useEffect(() => {
     return () => disconnect(false);
@@ -859,6 +984,7 @@ export default function Home() {
   }, []);
 
   async function syncConversation(quiet = true) {
+    if (connectionMode !== "cloud") return;
     if (conversationSyncInFlightRef.current) return;
     conversationSyncInFlightRef.current = true;
     try {
@@ -914,6 +1040,7 @@ export default function Home() {
   }
 
   async function persistConversationMessage(message: Message) {
+    if (connectionMode !== "cloud") return;
     if (messageSavesRef.current.has(message.id)) return;
     messageSavesRef.current.add(message.id);
     let staleGeneration = false;
@@ -970,13 +1097,19 @@ export default function Home() {
       role,
       text: cleanText,
     };
-    pendingMessageIdsRef.current.add(message.id);
+    if (connectionMode === "cloud") pendingMessageIdsRef.current.add(message.id);
     setMessages((current) => {
       const next = [...current, message];
       messagesRef.current = next;
+      if (connectionMode === "personal") {
+        window.localStorage.setItem(
+          PERSONAL_CONVERSATION_STORAGE_KEY,
+          JSON.stringify(next.slice(-200)),
+        );
+      }
       return next;
     });
-    void persistConversationMessage(message);
+    if (connectionMode === "cloud") void persistConversationMessage(message);
   }
 
   function quietThinkingCue(text: string) {
@@ -1449,6 +1582,21 @@ export default function Home() {
   }
 
   async function savePreferences(patch: Partial<UserPreferences>) {
+    if (connectionMode === "personal") {
+      const next = parseUserPreferences({
+        voice,
+        replyLength: replyLengthRef.current,
+        initiative,
+        theme,
+        ...patch,
+      });
+      applyPreferences(next);
+      window.localStorage.setItem(
+        PERSONAL_PREFERENCES_STORAGE_KEY,
+        JSON.stringify(next),
+      );
+      return;
+    }
     const revision = ++preferenceRevisionRef.current;
     preferenceSavesRef.current += 1;
     let failed = false;
@@ -1499,6 +1647,7 @@ export default function Home() {
           type: "session.update",
           session: {
             type: "realtime",
+            audio: { input: { transcription: transcriptionConfig(mandarinTranscriptionRef.current) } },
             instructions: [
               buildVoiceInstructions(memoriesRef.current),
               replyLengthInstruction(nextReplyLength),
@@ -1547,6 +1696,9 @@ export default function Home() {
   }
 
   function resetRealtimeConversationContext() {
+    displayAnswersRef.current.clear();
+    responseDisplayKeysRef.current.clear();
+    desktopClarificationRef.current = null;
     desktopContextRef.current = null;
     routeTurnRef.current += 1;
     activeRouteTurnRef.current = null;
@@ -1576,6 +1728,11 @@ export default function Home() {
     conversationGenerationRef.current = 0;
     messagesRef.current = [];
     setMessages([]);
+
+    if (connectionMode === "personal") {
+      window.localStorage.removeItem(PERSONAL_CONVERSATION_STORAGE_KEY);
+      return;
+    }
 
     const clearPromise = (async () => {
       const response = await fetch("/api/conversation", { method: "DELETE" });
@@ -1881,6 +2038,7 @@ export default function Home() {
   }
 
   async function considerMemory(text: string) {
+    if (connectionMode !== "cloud") return;
     const cleanText = text.trim();
     if (!cleanText) return;
 
@@ -1972,21 +2130,29 @@ export default function Home() {
     lastPresenceCheckRef.current = now;
 
     try {
-      const response = await fetch("/api/jev-presence", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          initiative: currentInitiative,
-          quietForMs: now - lastHumanMoment,
-          sinceAssistantMs: now - lastAssistantAtRef.current,
-          proactiveCount: proactiveCountRef.current,
-          recentMessages: messagesRef.current.slice(-6).map(({ role, text }) => ({
-            role,
-            text,
-          })),
-        }),
-      });
-      const decision = (await response.json()) as { action?: PresenceAction };
+      const presenceRequest = {
+        initiative: currentInitiative,
+        quietForMs: now - lastHumanMoment,
+        sinceAssistantMs: now - lastAssistantAtRef.current,
+        proactiveCount: proactiveCountRef.current,
+        recentMessages: messagesRef.current.slice(-6).map(({ role, text }) => ({
+          role,
+          text,
+        })),
+      };
+      let decision: { action?: PresenceAction };
+      if (connectionMode === "personal") {
+        const decidePersonalPresence = window.voxLocalCodex?.decidePersonalPresence;
+        if (!decidePersonalPresence) return;
+        decision = await decidePersonalPresence(presenceRequest);
+      } else {
+        const response = await fetch("/api/jev-presence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(presenceRequest),
+        });
+        decision = (await response.json()) as { action?: PresenceAction };
+      }
 
       if (
         decision.action === "stay_silent" ||
@@ -2063,7 +2229,17 @@ export default function Home() {
     const isCurrentTurn = () => turnId === routeTurnRef.current;
     const pending = pendingUtteranceRef.current;
     const pendingText = pending?.text ?? "";
-    const completeText = [pendingText, text].filter(Boolean).join(" ").trim();
+    const clarification = desktopClarificationRef.current;
+    // Resolve names locally; never upload the user's installed-app inventory.
+    const installedApp = await window.voxLocalCodex?.resolveApp?.(text).catch(() => null);
+    if (!isCurrentTurn()) return;
+    const clarifiedApp = installedApp ?? detectApprovedDesktopApp(text);
+    const appOnlyReply = installedApp?.appOnly || (clarifiedApp && [clarifiedApp.name.toLowerCase(), clarifiedApp.id].includes(text.trim().replace(/[.!?。！？]/gu, "").toLowerCase()));
+    const clarificationText = clarification && Date.now() - clarification.at < 60_000 && appOnlyReply
+      ? clarification.text
+      : "";
+    desktopClarificationRef.current = null;
+    const completeText = [clarificationText, pendingText, text].filter(Boolean).join(" ").trim();
     const turnLanguage = selectResponseLanguage(
       completeText,
       messagesRef.current,
@@ -2089,7 +2265,7 @@ export default function Home() {
       };
       if (instructions) {
         response.instructions = exactText
-          ? `Read the following answer aloud exactly as written. Do not add, remove, correct, qualify, or summarize anything.\n\n${instructions}`
+          ? `Read the following answer aloud exactly as written. Do not add URLs, citations, or source labels. Do not add, remove, correct, qualify, or summarize anything.\n\n${speechText(instructions)}`
           : instructions;
         if (exactText) response.input = [];
       }
@@ -2101,6 +2277,13 @@ export default function Home() {
           return;
         }
         if (!speechAwaitingTranscriptRef.current) {
+          if (exactText && instructions) {
+            displayAnswersRef.current.set(`${turnId}:${kind}`, instructions);
+            // Bound pending entries even if the server never acknowledges a request.
+            if (displayAnswersRef.current.size > 32) {
+              displayAnswersRef.current.delete(displayAnswersRef.current.keys().next().value!);
+            }
+          }
           openChannel.send(JSON.stringify({ type: "response.create", response }));
         }
       };
@@ -2118,6 +2301,26 @@ export default function Home() {
         ? config.zhBridge
         : config.enBridge;
       setConnectionState(config.workState);
+
+      const taskOutcome = Promise.resolve()
+        .then(task)
+        .then(
+          (value) => ({ status: "fulfilled" as const, value }),
+          (reason) => ({ status: "rejected" as const, reason }),
+        );
+      let bridgeDelayId = 0;
+      const firstOutcome = await Promise.race([
+        taskOutcome,
+        new Promise<{ status: "delay" }>((resolve) => {
+          bridgeDelayId = window.setTimeout(
+            () => resolve({ status: "delay" }),
+            450,
+          );
+        }),
+      ]);
+      window.clearTimeout(bridgeDelayId);
+      if (firstOutcome.status === "fulfilled") return firstOutcome.value;
+      if (firstOutcome.status === "rejected") throw firstOutcome.reason;
 
       const frontVoice = new Promise<void>((resolve) => {
         const responseId = crypto.randomUUID();
@@ -2157,8 +2360,7 @@ export default function Home() {
         }
       });
 
-      const result = task();
-      const [, settledResult] = await Promise.allSettled([frontVoice, result]);
+      const [, settledResult] = await Promise.all([frontVoice, taskOutcome]);
       if (settledResult.status === "rejected") throw settledResult.reason;
       return settledResult.value;
     }
@@ -2270,50 +2472,64 @@ export default function Home() {
       }
       if (pendingDesktopAction) pendingDesktopActionRef.current = null;
 
-      const routeResponse = await fetch("/api/jev-route", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
+      let route: RouteDecision;
+      if (connectionMode === "personal") {
+        const routePersonalTurn = window.voxLocalCodex?.routePersonalTurn;
+        if (!routePersonalTurn) throw new Error("Personal routing is available in Vox Desktop only.");
+        route = await routePersonalTurn({
+          text: clarificationText ? completeText : text,
           pendingText,
           pendingAgeMs: pending ? Date.now() - pending.startedAt : 0,
           timing,
           pendingTimings,
           allowWait,
-          recentMessages: messagesRef.current.slice(-6).map(({ role, text }) => ({
-            role,
-            text,
-          })),
+          recentMessages: messagesRef.current.slice(-6).map(({ role, text }) => ({ role, text })),
           replyLength: replyLengthRef.current,
           visionAvailable: cameraActiveRef.current,
           localCodexAvailable: window.voxLocalCodex?.available === true,
-          desktopActionsAvailable:
-            typeof window.voxLocalCodex?.openWorkspace === "function",
           desktopControlAvailable:
             typeof window.voxLocalCodex?.runDesktopControl === "function",
           desktopAppContext: desktopContextRef.current && Date.now() - desktopContextRef.current.at < 300_000 ? desktopContextRef.current.control.appName : undefined,
-        }),
-      });
-      const route = (await routeResponse.json()) as {
-        route?: JevRoute;
-        computerUseMode?: "fast" | "standard";
-        desktopApp?: string;
-        desktopAppConfidence?: number;
-        contextMode?: ContextMode;
-        turnState?: TurnState;
-        responseLength?: AdaptiveReplyLength;
-        responsePosture?: ResponsePosture;
-        memoryUse?: MemoryUse;
-        ritual?: ConversationRitual;
-        visionNeed?: VisionNeed;
-        visionBlocked?: string | null;
-      };
+        });
+        if (!route.responseLength) {
+          route.responseLength = mirroredAdaptiveReplyLength(completeText, replyLengthRef.current);
+        }
+        if (!route.responsePosture) route.responsePosture = fallbackResponsePosture(completeText);
+        if (!route.visionNeed) route.visionNeed = fallbackVisionNeed(completeText);
+        if (!route.route && isLocalCodexTask(completeText)) route.route = "local_codex";
+      } else {
+        const routeResponse = await fetch("/api/jev-route", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: clarificationText ? completeText : text,
+            pendingText,
+            pendingAgeMs: pending ? Date.now() - pending.startedAt : 0,
+            timing,
+            pendingTimings,
+            allowWait,
+            recentMessages: messagesRef.current.slice(-6).map(({ role, text }) => ({
+              role,
+              text,
+            })),
+            replyLength: replyLengthRef.current,
+            visionAvailable: cameraActiveRef.current,
+            localCodexAvailable: window.voxLocalCodex?.available === true,
+            desktopActionsAvailable:
+              typeof window.voxLocalCodex?.openWorkspace === "function",
+            desktopControlAvailable:
+              typeof window.voxLocalCodex?.runDesktopControl === "function",
+            desktopAppContext: desktopContextRef.current && Date.now() - desktopContextRef.current.at < 300_000 ? desktopContextRef.current.control.appName : undefined,
+          }),
+        });
+        route = (await routeResponse.json()) as RouteDecision;
+      }
       if (!isCurrentTurn()) return;
       let selectedRoute = route.route ?? "realtime";
       const desktopContext = desktopContextRef.current;
       const recentDesktopContext = desktopContext && Date.now() - desktopContext.at < 300_000 ? desktopContext : null;
       const inferredControl = inferredDesktopControl(completeText, route.desktopApp, route.desktopAppConfidence);
-      const contextualControl = inferredControl ?? classifyDesktopControlRequest(completeText, recentDesktopContext?.control);
+      const contextualControl = classifyDesktopControlRequest(completeText, recentDesktopContext?.control, installedApp) ?? inferredControl;
       if (selectedRoute !== "desktop_action" && window.voxLocalCodex?.available && contextualControl && isRoutineDesktopAction(completeText, contextualControl, Boolean(inferredControl))) selectedRoute = "desktop_control";
       const contextMode = route.contextMode ?? "continue";
       const turnState = allowWait ? (route.turnState ?? "complete") : "complete";
@@ -2347,6 +2563,13 @@ export default function Home() {
         activeRouteTurnRef.current = null;
         setConnectionState("listening");
         return;
+      }
+
+      if (
+        selectedRoute !== "desktop_action" &&
+        selectedRoute !== "desktop_control"
+      ) {
+        desktopContextRef.current = null;
       }
 
       const visualInstruction = await attachRequestedVision(
@@ -2387,6 +2610,7 @@ export default function Home() {
         const control = contextualControl;
         if (!control) {
           const blocked = containsBlockedDesktopAction(completeText);
+          if (!blocked) desktopClarificationRef.current = { text: completeText, at: Date.now() };
           sendTurnResponse(
             "desktop_action_unavailable",
             turnLanguage === "taiwan_mandarin"
@@ -2844,6 +3068,7 @@ export default function Home() {
           }
         }
         lastUserActivityRef.current = Date.now();
+        mandarinTranscriptionRef.current = shouldLockMandarin(transcript, mandarinTranscriptionRef.current);
         addMessage("user", transcript);
         refreshRealtimeContext();
         const earlierFragment = pendingUtteranceRef.current;
@@ -2927,6 +3152,10 @@ export default function Home() {
           break;
         }
         activeResponseIdRef.current = event.response?.id ?? null;
+        if (event.response?.id) {
+          responseDisplayKeysRef.current.set(event.response.id,
+            `${event.response.metadata?.vox_turn_id}:${event.response.metadata?.vox_kind}`);
+        }
         assistantDraftRef.current = "";
         setConnectionState("thinking");
         break;
@@ -2946,12 +3175,21 @@ export default function Home() {
         break;
       case "response.output_audio_transcript.done": {
         const transcript = event.transcript ?? assistantDraftRef.current;
-        addMessage("assistant", transcript);
+        const responseId = event.response_id ?? activeResponseIdRef.current;
+        const displayKey = responseId ? responseDisplayKeysRef.current.get(responseId) : undefined;
+        const displayAnswer = displayKey ? displayAnswersRef.current.get(displayKey) : undefined;
+        addMessage("assistant", displayAnswer ?? transcript);
+        if (displayKey) displayAnswersRef.current.delete(displayKey);
         lastAssistantTranscriptRef.current = transcript;
         assistantDraftRef.current = "";
         break;
       }
       case "response.done": {
+        if (event.response?.id) {
+          const key = responseDisplayKeysRef.current.get(event.response.id);
+          if (key) displayAnswersRef.current.delete(key);
+          responseDisplayKeysRef.current.delete(event.response.id);
+        }
         lastAssistantAtRef.current = Date.now();
         if (event.response?.id === activeResponseIdRef.current) {
           activeResponseIdRef.current = null;
@@ -3009,15 +3247,37 @@ export default function Home() {
     const ownerId = crypto.randomUUID();
     sessionOwnerRef.current = ownerId;
     sessionCarryoverRef.current = messagesRef.current.length > 0;
+    mandarinTranscriptionRef.current = mandarinFromHistory(messagesRef.current);
 
     try {
-      const tokenResponse = await fetch("/api/realtime-token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ voice, replyLength: replyLengthRef.current }),
-      });
-      const tokenPayload = (await tokenResponse.json()) as RealtimeTokenPayload;
-      if (!tokenResponse.ok || !tokenPayload.value) {
+      let tokenPayload: RealtimeTokenPayload;
+      if (connectionMode === "personal") {
+        const createToken = window.voxLocalCodex?.createPersonalRealtimeToken;
+        if (!createToken) {
+          throw new Error("Personal mode is available in Vox Desktop only.");
+        }
+        tokenPayload = await createToken({
+          voice,
+          instructions: [
+            buildVoiceInstructions([]),
+            replyLengthInstruction(replyLengthRef.current),
+          ].join("\n\n"),
+          mandarinTranscription: mandarinTranscriptionRef.current,
+        });
+      } else {
+        const tokenResponse = await fetch("/api/realtime-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ voice, replyLength: replyLengthRef.current, mandarinTranscription: mandarinTranscriptionRef.current }),
+        });
+        tokenPayload = (await tokenResponse.json()) as RealtimeTokenPayload;
+        if (!tokenResponse.ok) {
+          throw new Error(
+            tokenPayload.error ?? "The secure session could not be created.",
+          );
+        }
+      }
+      if (!tokenPayload.value) {
         throw new Error(
           tokenPayload.error ?? "The secure session could not be created.",
         );
@@ -3111,6 +3371,8 @@ export default function Home() {
   }
 
   function disconnect(resetState = true) {
+    displayAnswersRef.current.clear();
+    responseDisplayKeysRef.current.clear();
     routeTurnRef.current += 1;
     activeRouteTurnRef.current = null;
     activeResponseIdRef.current = null;
@@ -3119,6 +3381,7 @@ export default function Home() {
     conversationItemsRef.current = [];
     processedUtterancesRef.current.clear();
     desktopContextRef.current = null;
+    desktopClarificationRef.current = null;
     pendingUtteranceRef.current = null;
     pendingDesktopActionRef.current = null;
     userSpeakingRef.current = false;
@@ -3179,6 +3442,7 @@ export default function Home() {
     lastUserActivityRef.current = Date.now();
     setThinkingCue("");
     addMessage("user", text);
+    mandarinTranscriptionRef.current = shouldLockMandarin(text, mandarinTranscriptionRef.current);
     refreshRealtimeContext();
     channelRef.current.send(
       JSON.stringify({
@@ -3193,6 +3457,69 @@ export default function Home() {
     void routeAndRespond(text, undefined, previousUserItemId, false);
     setInput("");
     setConnectionState("thinking");
+  }
+
+  async function chooseConnectionMode(nextMode: ConnectionMode) {
+    setAuthError("");
+    setAuthState("checking");
+    try {
+      const bridge = window.voxLocalCodex;
+      if (nextMode === "personal") {
+        if (!bridge?.setConnectionMode || !desktopPersonalAvailable) {
+          throw new Error("Personal mode is available in Vox Desktop, where your key can stay encrypted on this computer.");
+        }
+        if (!secureStorageAvailable) {
+          throw new Error("Secure system storage is unavailable on this computer.");
+        }
+        const status = await bridge.setConnectionMode("personal");
+        setConnectionMode("personal");
+        setPersonalKeyConfigured(status.personalKeyConfigured);
+        setAuthState(status.personalKeyConfigured ? "authenticated" : "locked");
+        return;
+      }
+
+      if (bridge?.setConnectionMode) await bridge.setConnectionMode("cloud");
+      setConnectionMode("cloud");
+      const response = await fetch("/api/auth", { cache: "no-store" });
+      const payload = (await response.json()) as { authenticated?: boolean };
+      setAuthState(payload.authenticated ? "authenticated" : "locked");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "That connection could not be selected.");
+      setAuthState("selecting");
+    }
+  }
+
+  async function configurePersonalMode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const openAIKey = personalOpenAIKey.trim();
+    const typeSafeKey = personalTypeSafeKey.trim();
+    if (!openAIKey || !typeSafeKey || authSubmitting) return;
+    const saveKeys = window.voxLocalCodex?.savePersonalKeys;
+    if (!saveKeys) {
+      setAuthError("Personal mode is available in Vox Desktop only.");
+      return;
+    }
+
+    setAuthSubmitting(true);
+    setAuthError("");
+    try {
+      await saveKeys({ openAIKey, typeSafeKey });
+      setPersonalOpenAIKey("");
+      setPersonalTypeSafeKey("");
+      setConnectionMode("personal");
+      setPersonalKeyConfigured(true);
+      setAuthState("authenticated");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "The API key could not be saved securely.");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  function openConnectionChooser() {
+    disconnect();
+    setAuthError("");
+    setAuthState("selecting");
   }
 
   async function unlock(event: FormEvent<HTMLFormElement>) {
@@ -3227,7 +3554,7 @@ export default function Home() {
         <Toaster position="top-center" richColors />
         <div className="ambient ambient-one" />
         <div className="ambient ambient-two" />
-        <section className="relative z-10 w-full max-w-md rounded-[1.65rem] border border-white/10 bg-white/[0.045] p-6 shadow-2xl backdrop-blur-xl sm:rounded-[2rem] sm:p-9">
+        <section className="relative z-10 w-full max-w-2xl rounded-[1.65rem] border border-white/10 bg-white/[0.045] p-6 shadow-2xl backdrop-blur-xl sm:rounded-[2rem] sm:p-9">
           <div className="brand-mark" aria-hidden="true">
             <AudioLines size={19} strokeWidth={2.2} />
           </div>
@@ -3235,15 +3562,75 @@ export default function Home() {
             Private companion
           </p>
           <h1 className="font-display mt-3 text-4xl font-medium tracking-[-0.055em]">
-            {authState === "checking" ? "Opening Vox…" : "Welcome back."}
+            {authState === "checking"
+              ? "Opening Vox…"
+              : authState === "selecting"
+                ? "Choose your connection."
+                : connectionMode === "personal"
+                  ? "Use your own OpenAI account."
+                  : "Welcome back."}
           </h1>
           <p className="mt-4 text-sm leading-6 text-white/48">
             {authState === "checking"
               ? "Checking this device before the private voice room opens."
-              : "Enter your access code to open voice, memory, and files."}
+              : authState === "selecting"
+                ? "Use Vox Cloud for synced features, or keep the AI connection on this computer with Personal mode."
+                : connectionMode === "personal"
+                  ? "Your API key is encrypted by Vox Desktop and never sent to the Vox server."
+                  : "Enter your access code to open voice, memory, and files."}
           </p>
 
-          {authState === "locked" && (
+          {authState === "selecting" && (
+            <div className="mt-7 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => void chooseConnectionMode("cloud")}
+                className="rounded-2xl border border-white/10 bg-black/20 p-5 text-left transition hover:border-[#c8bcff]/40 hover:bg-white/[0.06]"
+              >
+                <Globe2 className="size-5 text-[#c8bcff]" />
+                <span className="mt-4 block font-display text-xl">Vox Cloud</span>
+                <span className="mt-2 block text-xs leading-5 text-white/43">
+                  Activation code required today. Includes encrypted sync, memory,
+                  reminders, files, and managed AI routing. A subscription may be
+                  introduced later with clear notice.
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={!desktopPersonalAvailable || !secureStorageAvailable}
+                onClick={() => void chooseConnectionMode("personal")}
+                className="rounded-2xl border border-white/10 bg-black/20 p-5 text-left transition enabled:hover:border-[#f4ff74]/40 enabled:hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <Code2 className="size-5 text-[#f4ff74]" />
+                <span className="mt-4 block font-display text-xl">Personal</span>
+                <span className="mt-2 block text-xs leading-5 text-white/43">
+                  No Vox monthly fee. Use your own OpenAI API billing and your
+                  separately signed-in local Codex. Conversation and preferences
+                  stay on this device; cloud memory and sync are off.
+                </span>
+                {!desktopPersonalAvailable && (
+                  <span className="mt-3 block text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-[#f4ff74]/65">
+                    Open this in Vox Desktop
+                  </span>
+                )}
+              </button>
+              {personalKeyConfigured && desktopPersonalAvailable && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConnectionMode("personal");
+                    setAuthState("locked");
+                  }}
+                  className="text-left text-xs text-white/38 underline decoration-white/20 underline-offset-4 hover:text-white/70 sm:col-span-2"
+                >
+                  Replace the saved Personal-mode API key
+                </button>
+              )}
+              {authError && <p className="text-sm text-[#ff9d96] sm:col-span-2">{authError}</p>}
+            </div>
+          )}
+
+          {authState === "locked" && connectionMode === "cloud" && (
             <form onSubmit={unlock} className="mt-7 space-y-4">
               <label htmlFor="email" className="sr-only">
                 Email address
@@ -3285,6 +3672,70 @@ export default function Home() {
                 <ShieldCheck />
                 {authSubmitting ? "Checking…" : "Open Vox"}
               </Button>
+              {desktopPersonalAvailable && (
+                <button
+                  type="button"
+                  onClick={() => setAuthState("selecting")}
+                  className="w-full text-xs text-white/38 underline decoration-white/20 underline-offset-4 hover:text-white/70"
+                >
+                  Choose a different connection
+                </button>
+              )}
+            </form>
+          )}
+
+          {authState === "locked" && connectionMode === "personal" && (
+            <form onSubmit={configurePersonalMode} className="mt-7 space-y-4">
+              <label htmlFor="personal-openai-key" className="sr-only">
+                OpenAI API key
+              </label>
+              <input
+                id="personal-openai-key"
+                type="password"
+                value={personalOpenAIKey}
+                onChange={(event) => setPersonalOpenAIKey(event.target.value)}
+                placeholder="OpenAI API key"
+                autoComplete="off"
+                autoFocus
+                required
+                className="h-13 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none transition placeholder:text-white/28 focus:border-[#f4ff74]/50 focus:ring-2 focus:ring-[#f4ff74]/15"
+              />
+              <label htmlFor="personal-typesafe-key" className="sr-only">
+                TypeSafe API key
+              </label>
+              <input
+                id="personal-typesafe-key"
+                type="password"
+                value={personalTypeSafeKey}
+                onChange={(event) => setPersonalTypeSafeKey(event.target.value)}
+                placeholder="TypeSafe API key"
+                autoComplete="off"
+                required
+                className="h-13 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none transition placeholder:text-white/28 focus:border-[#f4ff74]/50 focus:ring-2 focus:ring-[#f4ff74]/15"
+              />
+              <div className="rounded-2xl border border-[#f4ff74]/12 bg-[#f4ff74]/[0.045] p-4 text-xs leading-5 text-white/45">
+                Vox charges no subscription in Personal mode. OpenAI bills API
+                usage to your account, and TypeSafe bills routing to your TypeSafe
+                account. Local Codex keeps its own existing sign-in; Vox does not
+                read or copy that credential.
+              </div>
+              {authError && <p className="text-sm text-[#ff9d96]">{authError}</p>}
+              <Button
+                type="submit"
+                size="lg"
+                disabled={!personalOpenAIKey.trim() || !personalTypeSafeKey.trim() || authSubmitting}
+                className="h-12 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+              >
+                <ShieldCheck />
+                {authSubmitting ? "Saving securely…" : "Save key on this computer"}
+              </Button>
+              <button
+                type="button"
+                onClick={() => setAuthState("selecting")}
+                className="w-full text-xs text-white/38 underline decoration-white/20 underline-offset-4 hover:text-white/70"
+              >
+                Choose a different connection
+              </button>
             </form>
           )}
         </section>
@@ -3321,7 +3772,7 @@ export default function Home() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Sheet
+          {connectionMode === "cloud" && <Sheet
             open={invitesOpen}
             onOpenChange={(open) => {
               setInvitesOpen(open);
@@ -3453,7 +3904,23 @@ export default function Home() {
                 )}
               </div>
             </SheetContent>
-          </Sheet>
+          </Sheet>}
+
+          {desktopPersonalAvailable && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={openConnectionChooser}
+              className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
+              aria-label="Change Vox connection"
+            >
+              {connectionMode === "personal" ? <Code2 /> : <Globe2 />}
+              <span className="hidden sm:inline">
+                {connectionMode === "personal" ? "Personal" : "Cloud"}
+              </span>
+            </Button>
+          )}
 
           <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/58">
             <span className={connected ? "live-dot" : "idle-dot"} />
@@ -3834,7 +4301,9 @@ export default function Home() {
                 </Select>
               </div>
               <span className="control-save text-[11px] text-white/28 sm:basis-full sm:text-right">
-                Saved to your Vox account
+                {connectionMode === "personal"
+                  ? "Saved on this computer"
+                  : "Saved to your Vox account"}
               </span>
             </div>
           </div>
@@ -3888,6 +4357,7 @@ export default function Home() {
                   Clear
                 </button>
               )}
+              {connectionMode === "cloud" && <>
               <Sheet open={remindersOpen} onOpenChange={setRemindersOpen}>
                 <SheetTrigger asChild>
                   <Button
@@ -4314,10 +4784,11 @@ export default function Home() {
                   </div>
                 </SheetContent>
               </Sheet>
+              </>}
             </div>
           </div>
 
-          <div ref={transcriptRef} className="conversation-stream transcript-scroll mt-5 flex-1 space-y-5 overflow-y-auto pr-1 sm:mt-8 sm:space-y-6 sm:pr-2">
+          <div ref={transcriptRef} role="region" aria-label="Conversation history" tabIndex={0} className="conversation-stream transcript-scroll mt-5 flex-1 space-y-5 overflow-y-auto pr-1 sm:mt-8 sm:space-y-6 sm:pr-2">
             {thinkingCue && (
               <article
                 className="message message-assistant border border-[#c8bcff]/12 bg-[#c8bcff]/[0.035]"

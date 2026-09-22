@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  safeStorage,
   session,
   shell,
   WebContentsView,
@@ -17,15 +18,27 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { Codex } from "@openai/codex-sdk";
 import { runComputerUseSession } from "./computer-use-session.mjs";
+import { installedApps, matchInstalledApp } from "./installed-apps.mjs";
+import {
+  createPersonalRealtimeSecret,
+  validOpenAIKey,
+} from "./personal-api.mjs";
+import {
+  createPersonalPresence,
+  createPersonalRoute,
+  validTypeSafeKey,
+} from "./personal-route.mjs";
+import { startLocalVoxServer } from "./local-web-server.mjs";
 import {
   approvedDesktopApp,
+  currentDesktopActionText,
+  hasRunningDesktopApp,
   isBlockedDesktopControlPrompt,
+  isClosingDesktopApp,
 } from "./desktop-control-policy.mjs";
 
 const productionUrl = "https://vox-assistant.ericcheng306.workers.dev/";
 const developmentUrl = process.env.VOX_DESKTOP_DEV_URL;
-const appUrl = app.isPackaged || !developmentUrl ? productionUrl : developmentUrl;
-const voxOrigin = new URL(appUrl).origin;
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const shellFile = path.join(currentDirectory, "shell.html");
 const shellUrl = pathToFileURL(shellFile).href;
@@ -39,6 +52,8 @@ const computerUseUnavailablePattern =
 
 let mainWindow = null;
 let voxView = null;
+let localVoxServer = null;
+let activeVoxOrigin = "";
 let panelOpen = false;
 let activeTask = null;
 let taskLaunchPending = false;
@@ -59,10 +74,15 @@ function requireTrustedSender(event) {
 function isTrustedVoxSender(event) {
   if (!voxView || event.sender !== voxView.webContents) return false;
   const frame = event.senderFrame;
+  const trustedOrigins = [
+    new URL(productionUrl).origin,
+    localVoxServer?.origin,
+    developmentUrl ? new URL(developmentUrl).origin : null,
+  ].filter(Boolean);
   return Boolean(
     frame &&
       frame === frame.top &&
-      normalizeOrigin(frame.url) === voxOrigin,
+      trustedOrigins.includes(normalizeOrigin(frame.url)),
   );
 }
 
@@ -93,6 +113,58 @@ async function saveSettings(settings) {
     encoding: "utf8",
     mode: 0o600,
   });
+}
+
+function connectionMode(value) {
+  return value === "cloud" || value === "personal" ? value : null;
+}
+
+function secureStorageAvailable() {
+  if (!safeStorage.isEncryptionAvailable()) return false;
+  return process.platform !== "linux" || safeStorage.getSelectedStorageBackend() !== "basic_text";
+}
+
+function localWebRoot() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "vox-web")
+    : path.resolve(currentDirectory, "..", "..", "..", "dist");
+}
+
+async function loadConnectionSurface(mode) {
+  if (!voxView || voxView.webContents.isDestroyed()) return;
+  const target = mode === "cloud"
+    ? (app.isPackaged || !developmentUrl ? productionUrl : developmentUrl)
+    : localVoxServer.url;
+  activeVoxOrigin = new URL(target).origin;
+  await voxView.webContents.loadURL(target);
+}
+
+function encryptedSettingConfigured(settings, name) {
+  return typeof settings[name] === "string" && settings[name].length > 0;
+}
+
+function personalKeysStatus(settings) {
+  const openAIKeyConfigured = encryptedSettingConfigured(settings, "personalOpenAIKey") ||
+    encryptedSettingConfigured(settings, "personalApiKey");
+  const typeSafeKeyConfigured = encryptedSettingConfigured(settings, "personalTypeSafeKey");
+  return {
+    openAIKeyConfigured,
+    typeSafeKeyConfigured,
+    personalKeyConfigured: openAIKeyConfigured && typeSafeKeyConfigured,
+  };
+}
+
+function readEncryptedSetting(settings, name, label, legacyName) {
+  const encrypted = settings[name] ?? (legacyName ? settings[legacyName] : undefined);
+  if (typeof encrypted !== "string" || !encrypted) throw new Error(`Add your ${label} first.`);
+  if (!secureStorageAvailable()) {
+    throw new Error("Secure system storage is unavailable on this computer.");
+  }
+  try {
+    return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
+  } catch {
+    throw new Error(`The saved ${label} could not be unlocked. Replace it and try again.`);
+  }
 }
 
 async function validateWorkspace(workspace) {
@@ -147,9 +219,19 @@ async function launchApprovedDesktopApp(appPolicy) {
     throw new Error("Approved app launching is currently available on macOS only.");
   }
   try {
-    await execFileAsync("/usr/bin/open", ["-b", appPolicy.bundleId]);
+    await execFileAsync("/usr/bin/open", appPolicy.path ? ["-a", appPolicy.path] : ["-b", appPolicy.bundleId]);
   } catch {
     throw new Error(`${appPolicy.name} is not installed or could not be opened.`);
+  }
+}
+
+async function isDesktopAppRunning(bundleId) {
+  if (process.platform !== "darwin") return false;
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/lsappinfo", ["find", `bundleID=${bundleId}`]);
+    return hasRunningDesktopApp(stdout);
+  } catch {
+    return false;
   }
 }
 
@@ -257,6 +339,9 @@ async function runCodexTask(taskId, request) {
           "This is a tightly restricted desktop task. You may focus the named app, inspect its visible interface, click, select, scroll, type, create or switch browser tabs, navigate to a public website, and perform a public web search when the user explicitly requested it. Browser navigation through the approved app is allowed even though Codex's own HTTP and web-search tools are disabled.",
           "Do not delete or modify local files or system settings. Do not send, post, share, upload, purchase, log in, enter credentials, submit account-affecting forms, install, uninstall, download, use Terminal, or run shell commands. Stop and explain if any of those actions would be required.",
           "Do not use any app other than the named target. If Computer Use is unavailable or permission is denied, say so plainly and do not claim the task succeeded.",
+          request.computerControlAction === "close_app"
+            ? "This is a one-shot close-app task. Acquire the already-running target at most once and request a normal quit once. Never reacquire, reopen, refocus, or inspect the app after the quit action; Vox checks the running state separately and will end this session as soon as the app closes. Do not force quit or discard unsaved work. If a save/discard prompt appears, leave it untouched and report that user attention is needed."
+            : "Closing a requested window is allowed. Do not force quit or discard unsaved work. Stop at any save/discard prompt and ask the user.",
           "Your final response will be spoken aloud by Vox. Use the same language as the user, keep it concise, and state only what actually happened.",
           `Confirmed user request:\n${request.prompt}`,
         ].join("\n\n")
@@ -276,6 +361,14 @@ async function runCodexTask(taskId, request) {
         bundleId: request.targetBundleId,
         mode: request.computerUseMode,
         signal: abortController.signal,
+        completionCheck: request.computerControlAction === "close_app"
+          ? async () => !(await isDesktopAppRunning(request.targetBundleId))
+          : undefined,
+        completionAnswer: request.computerControlAction === "close_app"
+          ? (usesTaiwanMandarin(request.prompt)
+              ? `已關閉「${request.targetAppName}」。`
+              : `${request.targetAppName} has been closed.`)
+          : "",
         onItem: (rawItem) => {
           const item = summarizeThreadItem(rawItem);
           if (item) sendCodexEvent({ taskId, type: "progress", item });
@@ -408,6 +501,95 @@ function layoutVoxView() {
 }
 
 function registerIpcHandlers() {
+  ipcMain.handle("vox-connection:status", async (event) => {
+    requireTrustedVoxSender(event);
+    const settings = await readSettings();
+    return {
+      mode: connectionMode(settings.connectionMode),
+      ...personalKeysStatus(settings),
+      secureStorageAvailable: secureStorageAvailable(),
+    };
+  });
+
+  ipcMain.handle("vox-connection:set-mode", async (event, rawMode) => {
+    requireTrustedVoxSender(event);
+    const mode = connectionMode(rawMode);
+    if (!mode) throw new Error("Choose Vox Cloud or Personal mode.");
+    const settings = await readSettings();
+    await saveSettings({ ...settings, connectionMode: mode });
+    setTimeout(() => void loadConnectionSurface(mode), 80);
+    return { mode, ...personalKeysStatus(settings) };
+  });
+
+  ipcMain.handle("vox-connection:save-personal-keys", async (event, rawKeys) => {
+    requireTrustedVoxSender(event);
+    const openAIKey = typeof rawKeys?.openAIKey === "string" ? rawKeys.openAIKey.trim() : "";
+    const typeSafeKey = typeof rawKeys?.typeSafeKey === "string" ? rawKeys.typeSafeKey.trim() : "";
+    if (!validOpenAIKey(openAIKey)) throw new Error("Enter a valid OpenAI API key.");
+    if (!validTypeSafeKey(typeSafeKey)) throw new Error("Enter a valid TypeSafe API key.");
+    if (!secureStorageAvailable()) {
+      throw new Error("Secure system storage is unavailable on this computer.");
+    }
+    const settings = await readSettings();
+    const personalOpenAIKey = safeStorage.encryptString(openAIKey).toString("base64");
+    const personalTypeSafeKey = safeStorage.encryptString(typeSafeKey).toString("base64");
+    const current = { ...settings };
+    delete current.personalApiKey;
+    await saveSettings({
+      ...current,
+      connectionMode: "personal",
+      personalOpenAIKey,
+      personalTypeSafeKey,
+    });
+    return {
+      mode: "personal",
+      personalKeyConfigured: true,
+      openAIKeyConfigured: true,
+      typeSafeKeyConfigured: true,
+    };
+  });
+
+  ipcMain.handle("vox-connection:remove-personal-keys", async (event) => {
+    requireTrustedVoxSender(event);
+    const settings = await readSettings();
+    const remaining = { ...settings };
+    delete remaining.personalApiKey;
+    delete remaining.personalOpenAIKey;
+    delete remaining.personalTypeSafeKey;
+    await saveSettings(remaining);
+    return { removed: true };
+  });
+
+  ipcMain.handle("vox-connection:realtime-token", async (event, request) => {
+    requireTrustedVoxSender(event);
+    const settings = await readSettings();
+    if (connectionMode(settings.connectionMode) !== "personal") {
+      throw new Error("Personal mode is not selected.");
+    }
+    const apiKey = readEncryptedSetting(settings, "personalOpenAIKey", "OpenAI API key", "personalApiKey");
+    return createPersonalRealtimeSecret(apiKey, request);
+  });
+
+  ipcMain.handle("vox-connection:personal-route", async (event, request) => {
+    requireTrustedVoxSender(event);
+    const settings = await readSettings();
+    if (connectionMode(settings.connectionMode) !== "personal") {
+      throw new Error("Personal mode is not selected.");
+    }
+    const apiKey = readEncryptedSetting(settings, "personalTypeSafeKey", "TypeSafe API key");
+    return createPersonalRoute(apiKey, request);
+  });
+
+  ipcMain.handle("vox-connection:personal-presence", async (event, request) => {
+    requireTrustedVoxSender(event);
+    const settings = await readSettings();
+    if (connectionMode(settings.connectionMode) !== "personal") {
+      throw new Error("Personal mode is not selected.");
+    }
+    const apiKey = readEncryptedSetting(settings, "personalTypeSafeKey", "TypeSafe API key");
+    return createPersonalPresence(apiKey, request);
+  });
+
   ipcMain.handle("vox-codex:set-panel-open", (event, open) => {
     requireTrustedSender(event);
     panelOpen = Boolean(open);
@@ -531,6 +713,11 @@ function registerIpcHandlers() {
     return { opened: true, name: path.basename(workspace) };
   });
 
+  ipcMain.handle("vox-desktop:resolve-app", async (event, text) => {
+    requireTrustedVoxSender(event);
+    return matchInstalledApp(text, await installedApps());
+  });
+
   ipcMain.handle("vox-desktop:control", async (event, rawRequest) => {
     requireTrustedVoxSender(event);
     if (activeTask || taskLaunchPending) {
@@ -546,18 +733,21 @@ function registerIpcHandlers() {
     if (!prompt || prompt.length > maximumPromptLength) {
       throw new Error("Vox did not receive a valid desktop action.");
     }
-    const appPolicy = approvedDesktopApp(rawRequest?.appId);
-    if (!appPolicy) throw new Error("That app is not on Vox's approved list.");
-    if (isBlockedDesktopControlPrompt(prompt)) {
+    const appPolicy = approvedDesktopApp(rawRequest?.appId) ??
+      (await installedApps()).find(candidate => candidate.id === rawRequest?.appId);
+    if (!appPolicy) throw new Error("That app could not be verified as installed on this Mac.");
+    const actionText = currentDesktopActionText(prompt);
+    if (isBlockedDesktopControlPrompt(actionText)) {
       return {
         canceled: false,
-        answer: usesTaiwanMandarin(prompt)
+        answer: usesTaiwanMandarin(actionText)
           ? "這個操作涉及受限制的動作，所以我沒有執行。"
           : "That request includes a restricted action, so I did not perform it.",
       };
     }
 
-    const intent = rawRequest?.intent === "interact" ? "interact" : "launch";
+    const closing = isClosingDesktopApp(actionText);
+    const intent = closing || rawRequest?.intent === "interact" ? "interact" : "launch";
     taskLaunchPending = true;
     lastDesktopControlAt = now;
     try {
@@ -571,7 +761,15 @@ function registerIpcHandlers() {
         };
       }
 
-      await launchApprovedDesktopApp(appPolicy);
+      if (!closing) await launchApprovedDesktopApp(appPolicy);
+      if (closing && !(await isDesktopAppRunning(appPolicy.bundleId))) {
+        return {
+          canceled: false,
+          answer: usesTaiwanMandarin(prompt)
+            ? `「${appPolicy.name}」已經是關閉狀態。`
+            : `${appPolicy.name} is already closed.`,
+        };
+      }
       const workspace = await computerControlWorkingDirectory();
       const taskId = randomUUID();
       openCodexPanel();
@@ -583,7 +781,8 @@ function registerIpcHandlers() {
         computerControl: true,
         targetAppName: appPolicy.name,
         targetBundleId: appPolicy.bundleId,
-        computerUseMode: rawRequest?.mode === "fast" ? "fast" : "standard",
+        computerUseMode: closing || rawRequest?.mode === "fast" ? "fast" : "standard",
+        computerControlAction: closing ? "close_app" : "interact",
       });
 
       if (result.status === "completed") {
@@ -624,14 +823,14 @@ function configureSessionSecurity() {
   session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
     return (
       webContents === voxView?.webContents &&
-      normalizeOrigin(requestingOrigin) === voxOrigin &&
+      normalizeOrigin(requestingOrigin) === activeVoxOrigin &&
       (permission === "media" || permission === "notifications")
     );
   });
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     callback(
       webContents === voxView?.webContents &&
-        normalizeOrigin(details.requestingUrl) === voxOrigin &&
+        normalizeOrigin(details.requestingUrl) === activeVoxOrigin &&
         (permission === "media" || permission === "notifications"),
     );
   });
@@ -643,7 +842,7 @@ function protectVoxNavigation() {
     return { action: "deny" };
   });
   voxView.webContents.on("will-navigate", (event, url) => {
-    if (normalizeOrigin(url) === voxOrigin) return;
+    if (normalizeOrigin(url) === activeVoxOrigin) return;
     event.preventDefault();
     if (url.startsWith("https://") || url.startsWith("http://")) void shell.openExternal(url);
   });
@@ -697,12 +896,19 @@ async function createWindow() {
   });
 
   configureSessionSecurity();
-  await Promise.all([mainWindow.loadFile(shellFile), voxView.webContents.loadURL(appUrl)]);
+  const settings = await readSettings();
+  const mode = connectionMode(settings.connectionMode);
+  const initialTarget = mode === "cloud"
+    ? (app.isPackaged || !developmentUrl ? productionUrl : developmentUrl)
+    : localVoxServer.url;
+  activeVoxOrigin = new URL(initialTarget).origin;
+  await Promise.all([mainWindow.loadFile(shellFile), voxView.webContents.loadURL(initialTarget)]);
   layoutVoxView();
   mainWindow.show();
 }
 
 app.whenReady().then(async () => {
+  localVoxServer = await startLocalVoxServer(localWebRoot());
   registerIpcHandlers();
   await createWindow();
   app.on("activate", () => {
@@ -712,4 +918,8 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  void localVoxServer?.close();
 });

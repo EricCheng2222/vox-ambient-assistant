@@ -1,4 +1,20 @@
+import { isStandaloneVoiceConfirmation } from "./desktop-action-route.ts";
+
 export type ApprovedDesktopAppId =
+  | `installed:${string}`
+  | "music"
+  | "podcasts"
+  | "tv"
+  | "photos"
+  | "calendar"
+  | "reminders"
+  | "maps"
+  | "weather"
+  | "clock"
+  | "contacts"
+  | "quicktime"
+  | "mail"
+  | "messages"
   | "finder"
   | "safari"
   | "chrome"
@@ -21,6 +37,19 @@ const approvedApps: Array<{
   name: string;
   pattern: RegExp;
 }> = [
+  { id: "music", name: "Apple Music", pattern: /\b(?:apple )?music\b|音樂/iu },
+  { id: "podcasts", name: "Podcasts", pattern: /\bpodcasts?\b/iu },
+  { id: "tv", name: "Apple TV", pattern: /\bapple tv\b/iu },
+  { id: "photos", name: "Photos", pattern: /\bphotos\b|照片/iu },
+  { id: "calendar", name: "Calendar", pattern: /\bcalendar\b|行事曆/iu },
+  { id: "reminders", name: "Reminders", pattern: /\breminders\b|提醒事項/iu },
+  { id: "maps", name: "Maps", pattern: /\b(?:apple )?maps\b|地圖/iu },
+  { id: "weather", name: "Weather", pattern: /\bweather app\b|天氣程式/iu },
+  { id: "clock", name: "Clock", pattern: /\bclock\b|時鐘/iu },
+  { id: "contacts", name: "Contacts", pattern: /\bcontacts\b|聯絡人/iu },
+  { id: "quicktime", name: "QuickTime Player", pattern: /\bquicktime(?: player)?\b/iu },
+  { id: "mail", name: "Mail", pattern: /\b(?:apple )?mail\b|郵件/iu },
+  { id: "messages", name: "Messages", pattern: /\bmessages\b|訊息程式/iu },
   { id: "finder", name: "Finder", pattern: /\bfinder\b|(?:訪達|Finder)/iu },
   { id: "safari", name: "Safari", pattern: /\bsafari\b/iu },
   {
@@ -48,7 +77,10 @@ const approvedApps: Array<{
 ];
 
 const launchAction =
-  /\b(?:open|launch|start|show|focus|switch to|bring up)\b|(?:打開|開啟|啟動|顯示|切換到|叫出)/iu;
+  /\b(?:open|launch|start|show|focus|switch to|bring up)\b|(?:打開|打开|開啟|开启|啟動|启动|顯示|显示|切換到|切换到|叫出)/iu;
+
+const closeAction = /\b(?:close|quit|exit)\b|關閉|关闭|關掉|关掉|退出/iu;
+const implicitDesktopTarget = /\b(?:youtube|google|web ?site|web ?page|page|video|tab|window|folder|file|pdf)\b|(?:這個|这个|那個|那个|這裡|这里|那裡|那里|第[一二三四五六七八九十\d]+個|第[一二三四五六七八九十\d]+个|下一個|下一个|上一個|上一个)/iu;
 
 const interactionAction =
   /\b(?:click|double[- ]?click|tap|press|scroll|select|choose|navigate|type|enter|search|look at|read|control|use|new tab|open (?:a )?tab|create (?:a )?tab|switch tabs?|close (?:the )?tab)\b|(?:點擊|按下|按一下|雙擊|捲動|滾動|選擇|輸入|搜尋|瀏覽|操作|使用|幫我看|讀取|新增分頁|開新分頁|切換分頁|關閉分頁)/iu;
@@ -69,33 +101,50 @@ export function detectApprovedDesktopApp(text: string) {
   return app ? { id: app.id, name: app.name } : null;
 }
 
+export function hasDesktopControlEvidence(text: string) {
+  const value = text.trim();
+  return Boolean(
+    value &&
+    !isStandaloneVoiceConfirmation(value) &&
+    (
+      launchAction.test(value) ||
+      interactionAction.test(value) ||
+      mediaAction.test(value) ||
+      closeAction.test(value) ||
+      detectApprovedDesktopApp(value) ||
+      implicitDesktopTarget.test(value)
+    )
+  );
+}
+
 export function classifyDesktopControlRequest(
   text: string,
   previous?: DesktopControlRequest | null,
+  installedApp?: { id: ApprovedDesktopAppId; name: string } | null,
 ): DesktopControlRequest | null {
   const value = text.trim();
   if (!value || containsBlockedDesktopAction(value)) return null;
-  const app = detectApprovedDesktopApp(value) ?? (previous ? { id: previous.appId, name: previous.appName } : null);
+  const app = installedApp ?? detectApprovedDesktopApp(value) ?? (previous ? { id: previous.appId, name: previous.appName } : null);
   if (!app) return null;
 
-  const wantsInteraction = interactionAction.test(value) || mediaAction.test(value);
+  const wantsInteraction = interactionAction.test(value) || mediaAction.test(value) || closeAction.test(value);
   const wantsLaunch = launchAction.test(value);
   if (!wantsInteraction && !wantsLaunch) return null;
 
   return {
     appId: app.id,
     appName: app.name,
-    intent: wantsInteraction || (!detectApprovedDesktopApp(value) && previous) ? "interact" : "launch",
+    intent: wantsInteraction || (!installedApp && !detectApprovedDesktopApp(value) && previous) ? "interact" : "launch",
   };
 }
 
 // Routine interactions in any allowlisted app skip Vox's extra confirmation.
 // Native platform permissions and the desktop policy still apply.
 export function isRoutineDesktopAction(text: string, control: DesktopControlRequest, inferred = false) {
-  return approvedApps.some((app) => app.id === control.appId) &&
+  return (approvedApps.some((app) => app.id === control.appId) || /^installed:[\w.-]+$/.test(control.appId)) &&
     !containsBlockedDesktopAction(text) &&
     !/\b(?:submit|confirm|accept|agree|allow|enable|disable|subscribe|unsubscribe)\b|提交|確認|同意|允許|啟用|停用|訂閱/iu.test(text) &&
-    (inferred || launchAction.test(text) || interactionAction.test(text) || mediaAction.test(text));
+    (inferred || launchAction.test(text) || interactionAction.test(text) || mediaAction.test(text) || closeAction.test(text));
 }
 
 export function isDesktopControlRequest(text: string) {
@@ -103,7 +152,7 @@ export function isDesktopControlRequest(text: string) {
 }
 
 export function inferredDesktopControl(text: string, appId: unknown, confidence: unknown): DesktopControlRequest | null {
-  if (containsBlockedDesktopAction(text) || typeof confidence !== "number" || !Number.isFinite(confidence) || confidence < 0.8) return null;
+  if (!hasDesktopControlEvidence(text) || containsBlockedDesktopAction(text) || typeof confidence !== "number" || !Number.isFinite(confidence) || confidence < 0.8) return null;
   const app = approvedApps.find((candidate) => candidate.id === appId);
   if (!app) return null;
   const explicit = detectApprovedDesktopApp(text);

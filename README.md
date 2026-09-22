@@ -1,47 +1,101 @@
-# Vox ambient voice assistant
+# Vox
 
-Vox is a continuous, interruptible browser voice assistant. OpenAI Realtime handles speech-to-speech conversation and semantic voice activity detection. TypeSafe Jev acts as a fast router for every utterance and as a presence classifier that can decide when Vox should speak first during a quiet stretch.
+Vox is a source-available, continuous voice companion for the web and desktop. It is designed around natural pauses rather than rigid turns: people can hesitate, continue a thought, interrupt a reply, or let Vox decide that a quiet moment should stay quiet.
 
-Jev can select seven paths:
+The desktop app also provides an explicit bridge to the user’s own local Codex installation and constrained computer control for installed apps.
 
-- `silence` — background speech or utterances that should not receive a reply
-- `realtime` — ordinary low-latency voice conversation
-- `balanced_reasoning` — deeper answers with GPT-5.6 Terra
-- `expert_reasoning` — difficult or high-stakes work with GPT-6 Astra
-- `live_web` — current information with web search
-- `create_reminder` — extract a future time and save a persistent reminder
-- `create_file` — generate and save a downloadable note, checklist, report, data file, web page, or code file
+## Connection modes
 
-The initiative control sets how readily Vox may speak without being prompted. The browser checks for a useful moment only while the live session is quiet and idle; Jev has a strong bias toward `stay_silent`, and the app enforces cooldowns and a per-session cap so presence does not turn into chatter.
+| Mode | AI billing | Sign-in | Data location | Available surfaces |
+| --- | --- | --- | --- | --- |
+| **Vox Cloud** | Managed by the Vox service; a subscription may be introduced later with notice | Activation code + email | Encrypted cloud conversation, preferences, memory, reminders, and files | Web and desktop |
+| **Personal** | The user pays OpenAI and TypeSafe directly; Vox charges no monthly fee | User’s own OpenAI and TypeSafe API keys + their existing local Codex sign-in | Keys encrypted with Electron `safeStorage`; conversation and preferences remain on the device | Desktop only |
 
-Vox also treats a pause as evidence, not an automatic handoff. OpenAI semantic VAD waits through likely hesitation, while a second Jev gate combines the verbatim transcript with local timing hints such as utterance length, silence between fragments, and an estimate of a prolonged final sound. If the thought still appears unfinished, Vox stays vocally silent, shows a small text-only “take your time” cue, suppresses proactive check-ins, and buffers the next spoken fragment before routing an answer. Filler words and self-corrections are intentionally preserved for this decision.
+Personal mode is deliberately isolated from Vox Cloud. The desktop app loads a locally bundled copy of the interface, rejects every local `/api/*` cloud request, and contacts only OpenAI, TypeSafe, and local Codex for AI work. Long-lived provider keys remain in the desktop main process; the webpage receives only a short-lived OpenAI Realtime client secret.
 
-Users can choose among the supported OpenAI Realtime voices. The preference is saved only in the browser and takes effect when the next voice conversation begins.
+Codex authentication is separate. Vox neither reads nor copies Codex credentials; Codex continues to use the user’s existing local ChatGPT or API-key sign-in.
 
-When Jev delegates a request to live search, deeper reasoning, file creation, or reminder scheduling, the Realtime voice acts as a brief front voice. It immediately acknowledges what it is doing in the user's language while the longer operation runs, then hands back the completed result. The bridge never claims completion, and a new user turn suppresses stale results from an older task.
+## Highlights
 
-Jev also classifies each utterance as a continuation or a fresh topic. Clear follow-ups retain short-term Realtime conversation context. On a clear topic shift, Vox keeps the transcript visible in the browser but removes older Realtime conversation items before generating the next response, reducing irrelevant context and repeated input-token cost. Durable memories remain available separately, and uncertain cases keep context rather than risk losing meaning.
+- Interruptible OpenAI Realtime speech-to-speech conversation
+- TypeSafe Jev routing for when to wait, speak, use vision, control an app, or delegate to Codex
+- Mandarin transcription with Traditional Chinese and Taiwan-language response guidance
+- User-selectable voice, reply-length preference, initiative, and visual theme
+- On-request camera frames with a visible capture effect and no continuous image upload
+- Natural response-length variance and conversation-move selection, so advice is not the default
+- Optional cloud memory, reminders, generated files, invitations, and cross-device transcript sync
+- Desktop-local Codex and constrained Computer Use integration
 
-Mandarin speech is transcribed without translation and guided toward Traditional Chinese as used in Taiwan. Mandarin responses—including proactive check-ins and answers prepared by deeper models—use Taiwan vocabulary, phrasing, and conversational pacing. Substantive English input still receives an English response.
+## Personal desktop setup
 
-Vox receives an authoritative UTC clock plus the current date and time in `Asia/Taipei`. The clock is refreshed immediately before each typed or spoken response, and it is also available to JEV presence decisions, reasoning routes, and generated files.
+Personal mode is the simplest way to run Vox without the hosted backend:
 
-Natural-language reminders are stored in D1. While the app is open, Vox polls for due reminders, shows an in-app alert, can raise a browser notification after the user enables permission, and speaks the reminder when an idle voice session is connected. Closed-app background delivery requires a future push, email, or messaging integration.
+1. Build the web bundle and desktop app:
 
-## Local setup
+   ```bash
+   cd desktop/VoxDesktop
+   npm ci
+   npm run dist
+   ```
+
+2. Install the generated desktop build.
+3. Choose **Personal** at launch.
+4. Enter an OpenAI API key and a TypeSafe API key. Both are encrypted by the operating system-backed secure storage.
+5. Sign in to local Codex separately if you want Vox to delegate coding or computer-use tasks.
+
+Personal mode currently keeps the live transcript and preferences on that device. Cloud memory, cross-device sync, hosted files, reminders, and invite codes are intentionally disabled because enabling them would contact the Vox server.
+
+## Vox Cloud local development
 
 1. Copy `.env.example` to `.env.local`.
-2. Add an OpenAI API key and a TypeSafe Jev API key.
-3. Run `npm run dev`.
+2. Add development OpenAI and TypeSafe keys plus the local access configuration.
+3. Install dependencies and start the app:
 
-Both long-lived API keys remain server-side. The browser receives only a short-lived OpenAI Realtime credential. Memory and reminder data is stored in Cloudflare D1, while generated file contents are stored in a private R2 bucket.
+   ```bash
+   npm ci
+   npm run dev
+   ```
 
-## Multi-user privacy
+Long-lived cloud provider keys stay server-side. Browsers receive only short-lived OpenAI Realtime credentials.
 
-Production access is configured with `VOX_USERS_JSON`, one opaque ID and unique access code per person. Signed, expiring, HttpOnly sessions bind every memory, reminder, generated-file record, download, and AI context lookup to that owner. Internal R2 object keys never appear in client responses. Local development without access configuration uses one isolated owner; production fails closed when access control is missing or invalid.
+Cloud production uses Cloudflare Workers, D1, and private R2. See [DEPLOYMENT.md](./DEPLOYMENT.md) for resource creation, secrets, migrations, privacy boundaries, and deployment commands.
 
-Vox sends only the context needed for a requested AI operation to OpenAI or TypeSafe Jev. Responses API requests disable provider-side response storage. Review [DEPLOYMENT.md](./DEPLOYMENT.md) for the remaining production controls, including private Cloudflare resources, access/rate limiting, and provider data settings.
+## Architecture
 
-## Production readiness
+- `app/` — Next/Vinext interface and cloud API routes
+- `lib/` — shared routing, language, memory, privacy, and conversation policies
+- `desktop/VoxDesktop/` — Electron desktop shell, local Codex bridge, secure Personal-mode provider bridge, and locally bundled web server
+- `ios/` — early iOS shell sharing the cloud backend contract
+- `migrations/` — Cloudflare D1 schema
+- `scripts/` — tests and deployment preparation
 
-The app is configured as a standalone Cloudflare Worker; it is not tied to ChatGPT Sites. Production deployment uses a D1 database, an R2 bucket, and per-user private access codes. See [DEPLOYMENT.md](./DEPLOYMENT.md) for the setup and deployment checklist.
+## Security model
+
+- Cloud sessions are signed, expiring, HttpOnly cookies scoped to opaque user IDs.
+- Activation codes are hashed; email addresses and synchronized transcript messages are encrypted before D1 storage.
+- Generated file bodies stay in private R2.
+- Personal provider keys are encrypted locally and are never returned to the renderer.
+- Personal-mode provider requests originate in the desktop main process.
+- Computer actions are limited by local policy, installed-app resolution, and the Codex sandbox.
+- Secrets, build output, local state, and installers are excluded from Git.
+
+Please report vulnerabilities privately as described in [SECURITY.md](./SECURITY.md). Do not put credentials or personal transcripts in public issues.
+
+## Tests
+
+```bash
+npm run lint
+npm run build
+npm run test:privacy
+cd desktop/VoxDesktop && npm run check
+```
+
+Additional focused test scripts are listed in the root `package.json`.
+
+## Contributing
+
+Noncommercial contributions are welcome. Read [CONTRIBUTING.md](./CONTRIBUTING.md) and [CLA.md](./CLA.md) before opening a pull request.
+
+## License
+
+Vox is source-available under the [PolyForm Noncommercial License 1.0.0](./LICENSE). Personal study, experimentation, modification, and other permitted noncommercial uses are welcome. Commercial use requires a separate written license from Eric Cheng.

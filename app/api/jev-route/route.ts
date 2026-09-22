@@ -1,6 +1,12 @@
 import { requireUser } from "@/lib/auth";
-import { isOpenWorkspaceRequest } from "@/lib/desktop-action-route";
-import { isDesktopControlRequest } from "@/lib/desktop-control-route";
+import {
+  isOpenWorkspaceRequest,
+  isStandaloneVoiceConfirmation,
+} from "@/lib/desktop-action-route";
+import {
+  hasDesktopControlEvidence,
+  isDesktopControlRequest,
+} from "@/lib/desktop-control-route";
 import { isLocalCodexTask } from "@/lib/local-codex-route";
 import { listMemories } from "@/lib/memory-store";
 import {
@@ -426,7 +432,7 @@ export async function POST(request: Request) {
           ...(desktopControlAvailable ? { desktop_app: {
             type: "choice",
             instructions: "Infer the target app ONLY for a user request to act on their computer. They need not name an app or use fixed command words. Use recent_desktop_app for references like pause it or the fifth video when relevant; do not reuse it for an unrelated task. For a new website-opening request with no browser preference choose Safari; respect an explicitly named Chrome. Use Finder for files/folders, Preview for PDF viewing, Notes for notes, Calculator for calculations in an app, TextEdit for plain text, vscode for editor UI. Choose none for ordinary conversation, conceptual questions, or genuinely ambiguous targets. Do not invent current screen contents. This is target selection, never permission to perform a sensitive action.",
-            criteria: { none: "No unambiguous computer action target.", safari: "Safari browser", chrome: "Google Chrome browser", finder: "Finder files and folders", preview: "Preview document viewer", notes: "Notes", calculator: "Calculator", textedit: "TextEdit", vscode: "Visual Studio Code" },
+            criteria: { none: "No unambiguous computer action target.", safari: "Safari browser", chrome: "Google Chrome browser", finder: "Finder files and folders", preview: "Preview document viewer", notes: "Notes", calculator: "Calculator", textedit: "TextEdit", vscode: "Visual Studio Code", music: "Apple Music", podcasts: "Podcasts", tv: "Apple TV", photos: "Photos", calendar: "Calendar", reminders: "Reminders", maps: "Maps", weather: "Weather", clock: "Clock", contacts: "Contacts", quicktime: "QuickTime Player", mail: "Mail", messages: "Messages" },
           } } : {}),
           ...(desktopControlAvailable ? { computer_use_mode: {
             type: "choice",
@@ -588,6 +594,13 @@ export async function POST(request: Request) {
     };
     let choice = payload.answers?.route?.choice as JevRoute | undefined;
     if (!choice || !ROUTES.has(choice)) throw new Error("Invalid Jev route");
+    if (
+      choice === "desktop_control" &&
+      (!hasDesktopControlEvidence(completeText) ||
+        isStandaloneVoiceConfirmation(completeText))
+    ) {
+      choice = "realtime";
+    }
     if (choice === "local_codex" && !localCodexAvailable) {
       choice = fallbackRoute(
         completeText,

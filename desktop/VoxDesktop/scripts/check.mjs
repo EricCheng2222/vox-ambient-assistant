@@ -13,6 +13,9 @@ const files = [
   "src/main.mjs",
   "src/computer-use-session.mjs",
   "src/desktop-control-policy.mjs",
+  "src/personal-api.mjs",
+  "src/personal-route.mjs",
+  "src/local-web-server.mjs",
   "src/preload.cjs",
   "src/vox-preload.cjs",
   "src/renderer.mjs",
@@ -23,7 +26,7 @@ const files = [
 
 for (const file of files) await access(path.join(root, file));
 
-for (const file of ["src/main.mjs", "src/computer-use-session.mjs", "src/desktop-control-policy.mjs", "src/preload.cjs", "src/vox-preload.cjs", "src/renderer.mjs"]) {
+for (const file of ["src/main.mjs", "src/computer-use-session.mjs", "src/desktop-control-policy.mjs", "src/personal-api.mjs", "src/personal-route.mjs", "src/local-web-server.mjs", "src/preload.cjs", "src/vox-preload.cjs", "src/renderer.mjs"]) {
   const check = spawnSync(process.execPath, ["--check", path.join(root, file)], { encoding: "utf8" });
   if (check.status !== 0) throw new Error(check.stderr || `${file} failed syntax validation.`);
 }

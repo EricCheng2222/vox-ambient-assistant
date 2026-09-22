@@ -2,6 +2,7 @@
   "name": "vox-ambient-assistant",
   "version": "0.1.0",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "engines": {
     "node": ">=22.13.0"
   },
@@ -10,7 +11,7 @@
     "dev": "node scripts/run-framework.mjs dev",
     "build": "node scripts/run-framework.mjs build",
     "start": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/state --ip 127.0.0.1 --inspector-port 0",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern desktop/VoxDesktop/dist",
     "test:privacy": "node --experimental-strip-types scripts/test-privacy.mjs",
     "test:memory-summary": "node --experimental-strip-types scripts/test-memory-summary.mjs",
     "test:reply-length": "node --experimental-strip-types scripts/test-reply-length.mjs",
