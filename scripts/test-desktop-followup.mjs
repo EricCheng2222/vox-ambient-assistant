@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { classifyDesktopControlRequest, isRoutineDesktopAction, inferredDesktopControl } from "../lib/desktop-control-route.ts";
+import { classifyDesktopControlRequest, isDraftOnlyDesktopAction, isRoutineDesktopAction, inferredDesktopControl } from "../lib/desktop-control-route.ts";
 const safari = classifyDesktopControlRequest("Open Safari and search for YouTube");
 assert.equal(isRoutineDesktopAction("Open Safari and search for YouTube", safari), true);
 const followup = classifyDesktopControlRequest("Can you click it for me, like open YouTube page?", safari);
@@ -7,7 +7,8 @@ assert.equal(followup.appId, "safari");
 assert.equal(followup.intent, "interact");
 assert.equal(isRoutineDesktopAction("Can you click it for me, like open YouTube page?", followup), true);
 assert.equal(classifyDesktopControlRequest("Open YouTube"), null);
-assert.equal(classifyDesktopControlRequest("send an email", safari), null);
+assert.equal(isDraftOnlyDesktopAction("send an email"), true);
+assert.equal(classifyDesktopControlRequest("send an email", safari)?.appId, "safari");
 assert.equal(isRoutineDesktopAction("Open Safari and accept the agreement", safari), false);
 for (const name of ["Finder", "Safari", "Chrome", "Preview", "Notes", "Calculator", "TextEdit", "Visual Studio Code"]) {
   const control = classifyDesktopControlRequest(`Open ${name}`);
@@ -21,6 +22,12 @@ for (const name of ["Finder", "Safari", "Chrome", "Preview", "Notes", "Calculato
 assert.equal(classifyDesktopControlRequest("That's interesting", safari), null);
 assert.equal(classifyDesktopControlRequest("OK, 翻譯工作結束, 謝謝。", safari), null);
 assert.equal(classifyDesktopControlRequest("提醒工作結束", safari), null);
+const line = { appId: "installed:jp.naver.line.mac", appName: "LINE", intent: "interact" };
+for (const text of ["幫我打一下好嗎?", "輸入這段訊息，我自己發送", "Draft this reply but don't send it"]) {
+  assert.equal(isDraftOnlyDesktopAction(text), true, text);
+  assert.equal(classifyDesktopControlRequest(text, line)?.appId, line.appId, text);
+  assert.equal(isRoutineDesktopAction(text, line), true, text);
+}
 for (const text of ["Pause the video, pause the video.", "Resume the video", "暫停影片", "繼續播放"]) {
   assert.equal(classifyDesktopControlRequest(text, safari)?.appId, "safari");
   assert.equal(isRoutineDesktopAction(text, safari), true);

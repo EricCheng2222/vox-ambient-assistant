@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { computerUseFailure, permitsConfirmedApp, computerUseModelSettings } from "../src/computer-use-session.mjs";
+import {
+  computerUseFailure,
+  computerUseModelSettings,
+  isDraftTransmissionTool,
+  permitsConfirmedApp,
+} from "../src/computer-use-session.mjs";
 import {
   currentDesktopActionText,
   hasRunningDesktopApp,
@@ -36,6 +41,21 @@ test("spoken confirmation is scoped to the selected app and current task", () =>
     assert.equal(permitsConfirmedApp(action, "com.apple.finder", "task"), false);
   }
   assert.equal(permitsConfirmedApp({ ...request, _meta: { ...request._meta, tool_name: "run_shell" } }, "com.apple.Safari", "task"), false);
+});
+
+test("draft-only app control permits typing but blocks transmission gestures", () => {
+  const request = { threadId: "task", serverName: "cua_repl", mode: "form", _meta: { connector_id: "computer-use", tool_name: "type_text", tool_params: { app: "jp.naver.line.mac", text: "Draft only" } }, requestedSchema: { type: "object", properties: {} } };
+  assert.equal(permitsConfirmedApp(request, "jp.naver.line.mac", "task", { draftOnly: true }), true);
+
+  for (const meta of [
+    { connector_id: "computer-use", tool_name: "press_key", tool_params: { app: "jp.naver.line.mac", key: "ENTER" } },
+    { connector_id: "computer-use", tool_name: "click", tool_params: { app: "jp.naver.line.mac", label: "Send" } },
+    { connector_id: "computer-use", tool_name: "type_text", tool_params: { app: "jp.naver.line.mac", text: "line one\nline two" } },
+    { connector_id: "computer-use", tool_name: "perform_secondary_action", tool_params: { app: "jp.naver.line.mac" } },
+  ]) {
+    assert.equal(isDraftTransmissionTool(meta), true);
+    assert.equal(permitsConfirmedApp({ ...request, _meta: meta }, "jp.naver.line.mac", "task", { draftOnly: true }), false);
+  }
 });
 
 test("macOS running-app probes do not mistake an empty result for a running app", () => {

@@ -35,6 +35,7 @@ import {
   hasRunningDesktopApp,
   isBlockedDesktopControlPrompt,
   isClosingDesktopApp,
+  isDraftOnlyDesktopControlPrompt,
 } from "./desktop-control-policy.mjs";
 
 const productionUrl = "https://vox-assistant.ericcheng306.workers.dev/";
@@ -337,7 +338,10 @@ async function runCodexTask(taskId, request) {
           `Use Computer Use only in ${request.targetAppName} to perform the user's explicitly confirmed task.`,
           "The user's single spoken confirmation authorizes the entire described task. Do not request a second Vox or Electron confirmation for ordinary clicks, typing, scrolling, tab management, navigation, or search within the named app.",
           "This is a tightly restricted desktop task. You may focus the named app, inspect its visible interface, click, select, scroll, type, create or switch browser tabs, navigate to a public website, and perform a public web search when the user explicitly requested it. Browser navigation through the approved app is allowed even though Codex's own HTTP and web-search tools are disabled.",
-          "Do not delete or modify local files or system settings. Do not send, post, share, upload, purchase, log in, enter credentials, submit account-affecting forms, install, uninstall, download, use Terminal, or run shell commands. Stop and explain if any of those actions would be required.",
+          "Do not delete or modify local files or system settings. Do not purchase, log in, enter credentials, submit account-affecting forms, install, uninstall, download, use Terminal, or run shell commands. Stop and explain if any of those actions would be required.",
+          request.computerControlAction === "draft_message"
+            ? "This is a draft-only communication task. You may click into the visible message or email composer and type exactly the requested text as a single-line draft. Never activate Send, Post, Publish, Share, Upload, Submit, or any equivalent control. Never press Return or Enter, and never use a keyboard shortcut that could transmit the draft. Once the text is visibly present in the composer, stop immediately and leave it unsent for the user to review. If and only if that happened, say that the draft is ready and was not sent; otherwise state that no draft was completed."
+            : "Do not send, post, publish, share, upload, or submit any external communication or content.",
           "Do not use any app other than the named target. If Computer Use is unavailable or permission is denied, say so plainly and do not claim the task succeeded.",
           request.computerControlAction === "close_app"
             ? "This is a one-shot close-app task. Acquire the already-running target at most once and request a normal quit once. Never reacquire, reopen, refocus, or inspect the app after the quit action; Vox checks the running state separately and will end this session as soon as the app closes. Do not force quit or discard unsaved work. If a save/discard prompt appears, leave it untouched and report that user attention is needed."
@@ -361,6 +365,7 @@ async function runCodexTask(taskId, request) {
         bundleId: request.targetBundleId,
         mode: request.computerUseMode,
         signal: abortController.signal,
+        draftOnly: request.computerControlAction === "draft_message",
         completionCheck: request.computerControlAction === "close_app"
           ? async () => !(await isDesktopAppRunning(request.targetBundleId))
           : undefined,
@@ -747,6 +752,7 @@ function registerIpcHandlers() {
     }
 
     const closing = isClosingDesktopApp(actionText);
+    const draftOnly = isDraftOnlyDesktopControlPrompt(actionText);
     const intent = closing || rawRequest?.intent === "interact" ? "interact" : "launch";
     taskLaunchPending = true;
     lastDesktopControlAt = now;
@@ -782,7 +788,11 @@ function registerIpcHandlers() {
         targetAppName: appPolicy.name,
         targetBundleId: appPolicy.bundleId,
         computerUseMode: closing || rawRequest?.mode === "fast" ? "fast" : "standard",
-        computerControlAction: closing ? "close_app" : "interact",
+        computerControlAction: closing
+          ? "close_app"
+          : draftOnly
+            ? "draft_message"
+            : "interact",
       });
 
       if (result.status === "completed") {

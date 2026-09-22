@@ -47,12 +47,12 @@ npm --prefix desktop/VoxDesktop run dist
 When the build finishes, the installer is here:
 
 ```text
-desktop/VoxDesktop/dist/Vox-0.2.0-arm64.dmg
+desktop/VoxDesktop/dist/Vox-0.2.1-arm64.dmg
 ```
 
 #### 2. Install the app
 
-1. Open `Vox-0.2.0-arm64.dmg`.
+1. Open `Vox-0.2.1-arm64.dmg`.
 2. Drag **Vox** into **Applications**.
 3. Open Vox from Applications.
 

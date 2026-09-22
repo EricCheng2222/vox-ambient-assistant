@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   approvedDesktopApp,
   isBlockedDesktopControlPrompt,
+  isDraftOnlyDesktopControlPrompt,
 } from "../src/desktop-control-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -40,5 +41,10 @@ assert.equal(approvedDesktopApp("finder")?.bundleId, "com.apple.finder");
 assert.equal(approvedDesktopApp("terminal"), null);
 assert.equal(isBlockedDesktopControlPrompt("Delete this in Finder"), true);
 assert.equal(isBlockedDesktopControlPrompt("Click the sidebar in Finder"), false);
+assert.equal(isDraftOnlyDesktopControlPrompt("幫我在 LINE 裡打一下，我自己發送"), true);
+assert.equal(isBlockedDesktopControlPrompt("幫我在 LINE 裡打一下，我自己發送"), false);
+assert.equal(isDraftOnlyDesktopControlPrompt("幫我在 LINE 裡打好然後送出"), true);
+assert.equal(isBlockedDesktopControlPrompt("幫我在 LINE 裡打好然後送出"), false);
+assert.equal(isBlockedDesktopControlPrompt("Click Send in LINE"), true);
 
 console.log("Vox Desktop checks passed.");
