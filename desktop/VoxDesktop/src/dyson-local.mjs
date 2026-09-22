@@ -89,23 +89,26 @@ export function configureDysonDevice(raw) {
     : normalizeDysonManualConfiguration(raw);
 }
 
-function discoveredSerial(name) {
+export function parseDysonServiceName(name) {
   const first = clean(name, 160).split(".")[0];
   const separator = first.indexOf("_");
-  if (separator < 0) return "";
+  if (separator < 0) return {};
   try {
-    return serialNumber(first.slice(separator + 1));
+    return {
+      productType: productType(first.slice(0, separator)),
+      serial: serialNumber(first.slice(separator + 1)),
+    };
   } catch {
-    return "";
+    return {};
   }
 }
 
-export async function discoverDysonPurifiers(timeoutMs = 3_500) {
+export async function discoverDysonPurifiers(timeoutMs = 8_000) {
   const bonjour = new Bonjour();
   const devices = new Map();
   const browser = bonjour.find({ type: "dyson_mqtt", protocol: "tcp" });
   browser.on("up", (service) => {
-    const serial = discoveredSerial(service.name);
+    const { serial, productType: discoveredProductType } = parseDysonServiceName(service.name);
     const address = Array.isArray(service.addresses)
       ? service.addresses.find((candidate) => /^\d{1,3}(?:\.\d{1,3}){3}$/u.test(candidate))
       : undefined;
@@ -114,6 +117,7 @@ export async function discoverDysonPurifiers(timeoutMs = 3_500) {
       name: serial ? `Dyson ${serial}` : clean(service.name, 100) || "Dyson purifier",
       host: address,
       serial: serial || undefined,
+      productType: discoveredProductType || undefined,
     });
   });
   await new Promise((resolve) => setTimeout(resolve, Math.max(500, Math.min(timeoutMs, 8_000))));

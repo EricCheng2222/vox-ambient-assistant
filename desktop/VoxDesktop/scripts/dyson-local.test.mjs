@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   deriveDysonStickerConfiguration,
   normalizeDysonManualConfiguration,
+  parseDysonServiceName,
   parseDysonCommand,
 } from "../src/dyson-local.mjs";
 
@@ -44,4 +45,12 @@ test("voice commands stay inside the supported purifier action set", () => {
   assert.deepEqual(parseDysonCommand("關掉夜間模式"), { kind: "night", enabled: false });
   assert.deepEqual(parseDysonCommand("Dyson air quality status"), { kind: "status" });
   assert.throws(() => parseDysonCommand("Reset the Dyson filter"), /Try power/u);
+});
+
+test("Bonjour service names reveal only validated Dyson identity fields", () => {
+  assert.deepEqual(parseDysonServiceName("527_ABC-TW-12345678"), {
+    productType: "527",
+    serial: "ABC-TW-12345678",
+  });
+  assert.deepEqual(parseDysonServiceName("not-a-dyson-service"), {});
 });

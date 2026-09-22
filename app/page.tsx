@@ -211,6 +211,7 @@ type SmartHomeDiscoveredDevice = {
   name: string;
   host: string;
   serial?: string;
+  productType?: string;
 };
 type DysonSetupMethod = "sticker" | "manual";
 type ContextMode = "continue" | "fresh";
@@ -1364,7 +1365,9 @@ export default function Home() {
   function selectDiscoveredSmartHomeDevice(device: SmartHomeDiscoveredDevice) {
     setDysonHost(device.host);
     if (device.serial) setDysonSerial(device.serial);
+    if (device.productType) setDysonProductType(device.productType);
     if (device.name) setDysonName(device.name);
+    if (device.serial && device.productType) setDysonSetupMethod("manual");
     setSmartHomeError("");
   }
 
