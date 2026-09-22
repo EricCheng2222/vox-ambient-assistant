@@ -1,0 +1,55 @@
+{
+  "name": "vox-desktop",
+  "version": "0.1.0",
+  "description": "Vox desktop companion with a secure local Codex bridge",
+  "author": "Vox",
+  "private": true,
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "check": "node scripts/check.mjs",
+    "package": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "0.155.1"
+  },
+  "devDependencies": {
+    "electron": "44.4.3",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.ericcheng.vox.desktop",
+    "productName": "Vox",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/@openai/codex-*/vendor/**/*"
+    ],
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "entitlements": "resources/entitlements.mac.plist",
+      "entitlementsInherit": "resources/entitlements.mac.plist",
+      "extendInfo": {
+        "NSCameraUsageDescription": "Vox uses the camera only when you enable visual conversation.",
+        "NSMicrophoneUsageDescription": "Vox uses the microphone for private voice conversations."
+      }
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "category": "Utility",
+      "target": "AppImage"
+    }
+  }
+}

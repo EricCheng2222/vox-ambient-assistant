@@ -1,4 +1,7 @@
 import { requireUser } from "@/lib/auth";
+import { isOpenWorkspaceRequest } from "@/lib/desktop-action-route";
+import { isDesktopControlRequest } from "@/lib/desktop-control-route";
+import { isLocalCodexTask } from "@/lib/local-codex-route";
 import { listMemories } from "@/lib/memory-store";
 import {
   adaptiveReplyLengthChoices,
@@ -40,7 +43,10 @@ type JevRoute =
   | "expert_reasoning"
   | "live_web"
   | "create_reminder"
-  | "create_file";
+  | "create_file"
+  | "desktop_action"
+  | "desktop_control"
+  | "local_codex";
 
 type ContextMode = "continue" | "fresh";
 type TurnState = "wait" | "complete";
@@ -65,6 +71,9 @@ const ROUTES = new Set<JevRoute>([
   "live_web",
   "create_reminder",
   "create_file",
+  "desktop_action",
+  "desktop_control",
+  "local_codex",
 ]);
 
 const CONTEXT_MODES = new Set<ContextMode>(["continue", "fresh"]);
@@ -137,10 +146,24 @@ function fallbackTurnState(text: string, pendingText: string): TurnState {
   return "complete";
 }
 
-function fallbackRoute(text: string): JevRoute {
+function fallbackRoute(
+  text: string,
+  localCodexAvailable = false,
+  desktopActionsAvailable = false,
+  desktopControlAvailable = false,
+): JevRoute {
   const value = text.trim().toLowerCase();
   if (!value || isFillerOnly(value)) {
     return "silence";
+  }
+  if (desktopActionsAvailable && isOpenWorkspaceRequest(text)) {
+    return "desktop_action";
+  }
+  if (desktopControlAvailable && isDesktopControlRequest(text)) {
+    return "desktop_control";
+  }
+  if (localCodexAvailable && isLocalCodexTask(text)) {
+    return "local_codex";
   }
   if (
     /\b(remind me|set (?:a |an )?(?:reminder|alarm)|schedule (?:a |an )?reminder)\b/.test(
@@ -198,7 +221,12 @@ function fallbackResponseLength(
 ): AdaptiveReplyLength {
   if (route === "silence") return defaultAdaptiveReplyLength(preference);
   return mirroredAdaptiveReplyLength(text, preference, {
-    compact: route === "create_reminder" || route === "create_file",
+    compact:
+      route === "create_reminder" ||
+      route === "create_file" ||
+      route === "desktop_action" ||
+      route === "desktop_control" ||
+      route === "local_codex",
   });
 }
 
@@ -226,11 +254,18 @@ export async function POST(request: Request) {
     recentMessages?: RecentMessage[];
     replyLength?: unknown;
     visionAvailable?: boolean;
+    localCodexAvailable?: boolean;
+    desktopActionsAvailable?: boolean;
+    desktopControlAvailable?: boolean;
+    desktopAppContext?: string;
   };
   const text = body.text?.trim().slice(0, 6000) ?? "";
   const pendingText = body.pendingText?.trim().slice(0, 6000) ?? "";
   const allowWait = body.allowWait !== false;
   const replyLength = parseReplyLength(body.replyLength);
+  const localCodexAvailable = body.localCodexAvailable === true;
+  const desktopActionsAvailable = body.desktopActionsAvailable === true;
+  const desktopControlAvailable = body.desktopControlAvailable === true;
   const completeText = [pendingText, text].filter(Boolean).join(" ").trim();
   const currentTiming = speechTiming(body.timing);
   const pendingTimings = Array.isArray(body.pendingTimings)
@@ -290,17 +325,29 @@ export async function POST(request: Request) {
 
   const apiKey = process.env.TYPESAFE_API_KEY;
   if (!apiKey) {
-    const route = fallbackRoute(completeText);
+    const route = fallbackRoute(
+      completeText,
+      localCodexAvailable,
+      desktopActionsAvailable,
+      desktopControlAvailable,
+    );
     const turnState = allowWait ? fallbackTurnState(text, pendingText) : "complete";
     const visionNeed =
-      turnState === "complete" && route !== "silence"
+      turnState === "complete" &&
+      route !== "silence" &&
+      route !== "desktop_action" &&
+      route !== "desktop_control" &&
+      route !== "local_codex"
         ? fallbackVisionNeed(completeText)
         : "none";
     const ritual: ConversationRitual =
       turnState === "complete" &&
       route !== "silence" &&
       route !== "create_reminder" &&
-      route !== "create_file"
+      route !== "create_file" &&
+      route !== "desktop_action" &&
+      route !== "desktop_control" &&
+      route !== "local_codex"
         ? fallbackConversationRitual(completeText, socialEligibility)
         : "none";
     if (ritual !== "none") {
@@ -370,8 +417,22 @@ export async function POST(request: Request) {
               .map((message) => userTurnLengthSignals(message.text)),
           },
           camera_preview_available: body.visionAvailable === true,
+          local_codex_available: localCodexAvailable,
+          desktop_actions_available: desktopActionsAvailable,
+          desktop_control_available: desktopControlAvailable,
+          recent_desktop_app: desktopControlAvailable && typeof body.desktopAppContext === "string" ? body.desktopAppContext.slice(0, 80) : null,
         },
         questions: {
+          ...(desktopControlAvailable ? { desktop_app: {
+            type: "choice",
+            instructions: "Infer the target app ONLY for a user request to act on their computer. They need not name an app or use fixed command words. Use recent_desktop_app for references like pause it or the fifth video when relevant; do not reuse it for an unrelated task. For a new website-opening request with no browser preference choose Safari; respect an explicitly named Chrome. Use Finder for files/folders, Preview for PDF viewing, Notes for notes, Calculator for calculations in an app, TextEdit for plain text, vscode for editor UI. Choose none for ordinary conversation, conceptual questions, or genuinely ambiguous targets. Do not invent current screen contents. This is target selection, never permission to perform a sensitive action.",
+            criteria: { none: "No unambiguous computer action target.", safari: "Safari browser", chrome: "Google Chrome browser", finder: "Finder files and folders", preview: "Preview document viewer", notes: "Notes", calculator: "Calculator", textedit: "TextEdit", vscode: "Visual Studio Code" },
+          } } : {}),
+          ...(desktopControlAvailable ? { computer_use_mode: {
+            type: "choice",
+            instructions: "Select the local Computer Use execution tier, not permissions. Use fast for a single clear routine action such as pause/resume a video, scroll, open an app, or click a specified visible item. Use standard for multi-step tasks, unclear references, unfamiliar interfaces, or tasks requiring interpretation. Resolve app-less follow-ups using recent_desktop_app and recent_conversation. When uncertain choose standard. This decision never authorizes sensitive actions.",
+            criteria: { fast: "GPT-5.6 Luna with low reasoning for simple actions.", standard: "GPT-5.6 Terra with medium reasoning for multi-step or ambiguous tasks." },
+          } } : {}),
           turn_state: {
             type: "choice",
             instructions:
@@ -386,7 +447,7 @@ export async function POST(request: Request) {
           route: {
             type: "choice",
             instructions:
-              "Route the complete utterance for an ambient voice assistant. When a pending utterance exists, treat the current utterance as its continuation unless the person clearly abandoned it or started a different self-contained request. Choose silence when the speech is incidental, filler, background conversation, not directed at the assistant, or explicitly asks for no reply. Choose create_reminder only when the user explicitly asks to be reminded or notified at a future time. Choose create_file only when the user explicitly wants the assistant to produce or save a downloadable file, document, checklist, report, table, data file, web page, or source-code file. Choose realtime for greetings, casual conversation, simple stable facts, brief clarifications, and questions about the current local time, date, or weekday because an authoritative clock is provided. Choose balanced_reasoning for multi-step analysis, comparisons, planning, or nuanced explanations that should be spoken rather than saved as a file. Choose expert_reasoning only for exceptionally difficult, high-stakes, or deeply technical work where maximum accuracy matters. Choose live_web when the answer depends on current, recent, changing, or location-specific information other than the supplied local time and date.",
+              "Route the complete utterance for an ambient voice assistant. When a pending utterance exists, treat the current utterance as its continuation unless the person clearly abandoned it or started a different self-contained request. Choose silence when the speech is incidental, filler, background conversation, not directed at the assistant, or explicitly asks for no reply. Choose create_reminder only when the user explicitly asks to be reminded or notified at a future time. Choose create_file only when the user explicitly wants the assistant to produce or save a downloadable file, document, checklist, report, table, data file, web page, or source-code file. Choose desktop_action only when desktop_actions_available is true and the user explicitly asks to open, show, or reveal the already selected local project folder. This direct Finder action takes precedence over every other desktop route and does not require Computer Use. Choose desktop_control only when desktop_control_available is true and the person explicitly asks to launch, focus, click, scroll, select, navigate, type in, read, or otherwise use Finder, Safari, Google Chrome, Preview, Notes, Calculator, TextEdit, or Visual Studio Code. Never choose desktop_control for deleting, sending, posting, sharing, uploading, purchasing, logging in, entering credentials, installing, downloading, changing settings, Terminal, or shell commands. Choose local_codex only when local_codex_available is true and the user explicitly asks to delegate substantive software work to Codex or asks the assistant to inspect, debug, modify, implement, test, or build a local software project. Never choose local_codex merely to open or reveal a folder or operate another app. Do not choose local_codex for conceptual programming questions, general explanations, casual mentions of code, or ordinary Vox file creation. Choose realtime for greetings, casual conversation, simple stable facts, brief clarifications, and questions about the current local time, date, or weekday because an authoritative clock is provided. Choose balanced_reasoning for multi-step analysis, comparisons, planning, or nuanced explanations that should be spoken rather than saved as a file. Choose expert_reasoning only for exceptionally difficult, high-stakes, or deeply technical work where maximum accuracy matters. Choose live_web when the answer depends on current, recent, changing, or location-specific information other than the supplied local time and date.",
             criteria: {
               silence: "The assistant should not speak.",
               realtime:
@@ -397,6 +458,24 @@ export async function POST(request: Request) {
               create_reminder:
                 "Create a persistent reminder with a future due time and notification.",
               create_file: "Create and save a downloadable file for the user.",
+              ...(desktopActionsAvailable
+                ? {
+                    desktop_action:
+                      "Ask for voice confirmation, then open the already selected project folder in Finder without invoking Codex.",
+                  }
+                : {}),
+              ...(desktopControlAvailable
+                ? {
+                    desktop_control:
+                      "Ask for voice confirmation, then launch an approved app directly or use tightly restricted, read-only mouse interaction in that app.",
+                  }
+                : {}),
+              ...(localCodexAvailable
+                ? {
+                    local_codex:
+                      "Ask the local Codex agent to work inside a user-selected software project after native confirmation.",
+                  }
+                : {}),
             },
           },
           context_mode: {
@@ -495,6 +574,8 @@ export async function POST(request: Request) {
     if (!response.ok) throw new Error(`Jev returned ${response.status}`);
     const payload = (await response.json()) as {
       answers?: {
+        desktop_app?: { choice?: string; confidence?: number };
+        computer_use_mode?: { choice?: string; confidence?: number };
         turn_state?: { choice?: string; confidence?: number };
         route?: { choice?: string; confidence?: number };
         context_mode?: { choice?: string; confidence?: number };
@@ -505,8 +586,32 @@ export async function POST(request: Request) {
         visual_need?: { choice?: string; confidence?: number };
       };
     };
-    const choice = payload.answers?.route?.choice as JevRoute | undefined;
+    let choice = payload.answers?.route?.choice as JevRoute | undefined;
     if (!choice || !ROUTES.has(choice)) throw new Error("Invalid Jev route");
+    if (choice === "local_codex" && !localCodexAvailable) {
+      choice = fallbackRoute(
+        completeText,
+        false,
+        desktopActionsAvailable,
+        desktopControlAvailable,
+      );
+    }
+    if (choice === "desktop_action" && !desktopActionsAvailable) {
+      choice = fallbackRoute(
+        completeText,
+        localCodexAvailable,
+        false,
+        desktopControlAvailable,
+      );
+    }
+    if (choice === "desktop_control" && !desktopControlAvailable) {
+      choice = fallbackRoute(
+        completeText,
+        localCodexAvailable,
+        desktopActionsAvailable,
+        false,
+      );
+    }
     const turnChoice = payload.answers?.turn_state?.choice as TurnState | undefined;
     const turnState =
       allowWait && turnChoice && TURN_STATES.has(turnChoice)
@@ -558,12 +663,23 @@ export async function POST(request: Request) {
       turnState === "wait" ||
       choice === "silence" ||
       choice === "create_reminder" ||
-      choice === "create_file"
+      choice === "create_file" ||
+      choice === "desktop_action" ||
+      choice === "desktop_control" ||
+      choice === "local_codex"
     ) {
       memoryUse = "none";
       ritual = "none";
     }
-    if (turnState === "wait" || choice === "silence") visionNeed = "none";
+    if (
+      turnState === "wait" ||
+      choice === "silence" ||
+      choice === "desktop_action" ||
+      choice === "desktop_control" ||
+      choice === "local_codex"
+    ) {
+      visionNeed = "none";
+    }
 
     const visionBlocked = await reserveVisionIfNeeded(
       auth.user.id,
@@ -580,6 +696,9 @@ export async function POST(request: Request) {
 
     return Response.json({
       route: choice,
+      desktopApp: desktopControlAvailable ? payload.answers?.desktop_app?.choice ?? "none" : "none",
+      desktopAppConfidence: desktopControlAvailable ? payload.answers?.desktop_app?.confidence ?? 0 : 0,
+      computerUseMode: desktopControlAvailable && payload.answers?.computer_use_mode?.choice === "fast" && (payload.answers.computer_use_mode.confidence ?? 0) >= 0.7 ? "fast" : "standard",
       confidence: payload.answers?.route?.confidence ?? null,
       turnState,
       turnConfidence: payload.answers?.turn_state?.confidence ?? null,
@@ -602,17 +721,29 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("Jev routing failed", error);
-    const route = fallbackRoute(completeText);
+    const route = fallbackRoute(
+      completeText,
+      localCodexAvailable,
+      desktopActionsAvailable,
+      desktopControlAvailable,
+    );
     const turnState = allowWait ? fallbackTurnState(text, pendingText) : "complete";
     const visionNeed =
-      turnState === "complete" && route !== "silence"
+      turnState === "complete" &&
+      route !== "silence" &&
+      route !== "desktop_action" &&
+      route !== "desktop_control" &&
+      route !== "local_codex"
         ? fallbackVisionNeed(completeText)
         : "none";
     const ritual: ConversationRitual =
       turnState === "complete" &&
       route !== "silence" &&
       route !== "create_reminder" &&
-      route !== "create_file"
+      route !== "create_file" &&
+      route !== "desktop_action" &&
+      route !== "desktop_control" &&
+      route !== "local_codex"
         ? fallbackConversationRitual(completeText, socialEligibility)
         : "none";
     await recordSocialDecision(

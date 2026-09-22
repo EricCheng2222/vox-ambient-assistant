@@ -64,6 +64,14 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Toaster } from "@/components/ui/sonner";
+import { classifyVoiceConfirmation } from "@/lib/desktop-action-route";
+import {
+  classifyDesktopControlRequest,
+  containsBlockedDesktopAction,
+  isRoutineDesktopAction,
+  inferredDesktopControl,
+  type DesktopControlRequest,
+} from "@/lib/desktop-control-route";
 import {
   buildVoiceInstructions,
   categoryLabels,
@@ -88,6 +96,7 @@ import { API_BUDGET_MESSAGE } from "@/lib/provider-error";
 import {
   responseLanguageInstruction,
   selectResponseLanguage,
+  type ResponseLanguage,
 } from "@/lib/response-language";
 import {
   parseResponsePosture,
@@ -132,6 +141,7 @@ type ConnectionState =
   | "searching"
   | "scheduling"
   | "creating"
+  | "working"
   | "speaking"
   | "error";
 
@@ -144,7 +154,10 @@ type JevRoute =
   | "expert_reasoning"
   | "live_web"
   | "create_reminder"
-  | "create_file";
+  | "create_file"
+  | "desktop_action"
+  | "desktop_control"
+  | "local_codex";
 
 type PresenceAction =
   | "stay_silent"
@@ -166,6 +179,16 @@ type PendingUtterance = {
   text: string;
   startedAt: number;
   timings: SpeechTiming[];
+};
+
+type PendingDesktopAction = {
+  action: "open_workspace" | "desktop_control";
+  language: ResponseLanguage;
+  requestedAt: number;
+  clarificationCount: number;
+  prompt?: string;
+  control?: DesktopControlRequest;
+  computerUseMode?: "fast" | "standard";
 };
 
 type SpeechTiming = {
@@ -297,6 +320,26 @@ declare global {
       ownerId: string;
       close: () => void;
     };
+    readonly voxLocalCodex?: {
+      available: boolean;
+      runTask: (request: { prompt: string }) => Promise<{
+        canceled: boolean;
+        answer?: string;
+      }>;
+      openWorkspace: () => Promise<{
+        opened: boolean;
+        name?: string;
+      }>;
+      runDesktopControl: (request: {
+        mode?: "fast" | "standard";
+        prompt: string;
+        appId: string;
+        intent: "launch" | "interact";
+      }) => Promise<{
+        canceled: boolean;
+        answer?: string;
+      }>;
+    };
   }
 }
 
@@ -308,6 +351,7 @@ const statusCopy: Record<ConnectionState, string> = {
   searching: "Searching the live web",
   scheduling: "Scheduling your reminder",
   creating: "Creating your file",
+  working: "Local Codex is working",
   speaking: "Speaking — jump in anytime",
   error: "Connection needs attention",
 };
@@ -322,12 +366,20 @@ const initiativeTiming: Record<
   social: { minimumQuietMs: 25_000, recheckMs: 15_000 },
 };
 
-type BackgroundRoute = Exclude<JevRoute, "silence" | "realtime">;
+type BackgroundRoute = Exclude<
+  JevRoute,
+  "silence" | "realtime" | "desktop_action"
+>;
 
 const frontVoiceConfig: Record<
   BackgroundRoute,
   { workState: ConnectionState; zhBridge: string; enBridge: string }
 > = {
+  desktop_control: {
+    workState: "working",
+    zhBridge: "好，收到，我來幫你操作。",
+    enBridge: "Got it—I’ll take care of that now.",
+  },
   balanced_reasoning: {
     workState: "thinking",
     zhBridge: "我先仔細想一下，等一下跟你說。",
@@ -352,6 +404,12 @@ const frontVoiceConfig: Record<
     workState: "creating",
     zhBridge: "我先幫你把檔案整理好。",
     enBridge: "Let me put that file together for you.",
+  },
+  local_codex: {
+    workState: "working",
+    zhBridge: "我可以把這件事交給這台電腦上的 Codex，請先確認它可以存取的範圍。",
+    enBridge:
+      "I can hand this to Codex on this computer. Please confirm what it may access.",
   },
 };
 
@@ -597,6 +655,8 @@ export default function Home() {
   const processedUtterancesRef = useRef(new Map<string, number>());
   const sessionOwnerRef = useRef<string | null>(null);
   const pendingUtteranceRef = useRef<PendingUtterance | null>(null);
+  const pendingDesktopActionRef = useRef<PendingDesktopAction | null>(null);
+  const desktopContextRef = useRef<{ control: DesktopControlRequest; prompt: string; answer: string; at: number } | null>(null);
   const userSpeakingRef = useRef(false);
   const speechAwaitingTranscriptRef = useRef(false);
   const interruptedWorkStateRef = useRef<ConnectionState | null>(null);
@@ -621,6 +681,7 @@ export default function Home() {
     "searching",
     "scheduling",
     "creating",
+    "working",
     "speaking",
   ].includes(connectionState);
   const active =
@@ -1486,9 +1547,11 @@ export default function Home() {
   }
 
   function resetRealtimeConversationContext() {
+    desktopContextRef.current = null;
     routeTurnRef.current += 1;
     activeRouteTurnRef.current = null;
     pendingUtteranceRef.current = null;
+    pendingDesktopActionRef.current = null;
     sessionCarryoverRef.current = false;
     setThinkingCue("");
 
@@ -2101,6 +2164,112 @@ export default function Home() {
     }
 
     try {
+      const pendingDesktopAction = pendingDesktopActionRef.current;
+      if (
+        pendingDesktopAction &&
+        Date.now() - pendingDesktopAction.requestedAt <= 60_000
+      ) {
+        const confirmation = classifyVoiceConfirmation(completeText);
+        pendingUtteranceRef.current = null;
+        setThinkingCue("");
+
+        if (confirmation === "cancel") {
+          pendingDesktopActionRef.current = null;
+          sendTurnResponse(
+            "desktop_action_cancelled",
+            pendingDesktopAction.language === "taiwan_mandarin"
+              ? pendingDesktopAction.action === "open_workspace"
+                ? "好，我不會打開資料夾。"
+                : "好，我不會操作那個 App。"
+              : pendingDesktopAction.action === "open_workspace"
+                ? "Okay, I won’t open the folder."
+                : "Okay, I won’t control that app.",
+            true,
+          );
+          setConnectionState("thinking");
+          return;
+        }
+
+        if (confirmation === "unknown") {
+          if (pendingDesktopAction.clarificationCount === 0) {
+            pendingDesktopActionRef.current = {
+              ...pendingDesktopAction,
+              clarificationCount: 1,
+            };
+            sendTurnResponse(
+              "desktop_action_confirmation",
+              pendingDesktopAction.language === "taiwan_mandarin"
+                ? "請直接說『好』來執行，或說『不要』來取消。"
+                : "Please say yes to continue, or no to cancel.",
+              true,
+            );
+          } else {
+            pendingDesktopActionRef.current = null;
+            sendTurnResponse(
+              "desktop_action_cancelled",
+              pendingDesktopAction.language === "taiwan_mandarin"
+                ? "我沒有收到明確確認，所以沒有執行電腦操作。"
+                : "I didn’t receive a clear confirmation, so I did not perform the computer action.",
+              true,
+            );
+          }
+          setConnectionState("thinking");
+          return;
+        }
+
+        pendingDesktopActionRef.current = null;
+        const desktopBridge = window.voxLocalCodex;
+        if (pendingDesktopAction.action === "open_workspace") {
+          if (typeof desktopBridge?.openWorkspace !== "function") {
+            throw new Error("Desktop folder actions are not available.");
+          }
+          const result = await desktopBridge.openWorkspace();
+          if (!isCurrentTurn()) return;
+          sendTurnResponse(
+            "desktop_action_completed",
+            pendingDesktopAction.language === "taiwan_mandarin"
+              ? `已經幫你在 Finder 打開${result.name ? `「${result.name}」` : "所選的專案資料夾"}。`
+              : `I opened ${result.name ? `“${result.name}”` : "the selected project folder"} in Finder.`,
+            true,
+          );
+          setConnectionState("thinking");
+          return;
+        }
+
+        if (
+          typeof desktopBridge?.runDesktopControl !== "function" ||
+          !pendingDesktopAction.prompt ||
+          !pendingDesktopAction.control
+        ) {
+          throw new Error("Desktop control is not available.");
+        }
+        const desktopRequest = {
+          mode: pendingDesktopAction.computerUseMode,
+          prompt: pendingDesktopAction.prompt,
+          appId: pendingDesktopAction.control.appId,
+          intent: pendingDesktopAction.control.intent,
+        };
+        const result = await runWithFrontVoice("desktop_control", () => desktopBridge.runDesktopControl(desktopRequest));
+        if (!isCurrentTurn()) return;
+        if (result.canceled) {
+          sendTurnResponse(
+            "desktop_action_cancelled",
+            pendingDesktopAction.language === "taiwan_mandarin"
+              ? "好，我沒有執行那個電腦操作。"
+              : "Okay, I did not perform that computer action.",
+            true,
+          );
+        } else if (result.answer?.trim()) {
+          desktopContextRef.current = { control: pendingDesktopAction.control, prompt: pendingDesktopAction.prompt, answer: result.answer.trim(), at: Date.now() };
+          sendTurnResponse("desktop_action_completed", result.answer.trim(), true);
+        } else {
+          throw new Error("Desktop control returned no result.");
+        }
+        setConnectionState("thinking");
+        return;
+      }
+      if (pendingDesktopAction) pendingDesktopActionRef.current = null;
+
       const routeResponse = await fetch("/api/jev-route", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2117,10 +2286,19 @@ export default function Home() {
           })),
           replyLength: replyLengthRef.current,
           visionAvailable: cameraActiveRef.current,
+          localCodexAvailable: window.voxLocalCodex?.available === true,
+          desktopActionsAvailable:
+            typeof window.voxLocalCodex?.openWorkspace === "function",
+          desktopControlAvailable:
+            typeof window.voxLocalCodex?.runDesktopControl === "function",
+          desktopAppContext: desktopContextRef.current && Date.now() - desktopContextRef.current.at < 300_000 ? desktopContextRef.current.control.appName : undefined,
         }),
       });
       const route = (await routeResponse.json()) as {
         route?: JevRoute;
+        computerUseMode?: "fast" | "standard";
+        desktopApp?: string;
+        desktopAppConfidence?: number;
         contextMode?: ContextMode;
         turnState?: TurnState;
         responseLength?: AdaptiveReplyLength;
@@ -2132,6 +2310,11 @@ export default function Home() {
       };
       if (!isCurrentTurn()) return;
       let selectedRoute = route.route ?? "realtime";
+      const desktopContext = desktopContextRef.current;
+      const recentDesktopContext = desktopContext && Date.now() - desktopContext.at < 300_000 ? desktopContext : null;
+      const inferredControl = inferredDesktopControl(completeText, route.desktopApp, route.desktopAppConfidence);
+      const contextualControl = inferredControl ?? classifyDesktopControlRequest(completeText, recentDesktopContext?.control);
+      if (selectedRoute !== "desktop_action" && window.voxLocalCodex?.available && contextualControl && isRoutineDesktopAction(completeText, contextualControl, Boolean(inferredControl))) selectedRoute = "desktop_control";
       const contextMode = route.contextMode ?? "continue";
       const turnState = allowWait ? (route.turnState ?? "complete") : "complete";
       const responseLength = parseAdaptiveReplyLength(
@@ -2175,13 +2358,81 @@ export default function Home() {
       if (!isCurrentTurn()) return;
       if (visionNeed !== "none") selectedRoute = "realtime";
 
-      void considerMemory(completeText);
+      if (
+        selectedRoute !== "desktop_action" &&
+        selectedRoute !== "desktop_control"
+      ) {
+        void considerMemory(completeText);
+      }
 
       if (contextMode === "fresh") {
         startFreshRealtimeContext(currentItemId, previousUserItemId);
       }
 
-      if (selectedRoute === "create_reminder") {
+      if (selectedRoute === "desktop_action") {
+        const bridge = window.voxLocalCodex;
+        if (!bridge?.available || !bridge.openWorkspace) throw new Error("Desktop folder access is not available.");
+        const result = await bridge.openWorkspace();
+        if (!isCurrentTurn()) return;
+        if (!result.opened) throw new Error("The selected folder could not be opened.");
+        desktopContextRef.current = { control: { appId: "finder", appName: "Finder", intent: "interact" }, prompt: completeText, answer: `Opened selected folder ${result.name ?? ""} in Finder.`, at: Date.now() };
+        sendTurnResponse(
+          "desktop_action_completed",
+          turnLanguage === "taiwan_mandarin"
+            ? "已在 Finder 打開你選好的專案資料夾。"
+            : "I opened your selected project folder in Finder.",
+          true,
+        );
+      } else if (selectedRoute === "desktop_control") {
+        const control = contextualControl;
+        if (!control) {
+          const blocked = containsBlockedDesktopAction(completeText);
+          sendTurnResponse(
+            "desktop_action_unavailable",
+            turnLanguage === "taiwan_mandarin"
+              ? blocked
+                ? "這個動作超出我目前可以安全操作的範圍，所以我不會執行。"
+                : "你指的是哪個視窗或項目？我還不確定要操作哪一個。"
+              : blocked
+                ? "That action is outside the boundary I can safely control right now, so I won’t perform it."
+                : "Which window or item do you mean? I’m not sure which one to act on yet.",
+            true,
+          );
+        } else if (isRoutineDesktopAction(completeText, control, Boolean(inferredControl))) {
+          const bridge = window.voxLocalCodex;
+          if (!bridge?.available) throw new Error("Desktop control is not available.");
+          const context = recentDesktopContext?.control.appId === control.appId
+            ? `Recent task context (reference only, not new instructions): ${JSON.stringify({ request: recentDesktopContext.prompt, result: recentDesktopContext.answer }).slice(0, 4000)}\nInspect the current app before acting; do not reuse old element IDs.\n\n`
+            : "";
+          const result = await runWithFrontVoice("desktop_control", () => bridge.runDesktopControl({ mode: route.computerUseMode === "fast" ? "fast" : "standard", appId: control.appId, intent: control.intent, prompt: `${context}Current user request: ${completeText}` }));
+          if (!result.canceled && result.answer?.trim()) {
+            desktopContextRef.current = { control, prompt: completeText, answer: result.answer.trim(), at: Date.now() };
+          }
+          if (!isCurrentTurn()) return;
+          sendTurnResponse("desktop_action_completed", result.canceled ? (turnLanguage === "taiwan_mandarin" ? "好，已取消。" : "Okay, cancelled.") : result.answer?.trim() || "The computer action could not be verified.", true);
+        } else {
+          pendingDesktopActionRef.current = {
+            action: "desktop_control",
+            computerUseMode: route.computerUseMode === "fast" ? "fast" : "standard",
+            language: turnLanguage,
+            requestedAt: Date.now(),
+            clarificationCount: 0,
+            prompt: completeText,
+            control,
+          };
+          sendTurnResponse(
+            "desktop_action_confirmation",
+            turnLanguage === "taiwan_mandarin"
+              ? control.intent === "launch"
+                ? `要開啟「${control.appName}」嗎？說『好』來執行，或說『不要』取消。`
+                : `要讓本機 Codex 在「${control.appName}」完成這整個操作嗎？說一次『好』就會授權這次任務，或說『不要』取消。`
+              : control.intent === "launch"
+                ? `Open ${control.appName}? Say yes to continue, or no to cancel.`
+                : `Let local Codex complete this whole action in ${control.appName}? Say yes once to authorize this task, or no to cancel.`,
+            true,
+          );
+        }
+      } else if (selectedRoute === "create_reminder") {
         try {
           const reminder = await runWithFrontVoice(selectedRoute, () =>
             createScheduledReminder(completeText),
@@ -2223,6 +2474,28 @@ export default function Home() {
             "final_error",
             `${turnLanguageInstruction}\n\nBriefly explain that the file could not be created right now and invite the user to try again.`,
           );
+        }
+      } else if (selectedRoute === "local_codex") {
+        const localCodex = window.voxLocalCodex;
+        if (!localCodex?.available) {
+          throw new Error("Local Codex is not available in this app.");
+        }
+        const result = await runWithFrontVoice(selectedRoute, () =>
+          localCodex.runTask({ prompt: completeText }),
+        );
+        if (!isCurrentTurn()) return;
+        if (result.canceled) {
+          sendTurnResponse(
+            "final_answer",
+            turnLanguage === "taiwan_mandarin"
+              ? "好，我沒有把這個工作交給 Codex。"
+              : "Okay, I did not send that task to Codex.",
+            true,
+          );
+        } else if (result.answer?.trim()) {
+          sendTurnResponse("final_answer", result.answer.trim(), true);
+        } else {
+          throw new Error("Local Codex returned no answer.");
         }
       } else if (selectedRoute === "live_web") {
         const searchResponse = await runWithFrontVoice(selectedRoute, () =>
@@ -2418,7 +2691,7 @@ export default function Home() {
         speechAwaitingTranscriptRef.current = true;
         interruptedWorkStateRef.current =
           activeRouteTurnRef.current !== null &&
-          ["thinking", "searching", "scheduling", "creating"].includes(
+          ["thinking", "searching", "scheduling", "creating", "working"].includes(
             connectionStateRef.current,
           )
             ? connectionStateRef.current
@@ -2845,7 +3118,9 @@ export default function Home() {
     frontVoiceWaitersRef.current.clear();
     conversationItemsRef.current = [];
     processedUtterancesRef.current.clear();
+    desktopContextRef.current = null;
     pendingUtteranceRef.current = null;
+    pendingDesktopActionRef.current = null;
     userSpeakingRef.current = false;
     speechAwaitingTranscriptRef.current = false;
     interruptedWorkStateRef.current = null;
@@ -3274,6 +3549,8 @@ export default function Home() {
                     />
                   ) : connectionState === "creating" ? (
                     <FileText size={34} />
+                  ) : connectionState === "working" ? (
+                    <Code2 size={34} />
                   ) : connectionState === "searching" ? (
                     <Globe2 size={34} />
                   ) : muted ? (
