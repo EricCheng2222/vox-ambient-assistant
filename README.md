@@ -92,9 +92,14 @@ Smart-home control is desktop-only and local-first: device credentials are encry
 | **Vox Cloud** | Managed by Vox; a subscription may be introduced later with notice | Activation code + email | Encrypted cloud conversation, preferences, memory, reminders, and files | Web and desktop |
 | **Personal** | User pays OpenAI and TypeSafe directly; no Vox monthly fee | User’s OpenAI and TypeSafe API keys, plus optional local Codex sign-in | Provider keys and conversation preferences remain on the device | Desktop only |
 
-Personal mode loads a locally bundled copy of the interface and rejects every local `/api/*` cloud request. Its AI traffic goes directly from the desktop app to OpenAI and TypeSafe, while Codex tasks stay behind the local Codex boundary.
+Vox Desktop always loads its bundled interface, including in Cloud mode. Cloud mode reaches the account APIs through a locked local gateway; the hosted server never supplies executable interface code to the privileged desktop window. Personal mode rejects every cloud API request. Its AI traffic goes directly from the desktop app to OpenAI and TypeSafe, while Codex tasks stay behind the local Codex boundary.
 
 Personal mode currently keeps the transcript and preferences on one device. Cloud memory, cross-device sync, hosted files, reminders, and invite codes are intentionally unavailable because those features require the Vox backend.
+
+The interface labels the two scopes explicitly:
+
+- **Account · Vox Cloud** — reply length, voice, initiative, theme, transcript, memory, reminders, and files that synchronize through the signed-in account.
+- **Device · This Mac** — API keys, Codex workspace, installed-app access, Computer Use, macOS permissions, and smart-home credentials. Account data can never enable or widen these local capabilities.
 
 ## Main features
 
@@ -104,9 +109,18 @@ Personal mode currently keeps the transcript and preferences on one device. Clou
 - User-selectable voice, reply-length preference, initiative, and visual theme
 - On-request camera frames with a visible capture effect and no continuous image upload
 - Natural response-length variance and conversational-move selection, so advice is not the default
+- Always-on bounded conversation continuity: Vox keeps recent dialogue available instead of asking the router whether to include it
 - Optional cloud memory, reminders, generated files, invitations, and cross-device transcript sync
 - Desktop-local Codex and constrained Computer Use integration
 - Desktop-local smart-home hub with an initial Dyson Wi-Fi purifier adapter
+
+## Conversation context and memory
+
+Vox treats an uncleared conversation as one continuous dialogue, including after a voice connection ends and reconnects. Recent transcript history is seeded into the new Realtime conversation, so short follow-ups such as “continue” or “what about that?” can refer naturally to the preceding exchange. Topic changes no longer cause the router to discard context; using **Clear** is the explicit way to reset the conversation.
+
+To bound cost and prevent unlimited growth, OpenAI Realtime receives a rolling maximum of **8,000 post-instruction input tokens**. When that window is exceeded, the service drops the oldest conversation items and retains 80% of the window to reduce repeated truncation. Router and presence decisions receive a bounded recent transcript of at most 24 messages and 12,000 characters.
+
+Cloud memory is separate from this short-term context window. Vox stores concise memory summaries rather than copying whole transcript passages. Jev receives eligible saved-memory summaries and decides whether the current moment calls for a natural callback, an emotional follow-up, or no explicit memory reference. Cooldowns and social eligibility still apply, and saved facts may be used silently when strictly needed to answer the current request. Personal mode remains independent of the Vox backend and therefore does not use Cloud memory.
 
 ## Troubleshooting
 
@@ -163,6 +177,8 @@ VOX_DESKTOP_DEV_URL=http://localhost:5173 npm start
 ## Security model
 
 - Cloud sessions use signed, expiring, HttpOnly cookies scoped to opaque user IDs.
+- The packaged desktop never executes JavaScript delivered by Vox Cloud. A per-process secret binds its allowlisted API gateway to the current desktop renderer, and cloud session cookies are attached only by Electron's main process.
+- Cloud routing cannot create local authority: Computer Use, Codex, workspace access, camera capture, and smart-home commands require independently detected local user intent and local policy checks.
 - Activation codes are hashed; email addresses and synchronized transcript messages are encrypted before D1 storage.
 - Generated file bodies stay in private R2.
 - Personal provider keys are encrypted locally and are never returned to the renderer.

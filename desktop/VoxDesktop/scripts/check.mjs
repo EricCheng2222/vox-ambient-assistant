@@ -39,6 +39,13 @@ if (packageJson.dependencies?.["@openai/codex-sdk"] !== "0.155.1") {
   throw new Error("The desktop app must pin the tested Codex SDK version.");
 }
 
+const mainSource = await readFile(path.join(root, "src/main.mjs"), "utf8");
+const trustedOriginBlock = mainSource.match(/const trustedOrigins = \[([\s\S]*?)\];/u)?.[1] ?? "";
+assert.doesNotMatch(trustedOriginBlock, /productionUrl/u);
+assert.match(mainSource, /app\.isPackaged && developmentUrl \? developmentUrl : localVoxServer\.url/u);
+assert.match(mainSource, /desktopSessionHeader/u);
+assert.match(mainSource, /session\.defaultSession\.fetch\(request/u);
+
 assert.equal(approvedDesktopApp("finder")?.bundleId, "com.apple.finder");
 assert.equal(approvedDesktopApp("terminal"), null);
 assert.equal(isBlockedDesktopControlPrompt("Delete this in Finder"), true);

@@ -18,7 +18,6 @@ const result = await createPersonalRoute(
         answers: {
           route: { choice: "realtime", confidence: 0.9 },
           turn_state: { choice: "complete", confidence: 0.9 },
-          context_mode: { choice: "continue", confidence: 0.8 },
           conversation_move: { choice: "answer", confidence: 0.9 },
           response_length: { choice: "standard", confidence: 0.8 },
           visual_need: { choice: "none", confidence: 0.9 },

@@ -5,7 +5,12 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { startLocalVoxServer } from "../src/local-web-server.mjs";
 
-test("the local desktop server serves bundled client assets before the web worker", async () => {
+const desktopSessionHeader = {
+  name: "x-vox-desktop-session",
+  value: "test-desktop-session-secret",
+};
+
+async function fixture() {
   const webRoot = await mkdtemp(path.join(tmpdir(), "vox-local-web-"));
   const serverRoot = path.join(webRoot, "server");
   const assetRoot = path.join(webRoot, "client", "_next", "static", "chunks");
@@ -13,11 +18,18 @@ test("the local desktop server serves bundled client assets before the web worke
   await mkdir(assetRoot, { recursive: true });
   await writeFile(
     path.join(serverRoot, "index.js"),
-    'module.exports = { fetch: async () => new Response("<main>Vox</main>", { headers: { "Content-Type": "text/html" } }) };\n',
+    'module.exports = { fetch: async () => new Response("<main>Bundled Vox</main>", { headers: { "Content-Type": "text/html" } }) };\n',
   );
   await writeFile(path.join(assetRoot, "app.js"), "globalThis.voxLoaded = true;\n");
+  return webRoot;
+}
 
-  const server = await startLocalVoxServer(webRoot);
+test("the desktop always serves its bundled interface and blocks Personal-mode cloud APIs", async () => {
+  const webRoot = await fixture();
+  const server = await startLocalVoxServer(webRoot, {
+    desktopSessionHeader,
+    getConnectionMode: () => "personal",
+  });
   try {
     const asset = await fetch(new URL("/_next/static/chunks/app.js", server.url));
     assert.equal(asset.status, 200);
@@ -26,10 +38,64 @@ test("the local desktop server serves bundled client assets before the web worke
 
     const page = await fetch(server.url);
     assert.equal(page.status, 200);
-    assert.match(await page.text(), /<main>Vox<\/main>/u);
+    assert.match(await page.text(), /<main>Bundled Vox<\/main>/u);
 
-    const api = await fetch(new URL("/api/auth", server.url));
-    assert.equal(api.status, 403);
+    const unauthorized = await fetch(new URL("/api/auth", server.url));
+    assert.equal(unauthorized.status, 401);
+
+    const personalApi = await fetch(new URL("/api/auth", server.url), {
+      headers: { [desktopSessionHeader.name]: desktopSessionHeader.value },
+    });
+    assert.equal(personalApi.status, 403);
+  } finally {
+    await server.close();
+    await rm(webRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cloud mode proxies only allowlisted APIs through its per-process desktop binding", async () => {
+  const webRoot = await fixture();
+  const proxied = [];
+  const server = await startLocalVoxServer(webRoot, {
+    cloudOrigin: "https://vox.example/",
+    desktopSessionHeader,
+    getConnectionMode: () => "cloud",
+    cloudFetch: async (request) => {
+      proxied.push(request);
+      return Response.json(
+        { authenticated: true },
+        { headers: { "Set-Cookie": "vox_session=cloud-secret; HttpOnly; Secure" } },
+      );
+    },
+  });
+
+  try {
+    const unauthorized = await fetch(new URL("/api/auth", server.url));
+    assert.equal(unauthorized.status, 401);
+    assert.equal(proxied.length, 0);
+
+    const headers = { [desktopSessionHeader.name]: desktopSessionHeader.value };
+    const response = await fetch(new URL("/api/auth?device=desktop", server.url), { headers });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { authenticated: true });
+    assert.equal(proxied.length, 1);
+    assert.equal(proxied[0].url, "https://vox.example/api/auth?device=desktop");
+    assert.equal(proxied[0].headers.get(desktopSessionHeader.name), null);
+    assert.equal(proxied[0].headers.get("cookie"), null);
+    assert.equal(response.headers.get("set-cookie"), null);
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+    assert.match(response.headers.get("content-security-policy") ?? "", /default-src 'none'/u);
+
+    const unknown = await fetch(new URL("/api/not-a-desktop-endpoint", server.url), { headers });
+    assert.equal(unknown.status, 404);
+    assert.equal(proxied.length, 1);
+
+    const wrongMethod = await fetch(new URL("/api/preferences", server.url), {
+      method: "POST",
+      headers,
+    });
+    assert.equal(wrongMethod.status, 405);
+    assert.equal(proxied.length, 1);
   } finally {
     await server.close();
     await rm(webRoot, { recursive: true, force: true });

@@ -153,10 +153,16 @@ export function parseDysonCommand(text) {
       enabled: !/(?:turn|switch|set|關|关|取消|停).{0,12}(?:off|oscillat|swing|擺動|摆动|搖頭|摇头)|(?:oscillat|swing|擺動|摆动|搖頭|摇头).{0,12}(?:off|關|关|取消|停)/iu.test(value),
     };
   }
-  const speed = lower.match(/(?:fan\s*)?(?:speed|level)|風速|风速|檔位|档位|第\s*([1-9]|10)\s*檔/u)
-    ? value.match(/(?:speed|level|風速|风速|檔位|档位|第)\D{0,12}(10|[1-9])/iu)
-    : value.match(/(?:dyson|purifier|清淨機|清净机|戴森)\D{0,20}(10|[1-9])(?:\s*(?:檔|档))?/iu);
-  if (speed) return { kind: "speed", speed: Number(speed[1]) };
+  const speed = lower.match(/(?:fan\s*)?(?:speed|level)|風速|风速|檔位|档位|第\s*(?:10|[1-9一二兩两三四五六七八九十])\s*(?:檔|档)/u)
+    ? value.match(/(?:speed|level|風速|风速|檔位|档位|第)\D{0,12}(10|[1-9]|[一二兩两三四五六七八九十])/iu)
+    : value.match(/(?:dyson|purifier|清淨機|清净机|戴森)\D{0,20}(10|[1-9]|[一二兩两三四五六七八九十])(?:\s*(?:檔|档))?/iu);
+  if (speed) {
+    const spokenSpeed = {
+      一: 1, 二: 2, 兩: 2, 两: 2, 三: 3, 四: 4,
+      五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
+    }[speed[1]];
+    return { kind: "speed", speed: spokenSpeed ?? Number(speed[1]) };
+  }
   if (/(?:turn|switch|power)[^.!?。！？]{0,40}\boff\b|shut\s*down|關掉|关掉|關閉|关闭|關機|关机/iu.test(value)) {
     return { kind: "power", enabled: false };
   }
@@ -208,17 +214,25 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+export function dysonMqttOptions(config) {
+  return {
+    // Newer Dyson brokers, including HP09/527K, require MQTT 3.1.1.
+    protocolVersion: 4,
+    username: config.serial,
+    password: config.credential,
+    clientId: `vox-${randomUUID().replaceAll("-", "").slice(0, 18)}`,
+    clean: true,
+    connectTimeout: 7_000,
+    reconnectPeriod: 0,
+  };
+}
+
 function connectClient(config) {
   return new Promise((resolve, reject) => {
-    const client = mqtt.connect(`mqtt://${config.host}:1883`, {
-      protocolVersion: 3,
-      username: config.serial,
-      password: config.credential,
-      clientId: `vox-${randomUUID().replaceAll("-", "").slice(0, 18)}`,
-      clean: true,
-      connectTimeout: 7_000,
-      reconnectPeriod: 0,
-    });
+    const client = mqtt.connect(
+      `mqtt://${config.host}:1883`,
+      dysonMqttOptions(config),
+    );
     const timer = setTimeout(() => {
       client.end(true);
       reject(new Error("The Dyson purifier did not answer on the local network."));
@@ -226,7 +240,7 @@ function connectClient(config) {
     const onError = (error) => {
       clearTimeout(timer);
       client.end(true);
-      reject(new Error(/not authorized|bad user|bad password|connack/iu.test(error.message)
+      reject(new Error(/not authorized|bad user|bad password/iu.test(error.message)
         ? "The purifier rejected its local device credential."
         : "Vox could not connect to the Dyson purifier on this Wi-Fi network."));
     };
@@ -292,20 +306,20 @@ function answerFor(intent, status, prompt, verified) {
     if (status.pm25 !== null) facts.push(`PM2.5 ${status.pm25}`);
     return zh ? `${name}${facts.length ? facts.join("，") : "已連線，但暫時沒有感測資料"}。` : `${name} ${facts.length ? facts.join(", ") : "is connected, but sensor data is not available yet"}.`;
   }
-  const action = intent.kind === "power"
-    ? (zh ? (intent.enabled ? "開啟" : "關閉") : (intent.enabled ? "turned on" : "turned off"))
-    : intent.kind === "speed"
-      ? (zh ? `把風速設為 ${intent.speed}` : `set the fan speed to ${intent.speed}`)
-      : intent.kind === "auto"
-        ? (zh ? `${intent.enabled ? "開啟" : "關閉"}自動模式` : `${intent.enabled ? "enabled" : "disabled"} auto mode`)
-        : intent.kind === "night"
-          ? (zh ? `${intent.enabled ? "開啟" : "關閉"}夜間模式` : `${intent.enabled ? "enabled" : "disabled"} night mode`)
-          : (zh ? `${intent.enabled ? "開啟" : "關閉"}擺動` : `${intent.enabled ? "enabled" : "disabled"} oscillation`);
-  return zh
-    ? `${verified ? "已經" : "已送出本機指令，嘗試"}${action} ${name}。`
-    : verified
-      ? `I ${action} ${name}.`
-      : `I sent a local command to ${name}, but could not verify the updated state.`;
+  if (zh) {
+    const prefix = verified ? "已經" : "已送出本機指令，嘗試";
+    if (intent.kind === "power") return `${prefix}${intent.enabled ? "開啟" : "關閉"} ${name}。`;
+    if (intent.kind === "speed") return `${prefix}把 ${name} 風速設為 ${intent.speed}。`;
+    if (intent.kind === "auto") return `${prefix}${intent.enabled ? "開啟" : "關閉"} ${name} 的自動模式。`;
+    if (intent.kind === "night") return `${prefix}${intent.enabled ? "開啟" : "關閉"} ${name} 的夜間模式。`;
+    return `${prefix}${intent.enabled ? "開啟" : "關閉"} ${name} 的擺動。`;
+  }
+  if (!verified) return `I sent a local command to ${name}, but could not verify the updated state.`;
+  if (intent.kind === "power") return `I turned ${name} ${intent.enabled ? "on" : "off"}.`;
+  if (intent.kind === "speed") return `I set ${name}'s fan speed to ${intent.speed}.`;
+  if (intent.kind === "auto") return `I ${intent.enabled ? "enabled" : "disabled"} ${name}'s auto mode.`;
+  if (intent.kind === "night") return `I ${intent.enabled ? "enabled" : "disabled"} ${name}'s night mode.`;
+  return `I ${intent.enabled ? "enabled" : "disabled"} ${name}'s oscillation.`;
 }
 
 export async function runDysonCommand(config, prompt) {

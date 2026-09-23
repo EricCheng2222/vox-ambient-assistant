@@ -10,7 +10,7 @@ import {
 } from "electron";
 import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -51,6 +51,10 @@ const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 const shellFile = path.join(currentDirectory, "shell.html");
 const shellUrl = pathToFileURL(shellFile).href;
 const settingsFileName = "desktop-settings.json";
+const desktopSessionHeader = {
+  name: "x-vox-desktop-session",
+  value: randomBytes(32).toString("base64url"),
+};
 const toolbarHeight = 56;
 const drawerWidth = 460;
 const maximumPromptLength = 12_000;
@@ -62,6 +66,7 @@ let mainWindow = null;
 let voxView = null;
 let localVoxServer = null;
 let activeVoxOrigin = "";
+let activeConnectionMode = null;
 let panelOpen = false;
 let activeTask = null;
 let taskLaunchPending = false;
@@ -84,9 +89,8 @@ function isTrustedVoxSender(event) {
   if (!voxView || event.sender !== voxView.webContents) return false;
   const frame = event.senderFrame;
   const trustedOrigins = [
-    new URL(productionUrl).origin,
     localVoxServer?.origin,
-    developmentUrl ? new URL(developmentUrl).origin : null,
+    !app.isPackaged && developmentUrl ? new URL(developmentUrl).origin : null,
   ].filter(Boolean);
   return Boolean(
     frame &&
@@ -141,9 +145,8 @@ function localWebRoot() {
 
 async function loadConnectionSurface(mode) {
   if (!voxView || voxView.webContents.isDestroyed()) return;
-  const target = mode === "cloud"
-    ? (app.isPackaged || !developmentUrl ? productionUrl : developmentUrl)
-    : localVoxServer.url;
+  activeConnectionMode = connectionMode(mode);
+  const target = !app.isPackaged && developmentUrl ? developmentUrl : localVoxServer.url;
   activeVoxOrigin = new URL(target).origin;
   await voxView.webContents.loadURL(target);
 }
@@ -575,6 +578,7 @@ function registerIpcHandlers() {
     if (!mode) throw new Error("Choose Vox Cloud or Personal mode.");
     const settings = await readSettings();
     await saveSettings({ ...settings, connectionMode: mode });
+    activeConnectionMode = mode;
     setTimeout(() => void loadConnectionSurface(mode), 80);
     return { mode, ...personalKeysStatus(settings) };
   });
@@ -599,6 +603,7 @@ function registerIpcHandlers() {
       personalOpenAIKey,
       personalTypeSafeKey,
     });
+    activeConnectionMode = "personal";
     return {
       mode: "personal",
       personalKeyConfigured: true,
@@ -999,15 +1004,42 @@ function configureSessionSecurity() {
   });
 }
 
+function configureDesktopApiSessionBinding() {
+  if (!localVoxServer) return;
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: [`${localVoxServer.origin}/*`] },
+    (details, callback) => {
+      const requestHeaders = { ...details.requestHeaders };
+      if (details.webContentsId === voxView?.webContents.id) {
+        requestHeaders[desktopSessionHeader.name] = desktopSessionHeader.value;
+      }
+      callback({ requestHeaders });
+    },
+  );
+}
+
 function protectVoxNavigation() {
   voxView.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://") || url.startsWith("http://")) void shell.openExternal(url);
     return { action: "deny" };
   });
   voxView.webContents.on("will-navigate", (event, url) => {
-    if (normalizeOrigin(url) === activeVoxOrigin) return;
+    let destination = null;
+    try {
+      destination = new URL(url);
+    } catch {
+      // Treat malformed navigation as untrusted.
+    }
+    if (
+      destination?.origin === activeVoxOrigin &&
+      !destination.pathname.startsWith("/api/")
+    ) return;
     event.preventDefault();
-    if (url.startsWith("https://") || url.startsWith("http://")) void shell.openExternal(url);
+    if (
+      destination &&
+      destination.origin !== localVoxServer?.origin &&
+      (destination.protocol === "https:" || destination.protocol === "http:")
+    ) void shell.openExternal(url);
   });
 }
 
@@ -1043,6 +1075,7 @@ async function createWindow() {
   });
   mainWindow.contentView.addChildView(voxView);
   voxView.setBackgroundColor("#07151d");
+  configureDesktopApiSessionBinding();
   protectVoxNavigation();
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -1061,9 +1094,8 @@ async function createWindow() {
   configureSessionSecurity();
   const settings = await readSettings();
   const mode = connectionMode(settings.connectionMode);
-  const initialTarget = mode === "cloud"
-    ? (app.isPackaged || !developmentUrl ? productionUrl : developmentUrl)
-    : localVoxServer.url;
+  activeConnectionMode = mode;
+  const initialTarget = !app.isPackaged && developmentUrl ? developmentUrl : localVoxServer.url;
   activeVoxOrigin = new URL(initialTarget).origin;
   await Promise.all([mainWindow.loadFile(shellFile), voxView.webContents.loadURL(initialTarget)]);
   layoutVoxView();
@@ -1071,7 +1103,16 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  localVoxServer = await startLocalVoxServer(localWebRoot());
+  activeConnectionMode = connectionMode((await readSettings()).connectionMode);
+  localVoxServer = await startLocalVoxServer(localWebRoot(), {
+    cloudOrigin: productionUrl,
+    desktopSessionHeader,
+    getConnectionMode: () => activeConnectionMode,
+    cloudFetch: (request) => session.defaultSession.fetch(request, {
+      credentials: "include",
+      redirect: "error",
+    }),
+  });
   registerIpcHandlers();
   await createWindow();
   app.on("activate", () => {

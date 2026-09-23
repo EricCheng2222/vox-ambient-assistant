@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,6 +14,46 @@ const contentTypes = new Map([
   [".svg", "image/svg+xml"],
   [".woff", "font/woff"],
   [".woff2", "font/woff2"],
+]);
+
+const cloudApiMethods = new Map([
+  ["/api/auth", new Set(["GET", "POST", "DELETE"])],
+  ["/api/conversation", new Set(["GET", "POST", "DELETE"])],
+  ["/api/files", new Set(["GET", "POST", "DELETE"])],
+  ["/api/invites", new Set(["GET", "POST"])],
+  ["/api/jev-presence", new Set(["POST"])],
+  ["/api/jev-route", new Set(["POST"])],
+  ["/api/memories", new Set(["GET", "POST", "PATCH", "DELETE"])],
+  ["/api/preferences", new Set(["GET", "PATCH"])],
+  ["/api/realtime-token", new Set(["POST"])],
+  ["/api/reason", new Set(["POST"])],
+  ["/api/reminders", new Set(["GET", "POST", "PATCH", "DELETE"])],
+  ["/api/reminders/due", new Set(["POST"])],
+]);
+
+const strippedRequestHeaders = new Set([
+  "accept-encoding",
+  "authorization",
+  "connection",
+  "content-length",
+  "cookie",
+  "host",
+  "origin",
+  "referer",
+  "sec-fetch-dest",
+  "sec-fetch-mode",
+  "sec-fetch-site",
+  "transfer-encoding",
+  "upgrade",
+]);
+
+const strippedResponseHeaders = new Set([
+  "connection",
+  "content-encoding",
+  "content-length",
+  "content-security-policy",
+  "set-cookie",
+  "transfer-encoding",
 ]);
 
 function safeAssetPath(clientRoot, pathname) {
@@ -74,7 +115,81 @@ async function writeResponse(response, target) {
   target.end();
 }
 
-export async function startLocalVoxServer(webRoot) {
+function desktopApiError(error, status) {
+  return Response.json(
+    { error },
+    {
+      status,
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "Cross-Origin-Resource-Policy": "same-origin",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+      },
+    },
+  );
+}
+
+function desktopSessionMatches(received, expected) {
+  if (typeof received !== "string" || typeof expected !== "string") return false;
+  const receivedBytes = Buffer.from(received);
+  const expectedBytes = Buffer.from(expected);
+  return receivedBytes.length === expectedBytes.length &&
+    timingSafeEqual(receivedBytes, expectedBytes);
+}
+
+function cloudApiRequest(webRequest, cloudOrigin, desktopSessionHeader) {
+  const sourceUrl = new URL(webRequest.url);
+  const targetUrl = new URL(`${sourceUrl.pathname}${sourceUrl.search}`, cloudOrigin);
+  const headers = new Headers();
+  webRequest.headers.forEach((value, name) => {
+    if (
+      name.toLowerCase() !== desktopSessionHeader.name.toLowerCase() &&
+      !strippedRequestHeaders.has(name.toLowerCase())
+    ) {
+      headers.set(name, value);
+    }
+  });
+  headers.set("Origin", new URL(cloudOrigin).origin);
+  headers.set("Referer", cloudOrigin);
+
+  const method = webRequest.method.toUpperCase();
+  return new Request(targetUrl, {
+    method,
+    headers,
+    redirect: "error",
+    ...(method === "GET" || method === "HEAD"
+      ? {}
+      : { body: webRequest.body, duplex: "half" }),
+  });
+}
+
+function safeCloudApiResponse(response) {
+  const headers = new Headers();
+  response.headers.forEach((value, name) => {
+    if (!strippedResponseHeaders.has(name.toLowerCase())) headers.set(name, value);
+  });
+  headers.set("Cache-Control", "no-store");
+  headers.set("Content-Security-Policy", "default-src 'none'; sandbox");
+  headers.set("Cross-Origin-Resource-Policy", "same-origin");
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("X-Frame-Options", "DENY");
+  headers.set("Referrer-Policy", "no-referrer");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+export async function startLocalVoxServer(webRoot, options = {}) {
+  const {
+    cloudOrigin = "",
+    cloudFetch,
+    desktopSessionHeader = { name: "x-vox-desktop-session", value: "" },
+    getConnectionMode = () => "personal",
+  } = options;
   const serverModule = await import(pathToFileURL(path.join(webRoot, "server", "index.js")).href);
   const worker = serverModule.default;
   if (!worker?.fetch) throw new Error("The bundled Vox web interface is incomplete.");
@@ -83,14 +198,39 @@ export async function startLocalVoxServer(webRoot) {
   const server = createServer(async (request, response) => {
     try {
       const webRequest = await nodeRequest(request, origin);
-      if (new URL(webRequest.url).pathname.startsWith("/api/")) {
-        await writeResponse(
-          Response.json(
-            { error: "Vox Cloud APIs are disabled in Personal mode." },
-            { status: 403, headers: { "Cache-Control": "no-store" } },
-          ),
-          response,
+      const requestUrl = new URL(webRequest.url);
+      if (requestUrl.pathname.startsWith("/api/")) {
+        if (
+          !desktopSessionHeader.value ||
+          !desktopSessionMatches(
+            webRequest.headers.get(desktopSessionHeader.name),
+            desktopSessionHeader.value,
+          )
+        ) {
+          await writeResponse(desktopApiError("This desktop session is not authorized.", 401), response);
+          return;
+        }
+        if (getConnectionMode() !== "cloud") {
+          await writeResponse(desktopApiError("Vox Cloud APIs are disabled in Personal mode.", 403), response);
+          return;
+        }
+        const allowedMethods = cloudApiMethods.get(requestUrl.pathname);
+        if (!allowedMethods) {
+          await writeResponse(desktopApiError("That Vox Cloud endpoint is not available to the desktop app.", 404), response);
+          return;
+        }
+        if (!allowedMethods.has(webRequest.method.toUpperCase())) {
+          await writeResponse(desktopApiError("That request method is not allowed.", 405), response);
+          return;
+        }
+        if (!cloudOrigin || typeof cloudFetch !== "function") {
+          await writeResponse(desktopApiError("Vox Cloud is temporarily unavailable.", 503), response);
+          return;
+        }
+        const cloudResponse = await cloudFetch(
+          cloudApiRequest(webRequest, cloudOrigin, desktopSessionHeader),
         );
+        await writeResponse(safeCloudApiResponse(cloudResponse), response);
         return;
       }
       if (webRequest.method === "GET") {

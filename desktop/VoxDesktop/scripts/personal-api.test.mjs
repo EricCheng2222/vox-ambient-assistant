@@ -17,6 +17,9 @@ const session = personalRealtimeSession({
 assert.equal(session.audio.output.voice, "cedar");
 assert.equal(session.audio.input.transcription.language, "zh");
 assert.equal(session.audio.input.turn_detection.create_response, false);
+assert.equal(session.truncation.type, "retention_ratio");
+assert.equal(session.truncation.retention_ratio, 0.8);
+assert.equal(session.truncation.token_limits.post_instructions, 8_000);
 
 let requestHeaders;
 const result = await createPersonalRealtimeSecret(

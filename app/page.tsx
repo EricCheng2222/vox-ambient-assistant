@@ -69,7 +69,10 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Toaster } from "@/components/ui/sonner";
-import { classifyVoiceConfirmation } from "@/lib/desktop-action-route";
+import {
+  classifyVoiceConfirmation,
+  isOpenWorkspaceRequest,
+} from "@/lib/desktop-action-route";
 import {
   classifyDesktopControlRequest,
   containsBlockedDesktopAction,
@@ -100,6 +103,11 @@ import {
   type ReplyLength,
 } from "@/lib/reply-length";
 import { API_BUDGET_MESSAGE } from "@/lib/provider-error";
+import {
+  boundedRecentMessages,
+  formatConversationCarryover,
+  realtimeTruncationConfig,
+} from "@/lib/conversation-context";
 import {
   responseLanguageInstruction,
   selectResponseLanguage,
@@ -134,13 +142,21 @@ import {
 } from "@/lib/visual-theme";
 import {
   fallbackVisionNeed,
-  parseVisionNeed,
   visualTurnInstruction,
   createVisionItemId,
   type VisionNeed,
 } from "@/lib/vision";
 import { isLocalCodexTask } from "@/lib/local-codex-route";
-import { isSmartHomeControlRequest } from "@/lib/smart-home-route";
+import {
+  isSmartHomeControlRequest,
+  isSmartHomeFollowUpRequest,
+  isSmartHomeRetryRequest,
+  smartHomeFailureMessage,
+} from "@/lib/smart-home-route";
+import {
+  enforceLocalCapabilityRoute,
+  locallyAuthorizedVisionNeed,
+} from "@/lib/local-capability-policy";
 
 type CameraFacingMode = "user" | "environment";
 
@@ -214,14 +230,12 @@ type SmartHomeDiscoveredDevice = {
   productType?: string;
 };
 type DysonSetupMethod = "sticker" | "manual";
-type ContextMode = "continue" | "fresh";
 type TurnState = "wait" | "complete";
 type RouteDecision = {
   route?: JevRoute;
   computerUseMode?: "fast" | "standard";
   desktopApp?: string;
   desktopAppConfidence?: number;
-  contextMode?: ContextMode;
   turnState?: TurnState;
   responseLength?: AdaptiveReplyLength;
   responsePosture?: ResponsePosture;
@@ -291,34 +305,6 @@ type EchoCandidate = {
 
 const LEGACY_VOICE_STORAGE_KEY = "vox.realtimeVoice";
 const LEGACY_REPLY_LENGTH_STORAGE_KEY = "vox.replyLength";
-const MAX_CARRYOVER_MESSAGES = 30;
-const MAX_CARRYOVER_CHARACTERS = 12_000;
-
-function formatConversationCarryover(messages: Message[]) {
-  const lines: string[] = [];
-  let characters = 0;
-
-  for (const message of messages.slice(-MAX_CARRYOVER_MESSAGES).reverse()) {
-    const text = message.text.trim();
-    if (!text) continue;
-    const line = `${message.role === "user" ? "USER" : "VOX"}: ${text}`;
-    if (characters + line.length > MAX_CARRYOVER_CHARACTERS && lines.length > 0) {
-      break;
-    }
-    lines.unshift(line.slice(0, MAX_CARRYOVER_CHARACTERS));
-    characters += line.length;
-  }
-
-  if (lines.length === 0) return "";
-  return [
-    "The user kept the conversation below when ending the previous voice session.",
-    "Treat it as earlier dialogue context, not as a new message. Continue naturally from it when relevant, without announcing a recap or saying that the session restarted.",
-    "<prior_conversation>",
-    ...lines,
-    "</prior_conversation>",
-  ].join("\n");
-}
-
 type RealtimeEvent = {
   type?: string;
   event_id?: string;
@@ -797,6 +783,7 @@ export default function Home() {
   const pendingDesktopActionRef = useRef<PendingDesktopAction | null>(null);
   const desktopClarificationRef = useRef<{ text: string; at: number } | null>(null);
   const desktopContextRef = useRef<{ control: DesktopControlRequest; prompt: string; answer: string; at: number } | null>(null);
+  const smartHomeContextRef = useRef<{ at: number; prompt: string } | null>(null);
   const userSpeakingRef = useRef(false);
   const speechAwaitingTranscriptRef = useRef(false);
   const interruptedWorkStateRef = useRef<ConnectionState | null>(null);
@@ -994,9 +981,11 @@ export default function Home() {
     };
     window.addEventListener("focus", syncWhenVisible);
     document.addEventListener("visibilitychange", syncWhenVisible);
+    const timer = window.setInterval(syncWhenVisible, 30_000);
     return () => {
       window.removeEventListener("focus", syncWhenVisible);
       document.removeEventListener("visibilitychange", syncWhenVisible);
+      window.clearInterval(timer);
     };
     // Loading is intentionally keyed to the authentication transition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1816,19 +1805,16 @@ export default function Home() {
   ) {
     const channel = channelRef.current;
     if (channel?.readyState === "open") {
-      const carryover = sessionCarryoverRef.current
-        ? formatConversationCarryover(messagesRef.current)
-        : "";
       channel.send(
         JSON.stringify({
           type: "session.update",
           session: {
             type: "realtime",
+            truncation: realtimeTruncationConfig(),
             audio: { input: { transcription: transcriptionConfig(mandarinTranscriptionRef.current) } },
             instructions: [
               buildVoiceInstructions(memoriesRef.current),
               replyLengthInstruction(nextReplyLength),
-              carryover,
             ]
               .filter(Boolean)
               .join("\n\n"),
@@ -1838,38 +1824,22 @@ export default function Home() {
     }
   }
 
-  function startFreshRealtimeContext(
-    currentItemId?: string,
-    previousUserItemId?: string,
-  ) {
-    const channel = channelRef.current;
-    if (!channel || channel.readyState !== "open") return;
-
-    const latestUserId = [...conversationItemsRef.current]
-      .reverse()
-      .find(
-        (item) => item.role === "user" && item.id !== previousUserItemId,
-      )?.id;
-    const keepId = currentItemId || latestUserId;
-    const staleItems = conversationItemsRef.current.filter(
-      (item) => item.id !== keepId,
-    );
-
-    for (const item of staleItems) {
-      channel.send(
-        JSON.stringify({
-          type: "conversation.item.delete",
-          item_id: item.id,
-        }),
-      );
-    }
-
-    conversationItemsRef.current = conversationItemsRef.current.filter(
-      (item) => item.id === keepId,
-    );
+  function seedConversationCarryover(channel: RTCDataChannel) {
+    if (!sessionCarryoverRef.current) return;
+    const carryover = formatConversationCarryover(messagesRef.current);
     sessionCarryoverRef.current = false;
-    assistantDraftRef.current = "";
-    refreshRealtimeContext();
+    if (!carryover) return;
+
+    channel.send(
+      JSON.stringify({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: carryover }],
+        },
+      }),
+    );
   }
 
   function resetRealtimeConversationContext() {
@@ -1877,6 +1847,7 @@ export default function Home() {
     responseDisplayKeysRef.current.clear();
     desktopClarificationRef.current = null;
     desktopContextRef.current = null;
+    smartHomeContextRef.current = null;
     routeTurnRef.current += 1;
     activeRouteTurnRef.current = null;
     pendingUtteranceRef.current = null;
@@ -2312,10 +2283,7 @@ export default function Home() {
         quietForMs: now - lastHumanMoment,
         sinceAssistantMs: now - lastAssistantAtRef.current,
         proactiveCount: proactiveCountRef.current,
-        recentMessages: messagesRef.current.slice(-6).map(({ role, text }) => ({
-          role,
-          text,
-        })),
+        recentMessages: boundedRecentMessages(messagesRef.current),
       };
       let decision: { action?: PresenceAction };
       if (connectionMode === "personal") {
@@ -2392,8 +2360,6 @@ export default function Home() {
 
   async function routeAndRespond(
     text: string,
-    currentItemId?: string,
-    previousUserItemId?: string,
     allowWait = true,
     timing?: SpeechTiming,
   ) {
@@ -2649,7 +2615,22 @@ export default function Home() {
       }
       if (pendingDesktopAction) pendingDesktopActionRef.current = null;
 
-      if (isSmartHomeControlRequest(completeText)) {
+      const recentSmartHomeContext = smartHomeContextRef.current &&
+        Date.now() - smartHomeContextRef.current.at < 180_000
+        ? smartHomeContextRef.current
+        : null;
+      const retrySmartHomeRequest = Boolean(
+        recentSmartHomeContext && isSmartHomeRetryRequest(completeText),
+      );
+      if (
+        isSmartHomeControlRequest(completeText) ||
+        (recentSmartHomeContext && isSmartHomeFollowUpRequest(completeText)) ||
+        retrySmartHomeRequest
+      ) {
+        const smartHomePrompt = retrySmartHomeRequest
+          ? recentSmartHomeContext!.prompt
+          : completeText;
+        smartHomeContextRef.current = { at: Date.now(), prompt: smartHomePrompt };
         pendingUtteranceRef.current = null;
         setThinkingCue("");
         const smartHomeBridge = window.voxLocalCodex;
@@ -2666,7 +2647,7 @@ export default function Home() {
         }
         try {
           const result = await runWithFrontVoice("smart_home", () =>
-            smartHomeBridge.runSmartHomeCommand!({ prompt: completeText }),
+            smartHomeBridge.runSmartHomeCommand!({ prompt: smartHomePrompt }),
           );
           if (!isCurrentTurn()) return;
           sendTurnResponse(
@@ -2681,9 +2662,10 @@ export default function Home() {
           const detail = error instanceof Error ? error.message : "The device could not be reached.";
           sendTurnResponse(
             "smart_home_failed",
-            turnLanguage === "taiwan_mandarin"
-              ? `目前無法控制家裡的裝置。${detail}`
-              : `I could not control the home device. ${detail}`,
+            smartHomeFailureMessage(
+              detail,
+              turnLanguage === "taiwan_mandarin" ? "taiwan_mandarin" : "english",
+            ),
             true,
           );
         }
@@ -2702,7 +2684,7 @@ export default function Home() {
           timing,
           pendingTimings,
           allowWait,
-          recentMessages: messagesRef.current.slice(-6).map(({ role, text }) => ({ role, text })),
+          recentMessages: boundedRecentMessages(messagesRef.current),
           replyLength: replyLengthRef.current,
           visionAvailable: cameraActiveRef.current,
           localCodexAvailable: window.voxLocalCodex?.available === true,
@@ -2727,10 +2709,7 @@ export default function Home() {
             timing,
             pendingTimings,
             allowWait,
-            recentMessages: messagesRef.current.slice(-6).map(({ role, text }) => ({
-              role,
-              text,
-            })),
+            recentMessages: boundedRecentMessages(messagesRef.current),
             replyLength: replyLengthRef.current,
             visionAvailable: cameraActiveRef.current,
             localCodexAvailable: window.voxLocalCodex?.available === true,
@@ -2747,10 +2726,18 @@ export default function Home() {
       let selectedRoute = route.route ?? "realtime";
       const desktopContext = desktopContextRef.current;
       const recentDesktopContext = desktopContext && Date.now() - desktopContext.at < 300_000 ? desktopContext : null;
-      const inferredControl = inferredDesktopControl(completeText, route.desktopApp, route.desktopAppConfidence);
+      const localDesktopAvailable = window.voxLocalCodex?.available === true;
+      const inferredControl = localDesktopAvailable
+        ? null
+        : inferredDesktopControl(completeText, route.desktopApp, route.desktopAppConfidence);
       const contextualControl = classifyDesktopControlRequest(completeText, recentDesktopContext?.control, installedApp) ?? inferredControl;
+      selectedRoute = enforceLocalCapabilityRoute(selectedRoute, {
+        desktopAvailable: localDesktopAvailable,
+        desktopControlDetected: Boolean(contextualControl),
+        localCodexRequested: isLocalCodexTask(completeText),
+        openWorkspaceRequested: isOpenWorkspaceRequest(completeText),
+      });
       if (selectedRoute !== "desktop_action" && window.voxLocalCodex?.available && contextualControl && isRoutineDesktopAction(completeText, contextualControl, Boolean(inferredControl))) selectedRoute = "desktop_control";
-      const contextMode = route.contextMode ?? "continue";
       const turnState = allowWait ? (route.turnState ?? "complete") : "complete";
       const responseLength = parseAdaptiveReplyLength(
         route.responseLength,
@@ -2762,7 +2749,7 @@ export default function Home() {
       );
       const memoryUse = parseMemoryUse(route.memoryUse);
       const ritual = parseConversationRitual(route.ritual);
-      const visionNeed = parseVisionNeed(route.visionNeed);
+      const visionNeed = locallyAuthorizedVisionNeed(completeText, route.visionNeed);
       if (turnState === "wait") {
         pendingUtteranceRef.current = {
           text: completeText,
@@ -2805,10 +2792,6 @@ export default function Home() {
         selectedRoute !== "desktop_control"
       ) {
         void considerMemory(completeText);
-      }
-
-      if (contextMode === "fresh") {
-        startFreshRealtimeContext(currentItemId, previousUserItemId);
       }
 
       if (selectedRoute === "desktop_action") {
@@ -2994,9 +2977,6 @@ export default function Home() {
         if (!isCurrentTurn()) return;
         sendTurnResponse("final_answer", reasoned.answer, true);
       } else {
-        const carryover = sessionCarryoverRef.current
-          ? formatConversationCarryover(messagesRef.current)
-          : "";
         sendTurnResponse(
           "realtime_answer",
           [
@@ -3011,7 +2991,6 @@ export default function Home() {
             memoryUseInstruction(memoryUse),
             ritualInstruction(ritual),
             visualInstruction,
-            carryover,
           ]
             .filter(Boolean)
             .join("\n\n"),
@@ -3313,7 +3292,7 @@ export default function Home() {
           activeRouteTurnRef.current = null;
           break;
         }
-        void routeAndRespond(transcript, event.item_id, undefined, true, timing);
+        void routeAndRespond(transcript, true, timing);
         pendingUtteranceRef.current = {
           text: [earlierFragment?.text, transcript].filter(Boolean).join(" "),
           startedAt: earlierFragment?.startedAt ?? Date.now(),
@@ -3553,6 +3532,7 @@ export default function Home() {
       channel.onopen = () => {
         setConnectionState("listening");
         refreshRealtimeContext();
+        seedConversationCarryover(channel);
       };
 
       const offer = await peer.createOffer();
@@ -3655,9 +3635,6 @@ export default function Home() {
     event.preventDefault();
     const text = input.trim();
     if (!text || channelRef.current?.readyState !== "open") return;
-    const previousUserItemId = [...conversationItemsRef.current]
-      .reverse()
-      .find((item) => item.role === "user")?.id;
     lastUserActivityRef.current = Date.now();
     setThinkingCue("");
     addMessage("user", text);
@@ -3673,7 +3650,7 @@ export default function Home() {
         },
       }),
     );
-    void routeAndRespond(text, undefined, previousUserItemId, false);
+    void routeAndRespond(text, false);
     setInput("");
     setConnectionState("thinking");
   }
@@ -3811,7 +3788,9 @@ export default function Home() {
                 <span className="mt-2 block text-xs leading-5 text-white/43">
                   Activation code required today. Includes encrypted sync, memory,
                   reminders, files, and managed AI routing. A subscription may be
-                  introduced later with clear notice.
+                  introduced later with clear notice. On Vox Desktop, local apps,
+                  Codex, Computer Use, and smart-home access remain controlled by
+                  that Mac—not by the cloud account.
                 </span>
               </button>
               <button
@@ -4385,6 +4364,24 @@ export default function Home() {
             </Sheet>
           )}
 
+          {!desktopPersonalAvailable && connectionMode === "cloud" && (
+            <div
+              className="hidden items-center gap-2 rounded-full border border-[#c8bcff]/16 bg-[#c8bcff]/[0.055] px-3 py-2 text-xs text-[#d8d1ff]/70 sm:flex"
+              title="These preferences and synced data belong to your Vox Cloud account"
+            >
+              <Globe2 className="size-3.5" /> Account · Vox Cloud
+            </div>
+          )}
+
+          {desktopPersonalAvailable && connectionMode === "cloud" && (
+            <div
+              className="hidden items-center gap-2 rounded-full border border-[#f4ff74]/14 bg-[#f4ff74]/[0.045] px-3 py-2 text-xs text-[#f4ff74]/66 lg:flex"
+              title="Computer Use, Codex, apps, and smart-home access stay under this Mac's local control"
+            >
+              <ShieldCheck className="size-3.5" /> Device · This Mac
+            </div>
+          )}
+
           {desktopPersonalAvailable && (
             <Button
               type="button"
@@ -4396,7 +4393,9 @@ export default function Home() {
             >
               {connectionMode === "personal" ? <Code2 /> : <Globe2 />}
               <span className="hidden sm:inline">
-                {connectionMode === "personal" ? "Personal" : "Cloud"}
+                {connectionMode === "personal"
+                  ? "Device · Personal"
+                  : "Account · Cloud"}
               </span>
             </Button>
           )}
@@ -4781,8 +4780,10 @@ export default function Home() {
               </div>
               <span className="control-save text-[11px] text-white/28 sm:basis-full sm:text-right">
                 {connectionMode === "personal"
-                  ? "Saved on this computer"
-                  : "Saved to your Vox account"}
+                  ? "DEVICE SETTING · SAVED ONLY ON THIS COMPUTER"
+                  : desktopPersonalAvailable
+                    ? "ACCOUNT SETTING · SYNCED ACROSS DEVICES · LOCAL PERMISSIONS STAY ON THIS MAC"
+                    : "ACCOUNT SETTING · SYNCED ACROSS DEVICES"}
               </span>
             </div>
           </div>

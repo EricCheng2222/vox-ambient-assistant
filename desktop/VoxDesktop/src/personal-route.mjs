@@ -1,10 +1,11 @@
 const routes = new Set(["silence", "realtime", "desktop_control", "local_codex"]);
 const turnStates = new Set(["wait", "complete"]);
-const contextModes = new Set(["continue", "fresh"]);
 const postures = new Set(["acknowledge", "listen", "joke", "ask", "share", "answer", "advise", "repair"]);
 const lengths = new Set(["minimal", "brief", "standard", "detailed", "expansive"]);
 const visionNeeds = new Set(["none", "inspect_low", "inspect_high"]);
 const personalPresenceActions = new Set(["stay_silent", "check_in", "continue_topic"]);
+const routingContextMaxMessages = 24;
+const routingContextMaxCharacters = 12_000;
 
 export function validTypeSafeKey(value) {
   return typeof value === "string" && /^apikey_[A-Za-z0-9_-]{20,}$/u.test(value.trim());
@@ -13,7 +14,20 @@ export function validTypeSafeKey(value) {
 function cleanMessage(message) {
   if (!message || (message.role !== "user" && message.role !== "assistant")) return null;
   if (typeof message.text !== "string") return null;
-  return { role: message.role, text: message.text.slice(0, 400) };
+  return { role: message.role, text: message.text.trim() };
+}
+
+function boundedRecentMessages(messages) {
+  const selected = [];
+  let remainingCharacters = routingContextMaxCharacters;
+  for (const message of messages.slice(-routingContextMaxMessages).reverse()) {
+    if (remainingCharacters <= 0) break;
+    const text = message.text.slice(-remainingCharacters);
+    if (!text) continue;
+    selected.unshift({ role: message.role, text });
+    remainingCharacters -= text.length;
+  }
+  return selected;
 }
 
 function choice(answers, name, allowed, fallback) {
@@ -32,10 +46,10 @@ export async function createPersonalRoute(apiKey, body = {}, fetchImpl = fetch) 
   if (!validTypeSafeKey(apiKey)) throw new Error("Add a valid TypeSafe API key first.");
   const text = typeof body.text === "string" ? body.text.trim().slice(0, 6000) : "";
   const pendingText = typeof body.pendingText === "string" ? body.pendingText.trim().slice(0, 6000) : "";
-  if (!text) return { route: "silence", turnState: "complete", contextMode: "continue" };
+  if (!text) return { route: "silence", turnState: "complete" };
 
   const recentMessages = Array.isArray(body.recentMessages)
-    ? body.recentMessages.map(cleanMessage).filter(Boolean).slice(-6)
+    ? boundedRecentMessages(body.recentMessages.map(cleanMessage).filter(Boolean))
     : [];
   const response = await fetchImpl("https://api.typesafe.ai/v1/systemone", {
     method: "POST",
@@ -91,11 +105,6 @@ export async function createPersonalRoute(apiKey, body = {}, fetchImpl = fetch) 
           instructions: "Choose fast for one obvious routine action and standard for multi-step, ambiguous, or interpretive interaction.",
           criteria: { fast: "One clear action.", standard: "Multiple or ambiguous actions." },
         },
-        context_mode: {
-          type: "choice",
-          instructions: "Choose continue for follow-ups, references, corrections, or uncertainty. Choose fresh only for a clearly unrelated self-contained topic.",
-          criteria: { continue: "Keep recent dialogue.", fresh: "Start a new topic context." },
-        },
         conversation_move: {
           type: "choice",
           instructions: "Choose the socially natural next move. Advice is only for explicit advice requests or immediate safety. Prefer listening or acknowledging for personal sharing.",
@@ -129,7 +138,6 @@ export async function createPersonalRoute(apiKey, body = {}, fetchImpl = fetch) 
     return {
       route: fallbackRoute(body),
       turnState: "complete",
-      contextMode: "continue",
       source: "fallback",
     };
   }
@@ -141,7 +149,6 @@ export async function createPersonalRoute(apiKey, body = {}, fetchImpl = fetch) 
     desktopAppConfidence: answers.desktop_app?.confidence ?? 0,
     computerUseMode: answers.computer_use_mode?.choice === "fast" ? "fast" : "standard",
     turnState: body.allowWait === false ? "complete" : choice(answers, "turn_state", turnStates, "complete"),
-    contextMode: pendingText ? "continue" : choice(answers, "context_mode", contextModes, "continue"),
     responsePosture: choice(answers, "conversation_move", postures, "acknowledge"),
     responseLength: choice(answers, "response_length", lengths, "standard"),
     memoryUse: "none",
@@ -163,7 +170,7 @@ export async function createPersonalPresence(apiKey, body = {}, fetchImpl = fetc
   }
 
   const recentMessages = Array.isArray(body.recentMessages)
-    ? body.recentMessages.map(cleanMessage).filter(Boolean).slice(-6)
+    ? boundedRecentMessages(body.recentMessages.map(cleanMessage).filter(Boolean))
     : [];
   const response = await fetchImpl("https://api.typesafe.ai/v1/systemone", {
     method: "POST",

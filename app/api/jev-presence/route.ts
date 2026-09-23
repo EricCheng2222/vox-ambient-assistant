@@ -1,4 +1,5 @@
 import { requireUser } from "@/lib/auth";
+import { boundedRecentMessages } from "@/lib/conversation-context";
 import { listMemories } from "@/lib/memory-store";
 import { getSocialEligibility, recordSocialDecision } from "@/lib/social-state-store";
 import { getCurrentTimeContext } from "@/lib/time-context";
@@ -64,14 +65,13 @@ export async function POST(request: Request) {
   const sinceAssistantMs = Math.max(0, Number(body.sinceAssistantMs) || 0);
   const proactiveCount = Math.max(0, Number(body.proactiveCount) || 0);
   const recentMessages = Array.isArray(body.recentMessages)
-    ? body.recentMessages
-        .filter(
+    ? boundedRecentMessages(
+        body.recentMessages.filter(
           (message): message is RecentMessage =>
             (message?.role === "user" || message?.role === "assistant") &&
             typeof message?.text === "string",
-        )
-        .slice(-6)
-        .map((message) => ({ ...message, text: message.text.slice(0, 1000) }))
+        ),
+      )
     : [];
 
   if (initiative === "off" || proactiveCount >= 6) {

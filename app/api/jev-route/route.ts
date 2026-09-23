@@ -1,4 +1,5 @@
 import { requireUser } from "@/lib/auth";
+import { boundedRecentMessages } from "@/lib/conversation-context";
 import {
   isOpenWorkspaceRequest,
   isStandaloneVoiceConfirmation,
@@ -54,7 +55,6 @@ type JevRoute =
   | "desktop_control"
   | "local_codex";
 
-type ContextMode = "continue" | "fresh";
 type TurnState = "wait" | "complete";
 
 type RecentMessage = {
@@ -82,7 +82,6 @@ const ROUTES = new Set<JevRoute>([
   "local_codex",
 ]);
 
-const CONTEXT_MODES = new Set<ContextMode>(["continue", "fresh"]);
 const TURN_STATES = new Set<TurnState>(["wait", "complete"]);
 
 const unavailableSocialEligibility: SocialEligibility = {
@@ -207,19 +206,6 @@ function fallbackRoute(
   return "realtime";
 }
 
-function fallbackContextMode(text: string, recentMessages: RecentMessage[]): ContextMode {
-  if (recentMessages.length === 0) return "fresh";
-  if (
-    /\b(?:new|different|unrelated) (?:topic|question)|\bchanging (?:the )?subject\b/i.test(
-      text,
-    ) ||
-    /(?:換個話題|換一個話題|題外話|另外一個問題|不同的主題)/.test(text)
-  ) {
-    return "fresh";
-  }
-  return "continue";
-}
-
 function fallbackResponseLength(
   text: string,
   preference: ReplyLength,
@@ -294,20 +280,18 @@ export async function POST(request: Request) {
     pending_for_ms: duration(body.pendingAgeMs),
   };
   const recentMessages = Array.isArray(body.recentMessages)
-    ? body.recentMessages
-        .filter(
+    ? boundedRecentMessages(
+        body.recentMessages.filter(
           (message): message is RecentMessage =>
             (message?.role === "user" || message?.role === "assistant") &&
             typeof message?.text === "string",
-        )
-        .slice(-6)
-        .map((message) => ({ ...message, text: message.text.slice(0, 400) }))
+        ),
+      )
     : [];
   if (!text) {
     return Response.json({
       route: "silence",
       turnState: "complete",
-      contextMode: "continue",
       responsePosture: "acknowledge",
       responseLength: defaultAdaptiveReplyLength(replyLength),
       memoryUse: "none",
@@ -367,9 +351,6 @@ export async function POST(request: Request) {
     return Response.json({
       route,
       turnState,
-      contextMode: pendingText
-        ? "continue"
-        : fallbackContextMode(text, recentMessages),
       responsePosture: fallbackResponsePosture(completeText),
       responseLength: fallbackResponseLength(completeText, replyLength, route),
       memoryUse: "none",
@@ -484,17 +465,6 @@ export async function POST(request: Request) {
                 : {}),
             },
           },
-          context_mode: {
-            type: "choice",
-            instructions:
-              "Decide whether the next assistant response needs the recent conversation. A pending utterance always requires continue because it is part of the current thought. Otherwise, choose continue when the utterance follows up on, corrects, refers to, or depends on anything in the recent conversation. Pronouns, ellipsis, phrases such as 'that one' or 'what about', and an ongoing task all require continue. Choose fresh only when the utterance is clearly self-contained and starts an unrelated topic, so the older conversation would add no useful meaning. When uncertain, choose continue. This decision controls only short-term model context; durable user memories are handled separately.",
-            criteria: {
-              continue:
-                "Keep recent conversation because the utterance may depend on it or continues the same topic or task.",
-              fresh:
-                "Start a fresh model context because this is clearly an independent topic and prior turns are unnecessary.",
-            },
-          },
           conversation_move: {
             type: "choice",
             instructions:
@@ -584,7 +554,6 @@ export async function POST(request: Request) {
         computer_use_mode?: { choice?: string; confidence?: number };
         turn_state?: { choice?: string; confidence?: number };
         route?: { choice?: string; confidence?: number };
-        context_mode?: { choice?: string; confidence?: number };
         conversation_move?: { choice?: string; confidence?: number };
         memory_timing?: { choice?: string; confidence?: number };
         ritual?: { choice?: string; confidence?: number };
@@ -630,14 +599,6 @@ export async function POST(request: Request) {
       allowWait && turnChoice && TURN_STATES.has(turnChoice)
         ? turnChoice
         : "complete";
-    const contextChoice = payload.answers?.context_mode?.choice as
-      | ContextMode
-      | undefined;
-    const contextMode = pendingText
-      ? "continue"
-      : contextChoice && CONTEXT_MODES.has(contextChoice)
-        ? contextChoice
-        : fallbackContextMode(text, recentMessages);
     const responseLength = parseAdaptiveReplyLength(
       payload.answers?.response_length?.choice,
       replyLength,
@@ -715,8 +676,6 @@ export async function POST(request: Request) {
       confidence: payload.answers?.route?.confidence ?? null,
       turnState,
       turnConfidence: payload.answers?.turn_state?.confidence ?? null,
-      contextMode,
-      contextConfidence: payload.answers?.context_mode?.confidence ?? null,
       responsePosture,
       responsePostureConfidence:
         payload.answers?.conversation_move?.confidence ?? null,
@@ -770,9 +729,6 @@ export async function POST(request: Request) {
     return Response.json({
       route,
       turnState,
-      contextMode: pendingText
-        ? "continue"
-        : fallbackContextMode(text, recentMessages),
       responsePosture: fallbackResponsePosture(completeText),
       responseLength: fallbackResponseLength(completeText, replyLength, route),
       memoryUse: "none",

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   deriveDysonStickerConfiguration,
+  dysonMqttOptions,
   normalizeDysonManualConfiguration,
   parseDysonServiceName,
   parseDysonCommand,
@@ -38,9 +39,24 @@ test("manual setup normalizes safe local connection values", () => {
   });
 });
 
+test("local control uses MQTT 3.1.1 for current Dyson brokers", () => {
+  const options = dysonMqttOptions({
+    serial: "ABC-TW-12345678",
+    credential: "local-device-credential-value",
+  });
+  assert.equal(options.protocolVersion, 4);
+  assert.equal(options.username, "ABC-TW-12345678");
+  assert.equal(options.password, "local-device-credential-value");
+  assert.equal(options.clean, true);
+  assert.equal(options.reconnectPeriod, 0);
+  assert.match(options.clientId, /^vox-[0-9a-f]{18}$/u);
+});
+
 test("voice commands stay inside the supported purifier action set", () => {
   assert.deepEqual(parseDysonCommand("Turn the Dyson purifier off"), { kind: "power", enabled: false });
   assert.deepEqual(parseDysonCommand("把戴森清淨機風速調到 7"), { kind: "speed", speed: 7 });
+  assert.deepEqual(parseDysonCommand("幫我把風速調成三好嗎"), { kind: "speed", speed: 3 });
+  assert.deepEqual(parseDysonCommand("戴森調到十檔"), { kind: "speed", speed: 10 });
   assert.deepEqual(parseDysonCommand("開啟自動模式"), { kind: "auto", enabled: true });
   assert.deepEqual(parseDysonCommand("關掉夜間模式"), { kind: "night", enabled: false });
   assert.deepEqual(parseDysonCommand("Dyson air quality status"), { kind: "status" });

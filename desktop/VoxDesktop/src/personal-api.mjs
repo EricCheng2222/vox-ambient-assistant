@@ -10,6 +10,7 @@ const realtimeVoices = new Set([
   "shimmer",
   "verse",
 ]);
+const realtimeContextTokenLimit = 8_000;
 
 export function validOpenAIKey(value) {
   return typeof value === "string" && /^sk-[A-Za-z0-9_-]{20,}$/u.test(value.trim());
@@ -27,6 +28,11 @@ export function personalRealtimeSession(request = {}) {
     type: "realtime",
     model: "gpt-realtime-2.1",
     output_modalities: ["audio"],
+    truncation: {
+      type: "retention_ratio",
+      retention_ratio: 0.8,
+      token_limits: { post_instructions: realtimeContextTokenLimit },
+    },
     instructions,
     audio: {
       input: {
