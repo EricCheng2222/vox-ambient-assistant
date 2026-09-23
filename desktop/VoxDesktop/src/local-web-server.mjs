@@ -19,6 +19,8 @@ const contentTypes = new Map([
 const cloudApiMethods = new Map([
   ["/api/auth", new Set(["GET", "POST", "DELETE"])],
   ["/api/conversation", new Set(["GET", "POST", "DELETE"])],
+  ["/api/device-commands", new Set(["GET", "POST", "PATCH"])],
+  ["/api/device-pairing", new Set(["GET", "POST", "DELETE"])],
   ["/api/files", new Set(["GET", "POST", "DELETE"])],
   ["/api/invites", new Set(["GET", "POST"])],
   ["/api/jev-presence", new Set(["POST"])],

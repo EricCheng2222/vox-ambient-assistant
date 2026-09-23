@@ -147,3 +147,48 @@ export const conversationMessages = sqliteTable(
     ),
   ],
 );
+
+export const remoteDevices = sqliteTable(
+  "remote_devices",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    name: text("name").notNull().default("Mac"),
+    status: text("status").notNull().default("pending"),
+    claimId: text("claim_id"),
+    claimLabel: text("claim_label"),
+    claimProof: text("claim_proof"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    expiresAt: text("expires_at").notNull(),
+    pairedAt: text("paired_at"),
+    lastSeenAt: text("last_seen_at"),
+  },
+  (table) => [
+    index("idx_remote_devices_owner_status").on(table.ownerId, table.status),
+  ],
+);
+
+export const remoteCommands = sqliteTable(
+  "remote_commands",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    deviceId: text("device_id").notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    iv: text("iv").notNull(),
+    status: text("status").notNull().default("pending"),
+    resultCiphertext: text("result_ciphertext"),
+    resultIv: text("result_iv"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    expiresAt: text("expires_at").notNull(),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    index("idx_remote_commands_device_status_created").on(
+      table.deviceId,
+      table.status,
+      table.createdAt,
+    ),
+    index("idx_remote_commands_owner_created").on(table.ownerId, table.createdAt),
+  ],
+);

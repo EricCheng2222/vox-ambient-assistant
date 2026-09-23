@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import QRCode from "qrcode";
 import type {
   CSSProperties,
   FormEvent,
@@ -27,7 +28,9 @@ import {
   Mic,
   MicOff,
   PhoneOff,
+  Link2,
   ShieldCheck,
+  Smartphone,
   Sparkles,
   SwitchCamera,
   Table2,
@@ -157,6 +160,13 @@ import {
   enforceLocalCapabilityRoute,
   locallyAuthorizedVisionNeed,
 } from "@/lib/local-capability-policy";
+import {
+  createPairingProof,
+  decryptRemoteResult,
+  encryptRemoteCommand,
+  type RemoteMacCommand,
+  type StoredRemoteMacPairing,
+} from "@/lib/remote-control";
 
 type CameraFacingMode = "user" | "environment";
 
@@ -196,6 +206,7 @@ type PresenceAction =
   | "morning_hello";
 type AuthState = "checking" | "selecting" | "authenticated" | "locked";
 type ConnectionMode = "cloud" | "personal";
+type WebActionRouting = "web_only" | "paired_mac";
 type InviteStatus = {
   generated: number;
   unlimited: boolean;
@@ -228,6 +239,19 @@ type SmartHomeDiscoveredDevice = {
   host: string;
   serial?: string;
   productType?: string;
+};
+type RemotePairingStatus = {
+  configured: boolean;
+  secureStorageAvailable: boolean;
+  deviceId?: string;
+  name?: string;
+  status?: "pending" | "active";
+  phoneLabel?: string | null;
+  pairingUrl?: string;
+};
+type PhonePairingCandidate = {
+  deviceId: string;
+  secret: string;
 };
 type DysonSetupMethod = "sticker" | "manual";
 type TurnState = "wait" | "complete";
@@ -286,6 +310,8 @@ const PANEL_DIVIDER_WIDTH = 10;
 const CONVERSATION_WIDTH_STORAGE_KEY = "vox-conversation-panel-width";
 const PERSONAL_CONVERSATION_STORAGE_KEY = "vox.personal.conversation";
 const PERSONAL_PREFERENCES_STORAGE_KEY = "vox.personal.preferences";
+const REMOTE_MAC_PAIRING_STORAGE_KEY = "vox.remoteMac.pairing.v1";
+const WEB_ACTION_ROUTING_STORAGE_KEY = "vox.webActionRouting.v1";
 
 function clampConversationWidth(value: number, containerWidth: number) {
   const availableMaximum = Math.max(
@@ -395,6 +421,9 @@ declare global {
       decidePersonalPresence?: (request: Record<string, unknown>) => Promise<{
         action?: PresenceAction;
       }>;
+      getRemotePairingStatus?: () => Promise<RemotePairingStatus>;
+      createRemotePairing?: () => Promise<RemotePairingStatus>;
+      revokeRemotePairing?: () => Promise<{ revoked: boolean }>;
       getSmartHomeStatus?: () => Promise<SmartHomeStatus>;
       discoverSmartHomeDevices?: (adapter: string) => Promise<{
         devices: SmartHomeDiscoveredDevice[];
@@ -715,6 +744,17 @@ export default function Home() {
   const [dysonSerial, setDysonSerial] = useState("");
   const [dysonProductType, setDysonProductType] = useState("");
   const [dysonCredential, setDysonCredential] = useState("");
+  const [remotePairingOpen, setRemotePairingOpen] = useState(false);
+  const [remoteRoutingOpen, setRemoteRoutingOpen] = useState(false);
+  const [remotePairingStatus, setRemotePairingStatus] = useState<RemotePairingStatus | null>(null);
+  const [remotePairingUrl, setRemotePairingUrl] = useState("");
+  const [remotePairingQr, setRemotePairingQr] = useState("");
+  const [remotePairingBusy, setRemotePairingBusy] = useState(false);
+  const [remotePairingError, setRemotePairingError] = useState("");
+  const [phonePairingCandidate, setPhonePairingCandidate] = useState<PhonePairingCandidate | null>(null);
+  const [remoteMacPairing, setRemoteMacPairing] = useState<StoredRemoteMacPairing | null>(null);
+  const [remoteMacReady, setRemoteMacReady] = useState(false);
+  const [webActionRouting, setWebActionRouting] = useState<WebActionRouting>("web_only");
   const [conversationWidth, setConversationWidth] = useState(
     DEFAULT_CONVERSATION_WIDTH,
   );
@@ -801,6 +841,9 @@ export default function Home() {
   const activeSpeechTimingRef = useRef<LiveSpeechTiming | null>(null);
   const speechTimingsRef = useRef(new Map<string, LiveSpeechTiming>());
   const previousSpeechStoppedAtRef = useRef<number | null>(null);
+  const remoteMacPairingRef = useRef<StoredRemoteMacPairing | null>(null);
+  const remoteMacReadyRef = useRef(false);
+  const webActionRoutingRef = useRef<WebActionRouting>("web_only");
 
   const connected = [
     "listening",
@@ -865,6 +908,27 @@ export default function Home() {
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
+
+  useEffect(() => {
+    remoteMacPairingRef.current = remoteMacPairing;
+  }, [remoteMacPairing]);
+
+  useEffect(() => {
+    remoteMacReadyRef.current = remoteMacReady;
+  }, [remoteMacReady]);
+
+  useEffect(() => {
+    webActionRoutingRef.current = webActionRouting;
+  }, [webActionRouting]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const deviceId = url.searchParams.get("pair") ?? "";
+    const secret = new URLSearchParams(url.hash.slice(1)).get("vox-pair") ?? "";
+    if (/^[a-f0-9-]{36}$/u.test(deviceId) && /^[A-Za-z0-9_-]{40,64}$/u.test(secret)) {
+      queueMicrotask(() => setPhonePairingCandidate({ deviceId, secret }));
+    }
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.voxTheme = theme;
@@ -971,6 +1035,74 @@ export default function Home() {
     // Synchronization is intentionally keyed to the authentication transition.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authState, connectionMode]);
+
+  useEffect(() => {
+    if (authState !== "authenticated" || connectionMode !== "cloud") return;
+    if (window.voxLocalCodex?.getRemotePairingStatus) {
+      void refreshDesktopPairingStatus();
+      const timer = window.setInterval(() => void refreshDesktopPairingStatus(true), 3_000);
+      return () => window.clearInterval(timer);
+    }
+
+    const stored = window.localStorage.getItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
+    if (stored) {
+      try {
+        const pairing = JSON.parse(stored) as StoredRemoteMacPairing;
+        if (
+          /^[a-f0-9-]{36}$/u.test(pairing.deviceId) &&
+          /^[A-Za-z0-9_-]{40,64}$/u.test(pairing.secret) &&
+          typeof pairing.name === "string"
+        ) {
+          remoteMacPairingRef.current = pairing;
+          queueMicrotask(() => setRemoteMacPairing(pairing));
+        } else {
+          window.localStorage.removeItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
+        }
+      } catch {
+        window.localStorage.removeItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
+      }
+    }
+    const storedRouting = window.localStorage.getItem(WEB_ACTION_ROUTING_STORAGE_KEY);
+    if (storedRouting === "paired_mac") {
+      webActionRoutingRef.current = "paired_mac";
+      queueMicrotask(() => setWebActionRouting("paired_mac"));
+    }
+    void refreshPhonePairingStatus();
+    const timer = window.setInterval(() => void refreshPhonePairingStatus(), 3_000);
+    return () => window.clearInterval(timer);
+  }, [authState, connectionMode]);
+
+  useEffect(() => {
+    let active = true;
+    if (!remotePairingUrl) {
+      queueMicrotask(() => {
+        if (active) setRemotePairingQr("");
+      });
+      return () => {
+        active = false;
+      };
+    }
+
+    void QRCode.toDataURL(remotePairingUrl, {
+      errorCorrectionLevel: "M",
+      margin: 2,
+      width: 288,
+      color: {
+        dark: "#07151d",
+        light: "#ffffff",
+      },
+    })
+      .then((qr) => {
+        if (active) setRemotePairingQr(qr);
+      })
+      .catch(() => {
+        if (active) setRemotePairingQr("");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [remotePairingUrl]);
 
   useEffect(() => {
     if (authState !== "authenticated" || connectionMode !== "cloud") return;
@@ -1308,6 +1440,243 @@ export default function Home() {
     const nextTheme = parseVisualTheme(value);
     setTheme(nextTheme);
     void savePreferences({ theme: nextTheme });
+  }
+
+  function clearPairingLinkFromAddressBar() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("pair");
+    url.hash = "";
+    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+  }
+
+  function dismissPhonePairing() {
+    setPhonePairingCandidate(null);
+    clearPairingLinkFromAddressBar();
+  }
+
+  function chooseWebActionRouting(routing: WebActionRouting) {
+    webActionRoutingRef.current = routing;
+    setWebActionRouting(routing);
+    window.localStorage.setItem(WEB_ACTION_ROUTING_STORAGE_KEY, routing);
+    toast.success(routing === "paired_mac" ? "Actions will route to the paired Mac" : "Actions will stay in the web app");
+  }
+
+  async function refreshDesktopPairingStatus(quiet = false) {
+    const bridge = window.voxLocalCodex;
+    if (!bridge?.getRemotePairingStatus) return;
+    try {
+      const status = await bridge.getRemotePairingStatus();
+      setRemotePairingStatus(status);
+      if (status.pairingUrl) setRemotePairingUrl(status.pairingUrl);
+      else if (status.status === "active" || !status.configured) setRemotePairingUrl("");
+      if (!quiet) setRemotePairingError("");
+    } catch (error) {
+      if (!quiet) {
+        setRemotePairingError(error instanceof Error ? error.message : "Could not check phone pairing.");
+      }
+    }
+  }
+
+  async function createPhonePairing() {
+    const bridge = window.voxLocalCodex;
+    if (!bridge?.createRemotePairing) return;
+    setRemotePairingBusy(true);
+    setRemotePairingError("");
+    try {
+      const status = await bridge.createRemotePairing();
+      setRemotePairingStatus(status);
+      setRemotePairingUrl(status.pairingUrl ?? "");
+    } catch (error) {
+      setRemotePairingError(error instanceof Error ? error.message : "Could not create a phone pairing link.");
+    } finally {
+      setRemotePairingBusy(false);
+    }
+  }
+
+  async function revokePhonePairing() {
+    const bridge = window.voxLocalCodex;
+    if (!bridge?.revokeRemotePairing) return;
+    setRemotePairingBusy(true);
+    setRemotePairingError("");
+    try {
+      await bridge.revokeRemotePairing();
+      setRemotePairingStatus({
+        configured: false,
+        secureStorageAvailable: true,
+      });
+      setRemotePairingUrl("");
+    } catch (error) {
+      setRemotePairingError(error instanceof Error ? error.message : "Could not disconnect the phone.");
+    } finally {
+      setRemotePairingBusy(false);
+    }
+  }
+
+  async function copyPhonePairingLink() {
+    if (!remotePairingUrl) return;
+    try {
+      try {
+        await navigator.clipboard.writeText(remotePairingUrl);
+      } catch {
+        const fallback = document.createElement("textarea");
+        fallback.value = remotePairingUrl;
+        fallback.setAttribute("readonly", "");
+        fallback.style.position = "fixed";
+        fallback.style.opacity = "0";
+        document.body.appendChild(fallback);
+        fallback.select();
+        const copied = document.execCommand("copy");
+        fallback.remove();
+        if (!copied) throw new Error("Clipboard access was denied.");
+      }
+      toast.success("Private pairing link copied");
+    } catch {
+      toast.error("Could not copy the pairing link");
+    }
+  }
+
+  async function claimPhonePairing() {
+    if (!phonePairingCandidate || connectionMode !== "cloud") return;
+    setRemotePairingBusy(true);
+    setRemotePairingError("");
+    try {
+      const claimId = crypto.randomUUID();
+      const label = /iPhone/iu.test(navigator.userAgent)
+        ? "iPhone browser"
+        : /Android/iu.test(navigator.userAgent)
+          ? "Android phone browser"
+          : "Phone browser";
+      const proof = await createPairingProof(
+        phonePairingCandidate.secret,
+        phonePairingCandidate.deviceId,
+        claimId,
+        label,
+      );
+      const response = await fetch("/api/device-pairing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "claim",
+          deviceId: phonePairingCandidate.deviceId,
+          claimId,
+          label,
+          proof,
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        device?: { name?: string; status?: string };
+      };
+      if (!response.ok) throw new Error(payload.error ?? "The pairing link could not be accepted.");
+      const pairing: StoredRemoteMacPairing = {
+        deviceId: phonePairingCandidate.deviceId,
+        name: payload.device?.name?.trim() || "This Mac",
+        secret: phonePairingCandidate.secret,
+      };
+      window.localStorage.setItem(REMOTE_MAC_PAIRING_STORAGE_KEY, JSON.stringify(pairing));
+      window.localStorage.setItem(WEB_ACTION_ROUTING_STORAGE_KEY, "web_only");
+      remoteMacPairingRef.current = pairing;
+      webActionRoutingRef.current = "web_only";
+      setRemoteMacPairing(pairing);
+      setRemoteMacReady(payload.device?.status === "active");
+      setWebActionRouting("web_only");
+      dismissPhonePairing();
+      toast.success("Pairing request sent to your Mac");
+      void refreshPhonePairingStatus();
+    } catch (error) {
+      setRemotePairingError(error instanceof Error ? error.message : "The phone could not be paired.");
+    } finally {
+      setRemotePairingBusy(false);
+    }
+  }
+
+  async function refreshPhonePairingStatus() {
+    const pairing = remoteMacPairingRef.current;
+    if (!pairing || window.voxLocalCodex?.getRemotePairingStatus) return;
+    try {
+      const response = await fetch(`/api/device-pairing?deviceId=${encodeURIComponent(pairing.deviceId)}`, {
+        cache: "no-store",
+      });
+      if (response.status === 404) {
+        window.localStorage.removeItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
+        remoteMacPairingRef.current = null;
+        remoteMacReadyRef.current = false;
+        webActionRoutingRef.current = "web_only";
+        setRemoteMacPairing(null);
+        setRemoteMacReady(false);
+        setWebActionRouting("web_only");
+        window.localStorage.setItem(WEB_ACTION_ROUTING_STORAGE_KEY, "web_only");
+        return;
+      }
+      const payload = (await response.json().catch(() => ({}))) as {
+        device?: { status?: string; lastSeenAt?: string | null };
+      };
+      const lastSeenAt = Date.parse(payload.device?.lastSeenAt ?? "");
+      const ready = response.ok &&
+        payload.device?.status === "active" &&
+        Number.isFinite(lastSeenAt) &&
+        Date.now() - lastSeenAt < 45_000;
+      remoteMacReadyRef.current = ready;
+      setRemoteMacReady(ready);
+    } catch {
+      remoteMacReadyRef.current = false;
+      setRemoteMacReady(false);
+    }
+  }
+
+  async function sendRemoteMacCommand(command: RemoteMacCommand) {
+    const pairing = remoteMacPairingRef.current;
+    if (!pairing || !remoteMacReadyRef.current || webActionRoutingRef.current !== "paired_mac") {
+      throw new Error("The paired Mac is offline or not ready.");
+    }
+    const commandId = crypto.randomUUID();
+    const encrypted = await encryptRemoteCommand(pairing, commandId, command);
+    const queued = await fetch("/api/device-commands", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: commandId,
+        deviceId: pairing.deviceId,
+        ciphertext: encrypted.ciphertext,
+        iv: encrypted.iv,
+      }),
+    });
+    const queuedPayload = (await queued.json().catch(() => ({}))) as { error?: string };
+    if (!queued.ok) throw new Error(queuedPayload.error ?? "The Mac did not accept the command.");
+
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 900));
+      const response = await fetch(
+        `/api/device-commands?deviceId=${encodeURIComponent(pairing.deviceId)}&commandId=${encodeURIComponent(commandId)}`,
+        { cache: "no-store" },
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        command?: {
+          status?: string;
+          resultCiphertext?: string | null;
+          resultIv?: string | null;
+          expiresAt?: string;
+        };
+      };
+      if (!response.ok) throw new Error(payload.error ?? "The remote command could not be checked.");
+      if (payload.command?.status === "completed") {
+        if (!payload.command.resultCiphertext || !payload.command.resultIv) {
+          throw new Error("The Mac returned an incomplete encrypted result.");
+        }
+        const result = await decryptRemoteResult(
+          pairing,
+          commandId,
+          payload.command.resultCiphertext,
+          payload.command.resultIv,
+        );
+        if (!result.ok) throw new Error(result.error ?? "The Mac could not complete the command.");
+        return { canceled: false, answer: result.answer ?? "The Mac completed the command." };
+      }
+      if (payload.command?.expiresAt && Date.parse(payload.command.expiresAt) <= Date.now()) break;
+    }
+    throw new Error("The Mac did not answer before the command expired.");
   }
 
   async function loadSmartHomeStatus(quiet = false) {
@@ -2383,6 +2752,11 @@ export default function Home() {
       : "";
     desktopClarificationRef.current = null;
     const completeText = [clarificationText, pendingText, text].filter(Boolean).join(" ").trim();
+    const pairedMacAvailable =
+      connectionMode === "cloud" &&
+      webActionRoutingRef.current === "paired_mac" &&
+      remoteMacReadyRef.current &&
+      Boolean(remoteMacPairingRef.current);
     const turnLanguage = selectResponseLanguage(
       completeText,
       messagesRef.current,
@@ -2565,10 +2939,12 @@ export default function Home() {
         pendingDesktopActionRef.current = null;
         const desktopBridge = window.voxLocalCodex;
         if (pendingDesktopAction.action === "open_workspace") {
-          if (typeof desktopBridge?.openWorkspace !== "function") {
+          if (typeof desktopBridge?.openWorkspace !== "function" && !pairedMacAvailable) {
             throw new Error("Desktop folder actions are not available.");
           }
-          const result = await desktopBridge.openWorkspace();
+          const result = typeof desktopBridge?.openWorkspace === "function"
+            ? await desktopBridge.openWorkspace()
+            : await sendRemoteMacCommand({ kind: "open_workspace" });
           if (!isCurrentTurn()) return;
           sendTurnResponse(
             "desktop_action_completed",
@@ -2582,7 +2958,7 @@ export default function Home() {
         }
 
         if (
-          typeof desktopBridge?.runDesktopControl !== "function" ||
+          (typeof desktopBridge?.runDesktopControl !== "function" && !pairedMacAvailable) ||
           !pendingDesktopAction.prompt ||
           !pendingDesktopAction.control
         ) {
@@ -2594,7 +2970,11 @@ export default function Home() {
           appId: pendingDesktopAction.control.appId,
           intent: pendingDesktopAction.control.intent,
         };
-        const result = await runWithFrontVoice("desktop_control", () => desktopBridge.runDesktopControl(desktopRequest));
+        const result = await runWithFrontVoice("desktop_control", () =>
+          typeof desktopBridge?.runDesktopControl === "function"
+            ? desktopBridge.runDesktopControl(desktopRequest)
+            : sendRemoteMacCommand({ kind: "desktop_control", ...desktopRequest }),
+        );
         if (!isCurrentTurn()) return;
         if (result.canceled) {
           sendTurnResponse(
@@ -2634,7 +3014,7 @@ export default function Home() {
         pendingUtteranceRef.current = null;
         setThinkingCue("");
         const smartHomeBridge = window.voxLocalCodex;
-        if (!smartHomeBridge?.runSmartHomeCommand) {
+        if (!smartHomeBridge?.runSmartHomeCommand && !pairedMacAvailable) {
           sendTurnResponse(
             "smart_home_unavailable",
             turnLanguage === "taiwan_mandarin"
@@ -2647,7 +3027,9 @@ export default function Home() {
         }
         try {
           const result = await runWithFrontVoice("smart_home", () =>
-            smartHomeBridge.runSmartHomeCommand!({ prompt: smartHomePrompt }),
+            smartHomeBridge?.runSmartHomeCommand
+              ? smartHomeBridge.runSmartHomeCommand({ prompt: smartHomePrompt })
+              : sendRemoteMacCommand({ kind: "smart_home", prompt: smartHomePrompt }),
           );
           if (!isCurrentTurn()) return;
           sendTurnResponse(
@@ -2712,11 +3094,11 @@ export default function Home() {
             recentMessages: boundedRecentMessages(messagesRef.current),
             replyLength: replyLengthRef.current,
             visionAvailable: cameraActiveRef.current,
-            localCodexAvailable: window.voxLocalCodex?.available === true,
+            localCodexAvailable: window.voxLocalCodex?.available === true || pairedMacAvailable,
             desktopActionsAvailable:
-              typeof window.voxLocalCodex?.openWorkspace === "function",
+              typeof window.voxLocalCodex?.openWorkspace === "function" || pairedMacAvailable,
             desktopControlAvailable:
-              typeof window.voxLocalCodex?.runDesktopControl === "function",
+              typeof window.voxLocalCodex?.runDesktopControl === "function" || pairedMacAvailable,
             desktopAppContext: desktopContextRef.current && Date.now() - desktopContextRef.current.at < 300_000 ? desktopContextRef.current.control.appName : undefined,
           }),
         });
@@ -2727,17 +3109,18 @@ export default function Home() {
       const desktopContext = desktopContextRef.current;
       const recentDesktopContext = desktopContext && Date.now() - desktopContext.at < 300_000 ? desktopContext : null;
       const localDesktopAvailable = window.voxLocalCodex?.available === true;
+      const desktopCapabilityAvailable = localDesktopAvailable || pairedMacAvailable;
       const inferredControl = localDesktopAvailable
         ? null
         : inferredDesktopControl(completeText, route.desktopApp, route.desktopAppConfidence);
       const contextualControl = classifyDesktopControlRequest(completeText, recentDesktopContext?.control, installedApp) ?? inferredControl;
       selectedRoute = enforceLocalCapabilityRoute(selectedRoute, {
-        desktopAvailable: localDesktopAvailable,
+        desktopAvailable: desktopCapabilityAvailable,
         desktopControlDetected: Boolean(contextualControl),
         localCodexRequested: isLocalCodexTask(completeText),
         openWorkspaceRequested: isOpenWorkspaceRequest(completeText),
       });
-      if (selectedRoute !== "desktop_action" && window.voxLocalCodex?.available && contextualControl && isRoutineDesktopAction(completeText, contextualControl, Boolean(inferredControl))) selectedRoute = "desktop_control";
+      if (selectedRoute !== "desktop_action" && desktopCapabilityAvailable && contextualControl && isRoutineDesktopAction(completeText, contextualControl, Boolean(inferredControl))) selectedRoute = "desktop_control";
       const turnState = allowWait ? (route.turnState ?? "complete") : "complete";
       const responseLength = parseAdaptiveReplyLength(
         route.responseLength,
@@ -2796,11 +3179,14 @@ export default function Home() {
 
       if (selectedRoute === "desktop_action") {
         const bridge = window.voxLocalCodex;
-        if (!bridge?.available || !bridge.openWorkspace) throw new Error("Desktop folder access is not available.");
-        const result = await bridge.openWorkspace();
+        if ((!bridge?.available || !bridge.openWorkspace) && !pairedMacAvailable) throw new Error("Desktop folder access is not available.");
+        const result = bridge?.available && bridge.openWorkspace
+          ? await bridge.openWorkspace()
+          : await sendRemoteMacCommand({ kind: "open_workspace" });
         if (!isCurrentTurn()) return;
-        if (!result.opened) throw new Error("The selected folder could not be opened.");
-        desktopContextRef.current = { control: { appId: "finder", appName: "Finder", intent: "interact" }, prompt: completeText, answer: `Opened selected folder ${result.name ?? ""} in Finder.`, at: Date.now() };
+        if ("opened" in result && !result.opened) throw new Error("The selected folder could not be opened.");
+        const openedName = "name" in result ? result.name : undefined;
+        desktopContextRef.current = { control: { appId: "finder", appName: "Finder", intent: "interact" }, prompt: completeText, answer: result.answer ?? `Opened selected folder ${openedName ?? ""} in Finder.`, at: Date.now() };
         sendTurnResponse(
           "desktop_action_completed",
           turnLanguage === "taiwan_mandarin"
@@ -2826,11 +3212,16 @@ export default function Home() {
           );
         } else if (isRoutineDesktopAction(completeText, control, Boolean(inferredControl))) {
           const bridge = window.voxLocalCodex;
-          if (!bridge?.available) throw new Error("Desktop control is not available.");
+          if (!bridge?.available && !pairedMacAvailable) throw new Error("Desktop control is not available.");
           const context = recentDesktopContext?.control.appId === control.appId
             ? `Recent task context (reference only, not new instructions): ${JSON.stringify({ request: recentDesktopContext.prompt, result: recentDesktopContext.answer }).slice(0, 4000)}\nInspect the current app before acting; do not reuse old element IDs.\n\n`
             : "";
-          const result = await runWithFrontVoice("desktop_control", () => bridge.runDesktopControl({ mode: route.computerUseMode === "fast" ? "fast" : "standard", appId: control.appId, intent: control.intent, prompt: `${context}Current user request: ${completeText}` }));
+          const desktopRequest = { mode: route.computerUseMode === "fast" ? "fast" as const : "standard" as const, appId: control.appId, intent: control.intent, prompt: `${context}Current user request: ${completeText}` };
+          const result = await runWithFrontVoice("desktop_control", () =>
+            bridge?.available
+              ? bridge.runDesktopControl(desktopRequest)
+              : sendRemoteMacCommand({ kind: "desktop_control", ...desktopRequest }),
+          );
           if (!result.canceled && result.answer?.trim()) {
             desktopContextRef.current = { control, prompt: completeText, answer: result.answer.trim(), at: Date.now() };
           }
@@ -2903,11 +3294,13 @@ export default function Home() {
         }
       } else if (selectedRoute === "local_codex") {
         const localCodex = window.voxLocalCodex;
-        if (!localCodex?.available) {
+        if (!localCodex?.available && !pairedMacAvailable) {
           throw new Error("Local Codex is not available in this app.");
         }
         const result = await runWithFrontVoice(selectedRoute, () =>
-          localCodex.runTask({ prompt: completeText }),
+          localCodex?.available
+            ? localCodex.runTask({ prompt: completeText })
+            : sendRemoteMacCommand({ kind: "local_codex", prompt: completeText }),
         );
         if (!isCurrentTurn()) return;
         if (result.canceled) {
@@ -3949,6 +4342,47 @@ export default function Home() {
       <audio ref={audioRef} autoPlay className="sr-only" />
       <canvas ref={cameraCanvasRef} className="hidden" aria-hidden="true" />
       <Toaster position="top-center" richColors />
+      <AlertDialog
+        open={Boolean(phonePairingCandidate)}
+        onOpenChange={(open) => {
+          if (!open) dismissPhonePairing();
+        }}
+      >
+        <AlertDialogContent className="border-white/10 bg-[#171823] text-white">
+          <AlertDialogHeader>
+            <div className="mb-2 grid size-11 place-items-center rounded-2xl border border-[#f4ff74]/18 bg-[#f4ff74]/[0.06] text-[#f4ff74]">
+              <Smartphone />
+            </div>
+            <AlertDialogTitle>Pair this phone with your Mac?</AlertDialogTitle>
+            <AlertDialogDescription className="leading-6 text-white/48">
+              Voice commands from this browser can reach Vox Desktop on your Mac.
+              Commands and results are end-to-end encrypted, and the Mac keeps its
+              local safety rules and confirmations.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {remotePairingError && (
+            <p className="rounded-xl border border-[#ff766c]/16 bg-[#ff766c]/[0.055] px-3.5 py-3 text-sm text-[#ffaaa4]">
+              {remotePairingError}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={remotePairingBusy}
+              className="border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+            >
+              Not now
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              disabled={remotePairingBusy}
+              onClick={() => void claimPhonePairing()}
+              className="bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+            >
+              <Link2 /> {remotePairingBusy ? "Pairing…" : "Pair securely"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
       <div className="holo-edge holo-edge-left" aria-hidden="true" />
@@ -4103,6 +4537,239 @@ export default function Home() {
               </div>
             </SheetContent>
           </Sheet>}
+
+          {desktopPersonalAvailable && connectionMode === "cloud" && (
+            <Sheet
+              open={remotePairingOpen}
+              onOpenChange={(open) => {
+                setRemotePairingOpen(open);
+                if (open) void refreshDesktopPairingStatus();
+              }}
+            >
+              <SheetTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
+                  aria-label="Pair a phone with this Mac"
+                >
+                  <Smartphone />
+                  <span className="hidden sm:inline">
+                    {remotePairingStatus?.status === "active" ? "Phone paired" : "Pair phone"}
+                  </span>
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="w-[min(94vw,460px)] border-white/10 bg-[#10111b] text-white sm:max-w-[460px]">
+                <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
+                  <div className="flex items-center gap-2 text-[#f4ff74]">
+                    <Smartphone size={18} />
+                    <SheetTitle className="font-display text-xl text-white">
+                      Phone control
+                    </SheetTitle>
+                  </div>
+                  <SheetDescription className="mt-2 leading-6 text-white/46">
+                    Pair your phone’s Vox web app with this Mac. The cloud relays
+                    encrypted envelopes but never receives the control key.
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="flex-1 overflow-y-auto px-5 py-5">
+                  <div className="rounded-2xl border border-emerald-300/12 bg-emerald-300/[0.045] p-4 text-xs leading-5 text-white/56">
+                    <div className="flex items-start gap-2">
+                      <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-300" />
+                      <p>
+                        A database leak cannot reveal or forge the encrypted commands.
+                        Sensitive local Codex work still needs approval on this Mac.
+                      </p>
+                    </div>
+                  </div>
+
+                  {remotePairingStatus?.status === "active" ? (
+                    <div className="mt-5 space-y-4">
+                      <div className="rounded-2xl border border-[#f4ff74]/16 bg-[#f4ff74]/[0.05] p-4">
+                        <p className="flex items-center gap-2 text-sm font-semibold text-white/86">
+                          <span className="size-2 rounded-full bg-emerald-400" /> Phone connected
+                        </p>
+                        <p className="mt-2 text-xs leading-5 text-white/44">
+                          {remotePairingStatus.phoneLabel || "Your phone browser"} may ask this Mac to use approved apps,
+                          local smart-home devices, the selected folder, or read-only Codex.
+                        </p>
+                      </div>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-11 w-full rounded-full border-[#ff766c]/22 bg-[#ff766c]/[0.06] text-[#ffaaa4] hover:bg-[#ff766c]/12 hover:text-[#ffc0bc]"
+                          >
+                            Disconnect phone
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent className="border-white/10 bg-[#171823] text-white">
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Disconnect the paired phone?</AlertDialogTitle>
+                            <AlertDialogDescription className="leading-6 text-white/46">
+                              Its saved key will stop working immediately. You can create a new pairing later.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel className="border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white">
+                              Keep connected
+                            </AlertDialogCancel>
+                            <AlertDialogAction
+                              variant="destructive"
+                              disabled={remotePairingBusy}
+                              onClick={() => void revokePhonePairing()}
+                            >
+                              Disconnect
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  ) : (
+                    <div className="mt-5 space-y-4">
+                      <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
+                        <p className="text-sm font-semibold text-white/82">
+                          {remotePairingStatus?.status === "pending"
+                            ? "Waiting for your phone"
+                            : "No phone paired"}
+                        </p>
+                        <p className="mt-2 text-xs leading-5 text-white/44">
+                          Create a short-lived private QR code, scan it with your
+                          phone, sign in to the same Vox account, and approve pairing
+                          there.
+                        </p>
+                      </div>
+                      {remotePairingUrl && (
+                        <div className="rounded-2xl border border-[#c8bcff]/16 bg-[#c8bcff]/[0.05] p-4">
+                          <div className="text-center">
+                            <p className="text-sm font-semibold text-white/80">
+                              Scan with your phone camera
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-white/42">
+                              The QR code expires shortly and works only after you
+                              sign in to the same Vox account.
+                            </p>
+                          </div>
+                          {remotePairingQr ? (
+                            <div className="mx-auto mt-4 w-fit rounded-2xl bg-white p-3 shadow-[0_0_32px_rgba(200,188,255,0.12)]">
+                              {/* Pairing QR is generated locally; no QR service receives its private key. */}
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={remotePairingQr}
+                                alt="QR code for securely pairing this phone with Vox on the Mac"
+                                className="h-52 w-52"
+                              />
+                            </div>
+                          ) : (
+                            <div className="mx-auto mt-4 flex h-52 w-52 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.035] text-xs text-white/38">
+                              Preparing QR code…
+                            </div>
+                          )}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="mt-4 h-10 w-full rounded-full border-white/10 bg-white/[0.035] text-white/68 hover:bg-white/[0.07] hover:text-white"
+                            onClick={() => void copyPhonePairingLink()}
+                          >
+                            <Copy /> Copy link instead
+                          </Button>
+                        </div>
+                      )}
+                      <Button
+                        type="button"
+                        disabled={remotePairingBusy || remotePairingStatus?.secureStorageAvailable === false}
+                        onClick={() => void createPhonePairing()}
+                        className="h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                      >
+                        <Smartphone />
+                        {remotePairingBusy
+                          ? "Creating…"
+                          : remotePairingStatus?.status === "pending"
+                            ? "Create a new QR code"
+                            : "Create pairing QR code"}
+                      </Button>
+                    </div>
+                  )}
+                  {remotePairingError && (
+                    <p className="mt-4 rounded-xl border border-[#ff766c]/16 bg-[#ff766c]/[0.055] px-3.5 py-3 text-xs leading-5 text-[#ffaaa4]">
+                      {remotePairingError}
+                    </p>
+                  )}
+                </div>
+              </SheetContent>
+            </Sheet>
+          )}
+
+          {!desktopPersonalAvailable && connectionMode === "cloud" && remoteMacPairing && (
+            <Sheet open={remoteRoutingOpen} onOpenChange={setRemoteRoutingOpen}>
+              <SheetTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-10 rounded-full border-emerald-300/14 bg-emerald-300/[0.045] px-3 text-emerald-200/70 shadow-none hover:bg-emerald-300/[0.08] hover:text-emerald-100"
+                  aria-label="Choose where Vox actions run"
+                >
+                  {webActionRouting === "paired_mac" ? <Smartphone /> : <Globe2 />}
+                  <span className="hidden sm:inline">
+                    Route · {webActionRouting === "paired_mac" ? "Paired Mac" : "Web only"}
+                  </span>
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="w-[min(94vw,440px)] border-white/10 bg-[#10111b] text-white sm:max-w-[440px]">
+                <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
+                  <div className="flex items-center gap-2 text-[#f4ff74]">
+                    <Link2 size={18} />
+                    <SheetTitle className="font-display text-xl text-white">
+                      Action routing
+                    </SheetTitle>
+                  </div>
+                  <SheetDescription className="mt-2 leading-6 text-white/46">
+                    Choose explicitly whether device actions stay unavailable in
+                    this browser or travel to your paired Mac.
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="flex-1 space-y-3 overflow-y-auto px-5 py-5">
+                  <button
+                    type="button"
+                    onClick={() => chooseWebActionRouting("web_only")}
+                    className={`w-full rounded-2xl border p-4 text-left transition ${webActionRouting === "web_only" ? "border-[#f4ff74]/30 bg-[#f4ff74]/[0.07]" : "border-white/9 bg-white/[0.035] hover:bg-white/[0.06]"}`}
+                  >
+                    <span className="flex items-center gap-2 text-sm font-semibold text-white/86">
+                      <Globe2 className="size-4" /> Web only
+                      {webActionRouting === "web_only" && <CheckCircle2 className="ml-auto size-4 text-[#f4ff74]" />}
+                    </span>
+                    <span className="mt-2 block text-xs leading-5 text-white/44">
+                      Conversation, search, reminders, and files use Vox Cloud. No
+                      command is sent to the Mac.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!remoteMacReady}
+                    onClick={() => chooseWebActionRouting("paired_mac")}
+                    className={`w-full rounded-2xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${webActionRouting === "paired_mac" ? "border-[#f4ff74]/30 bg-[#f4ff74]/[0.07]" : "border-white/9 bg-white/[0.035] enabled:hover:bg-white/[0.06]"}`}
+                  >
+                    <span className="flex items-center gap-2 text-sm font-semibold text-white/86">
+                      <Smartphone className="size-4" /> Paired Mac
+                      {webActionRouting === "paired_mac" && <CheckCircle2 className="ml-auto size-4 text-[#f4ff74]" />}
+                    </span>
+                    <span className="mt-2 block text-xs leading-5 text-white/44">
+                      {remoteMacReady
+                        ? "App control, smart-home commands, folder opening, and approved Codex tasks route through the encrypted Mac link."
+                        : "The Mac is offline. Open Vox Desktop on the paired Mac to make this route available."}
+                    </span>
+                  </button>
+                  <p className="px-1 pt-2 text-[0.68rem] leading-5 text-white/32">
+                    This choice is stored only in this browser and remains visible
+                    in the header. Pairing never enables Mac routing by itself.
+                  </p>
+                </div>
+              </SheetContent>
+            </Sheet>
+          )}
 
           {desktopPersonalAvailable && (
             <Sheet open={smartHomeOpen} onOpenChange={changeSmartHomeOpen}>

@@ -44,6 +44,11 @@ import {
   isClosingDesktopApp,
   isDraftOnlyDesktopControlPrompt,
 } from "./desktop-control-policy.mjs";
+import {
+  decryptRemoteCommand,
+  encryptRemoteResult,
+  verifyPairingClaim,
+} from "./remote-control.mjs";
 
 const productionUrl = "https://vox-assistant.ericcheng306.workers.dev/";
 const developmentUrl = process.env.VOX_DESKTOP_DEV_URL;
@@ -73,6 +78,9 @@ let taskLaunchPending = false;
 let lastWorkspaceOpenAt = 0;
 let lastDesktopControlAt = 0;
 let lastSmartHomeCommandAt = 0;
+let remoteRelayTimer = null;
+let remoteRelayInFlight = false;
+let lastRemoteHeartbeatAt = 0;
 
 function isTrustedSender(event) {
   if (!mainWindow || event.sender !== mainWindow.webContents) return false;
@@ -177,6 +185,54 @@ function readEncryptedSetting(settings, name, label, legacyName) {
   } catch {
     throw new Error(`The saved ${label} could not be unlocked. Replace it and try again.`);
   }
+}
+
+function unlockedRemotePairing(settings) {
+  const pairing = settings.remoteMacPairing;
+  if (!pairing || typeof pairing !== "object") return null;
+  if (
+    typeof pairing.deviceId !== "string" ||
+    typeof pairing.encryptedSecret !== "string" ||
+    !pairing.deviceId ||
+    !pairing.encryptedSecret
+  ) return null;
+  if (!secureStorageAvailable()) return null;
+  try {
+    return {
+      deviceId: pairing.deviceId,
+      name: typeof pairing.name === "string" ? pairing.name : "This Mac",
+      status: typeof pairing.status === "string" ? pairing.status : "pending",
+      secret: safeStorage.decryptString(Buffer.from(pairing.encryptedSecret, "base64")),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function remotePairingUrl(pairing) {
+  const pairingUrl = new URL(productionUrl);
+  pairingUrl.searchParams.set("pair", pairing.deviceId);
+  pairingUrl.hash = `vox-pair=${pairing.secret}`;
+  return pairingUrl.href;
+}
+
+async function cloudJson(pathname, init = {}) {
+  if (!localVoxServer) throw new Error("The local Vox service is not ready.");
+  const response = await session.defaultSession.fetch(new URL(pathname, localVoxServer.url).href, {
+    ...init,
+    credentials: "include",
+    redirect: "error",
+    headers: {
+      "Content-Type": "application/json",
+      [desktopSessionHeader.name]: desktopSessionHeader.value,
+      ...(init.headers ?? {}),
+    },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof payload?.error === "string" ? payload.error : "Vox Cloud is unavailable.");
+  }
+  return payload;
 }
 
 function savedSmartHomeDevices(settings) {
@@ -549,6 +605,197 @@ async function savedOrChosenWorkspace() {
   return chooseWorkspace("Choose a project for this voice task");
 }
 
+async function performRemoteSmartHomeCommand(command) {
+  const settings = await readSettings();
+  const devices = savedSmartHomeDevices(settings);
+  const prompt = typeof command.prompt === "string" ? command.prompt.trim().slice(0, 4_000) : "";
+  const requestedId = typeof command.deviceId === "string" ? command.deviceId.slice(0, 100) : "";
+  if (!prompt) throw new Error("The phone did not send a smart-home command.");
+  const promptLower = prompt.toLocaleLowerCase();
+  const namedDevice = devices.find((device) =>
+    typeof device.name === "string" && promptLower.includes(device.name.toLocaleLowerCase()),
+  );
+  const selectedId = requestedId || namedDevice?.id || (devices.length === 1 ? devices[0].id : "");
+  if (!selectedId) throw new Error("Choose a configured smart-home device on the Mac first.");
+  const result = await runSmartHomeCommand(unlockSmartHomeDevice(settings, selectedId), prompt);
+  return result?.answer ?? result?.status ?? "The smart-home command completed.";
+}
+
+async function performRemoteDesktopControl(command) {
+  if (activeTask || taskLaunchPending) throw new Error("The Mac is already working on another local task.");
+  const prompt = typeof command.prompt === "string" ? command.prompt.trim() : "";
+  if (!prompt || prompt.length > maximumPromptLength) throw new Error("The remote desktop request is invalid.");
+  const appPolicy = approvedDesktopApp(command.appId) ??
+    (await installedApps()).find((candidate) => candidate.id === command.appId);
+  if (!appPolicy) throw new Error("That app is not installed on the paired Mac.");
+  const actionText = currentDesktopActionText(prompt);
+  if (isBlockedDesktopControlPrompt(actionText)) {
+    throw new Error("That remote action is restricted by the Mac's local policy.");
+  }
+
+  const closing = isClosingDesktopApp(actionText);
+  const draftOnly = isDraftOnlyDesktopControlPrompt(actionText);
+  const intent = closing || command.intent === "interact" ? "interact" : "launch";
+  if (intent === "launch") {
+    await launchApprovedDesktopApp(appPolicy);
+    return `Opened ${appPolicy.name} on the paired Mac.`;
+  }
+
+  taskLaunchPending = true;
+  try {
+    if (!closing) await launchApprovedDesktopApp(appPolicy);
+    if (closing && !(await isDesktopAppRunning(appPolicy.bundleId))) {
+      return `${appPolicy.name} is already closed.`;
+    }
+    const workspace = await computerControlWorkingDirectory();
+    const result = await runCodexTask(randomUUID(), {
+      prompt,
+      workspace,
+      access: "read-only",
+      voice: true,
+      computerControl: true,
+      targetAppName: appPolicy.name,
+      targetBundleId: appPolicy.bundleId,
+      computerUseMode: closing || command.mode === "fast" ? "fast" : "standard",
+      computerControlAction: closing
+        ? "close_app"
+        : draftOnly
+          ? "draft_message"
+          : "interact",
+    });
+    if (result.status === "completed") return result.finalResponse || "The remote action completed.";
+    if (result.status === "setup-required") return result.message;
+    if (result.status === "cancelled") return "The action was cancelled on the Mac.";
+    throw new Error(result.message || "The Mac did not complete the remote action.");
+  } finally {
+    taskLaunchPending = false;
+  }
+}
+
+async function performRemoteCodexTask(command) {
+  if (activeTask || taskLaunchPending) throw new Error("The Mac is already working on another local task.");
+  const prompt = typeof command.prompt === "string" ? command.prompt.trim() : "";
+  if (!prompt || prompt.length > maximumPromptLength) throw new Error("The remote Codex request is invalid.");
+  const workspace = await savedOrChosenWorkspace();
+  if (!workspace) return "The Codex task was cancelled on the Mac.";
+  const confirmation = await dialog.showMessageBox(mainWindow, {
+    type: "question",
+    title: "Remote Codex request",
+    message: "Allow the paired phone to run this local Codex task?",
+    detail: `Folder: ${workspace}\n\nTask: ${truncate(prompt, 700)}\n\nRemote Codex tasks require confirmation on this Mac and start read-only.`,
+    buttons: ["Run read-only", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (confirmation.response !== 0) return "The Codex task was declined on the Mac.";
+  taskLaunchPending = true;
+  try {
+    const result = await runCodexTask(randomUUID(), {
+      prompt,
+      workspace,
+      access: "read-only",
+      voice: true,
+    });
+    if (result.status === "completed") return result.finalResponse || "The Codex task completed.";
+    if (result.status === "cancelled") return "The Codex task was cancelled on the Mac.";
+    throw new Error(result.message || "Local Codex could not complete the task.");
+  } finally {
+    taskLaunchPending = false;
+  }
+}
+
+async function performRemoteCommand(command) {
+  if (!command || typeof command !== "object") throw new Error("The remote command is invalid.");
+  if (command.kind === "desktop_control") return performRemoteDesktopControl(command);
+  if (command.kind === "smart_home") return performRemoteSmartHomeCommand(command);
+  if (command.kind === "local_codex") return performRemoteCodexTask(command);
+  if (command.kind === "open_workspace") {
+    const settings = await readSettings();
+    const workspace = await validateWorkspace(settings.workspace);
+    const openError = await shell.openPath(workspace);
+    if (openError) throw new Error(openError);
+    return `Opened ${path.basename(workspace)} in Finder on the paired Mac.`;
+  }
+  throw new Error("That remote command type is not supported.");
+}
+
+async function processRemoteRelay() {
+  if (remoteRelayInFlight || activeConnectionMode !== "cloud") return;
+  remoteRelayInFlight = true;
+  try {
+    let settings = await readSettings();
+    const pairing = unlockedRemotePairing(settings);
+    if (!pairing) return;
+    const state = await cloudJson(`/api/device-pairing?deviceId=${encodeURIComponent(pairing.deviceId)}`);
+    const device = state.device;
+    if (
+      device?.status === "pending" &&
+      typeof device.claimId === "string" &&
+      typeof device.claimLabel === "string" &&
+      typeof device.claimProof === "string" &&
+      verifyPairingClaim(pairing.secret, {
+        deviceId: pairing.deviceId,
+        claimId: device.claimId,
+        label: device.claimLabel,
+        proof: device.claimProof,
+      })
+    ) {
+      await cloudJson("/api/device-pairing", {
+        method: "POST",
+        body: JSON.stringify({ action: "activate", deviceId: pairing.deviceId }),
+      });
+      settings = await readSettings();
+      await saveSettings({
+        ...settings,
+        remoteMacPairing: { ...settings.remoteMacPairing, status: "active", phoneLabel: device.claimLabel },
+      });
+    }
+    if (device?.status !== "active" && pairing.status !== "active") return;
+    if (Date.now() - lastRemoteHeartbeatAt >= 30_000) {
+      await cloudJson("/api/device-pairing", {
+        method: "POST",
+        body: JSON.stringify({ action: "heartbeat", deviceId: pairing.deviceId }),
+      });
+      lastRemoteHeartbeatAt = Date.now();
+    }
+
+    const pending = await cloudJson(`/api/device-commands?deviceId=${encodeURIComponent(pairing.deviceId)}`);
+    for (const envelope of Array.isArray(pending.commands) ? pending.commands : []) {
+      settings = await readSettings();
+      const processed = Array.isArray(settings.processedRemoteCommandIds)
+        ? settings.processedRemoteCommandIds.filter((id) => typeof id === "string")
+        : [];
+      if (processed.includes(envelope.id)) continue;
+      let result;
+      try {
+        const payload = decryptRemoteCommand(pairing.secret, pairing.deviceId, envelope);
+        await saveSettings({
+          ...settings,
+          processedRemoteCommandIds: [...processed.slice(-99), envelope.id],
+        });
+        result = { ok: true, answer: await performRemoteCommand(payload.command) };
+      } catch (error) {
+        result = { ok: false, error: error instanceof Error ? error.message : "The remote command failed." };
+      }
+      const encrypted = encryptRemoteResult(pairing.secret, pairing.deviceId, envelope.id, result);
+      await cloudJson("/api/device-commands", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: envelope.id,
+          deviceId: pairing.deviceId,
+          resultCiphertext: encrypted.ciphertext,
+          resultIv: encrypted.iv,
+        }),
+      });
+    }
+  } catch {
+    // Pairing and relay failures stay silent; the UI reports connectivity on demand.
+  } finally {
+    remoteRelayInFlight = false;
+  }
+}
+
 function layoutVoxView() {
   if (!mainWindow || !voxView) return;
   const [width, height] = mainWindow.getContentSize();
@@ -651,6 +898,106 @@ function registerIpcHandlers() {
     }
     const apiKey = readEncryptedSetting(settings, "personalTypeSafeKey", "TypeSafe API key");
     return createPersonalPresence(apiKey, request);
+  });
+
+  ipcMain.handle("vox-remote:status", async (event) => {
+    requireTrustedVoxSender(event);
+    const settings = await readSettings();
+    const pairing = unlockedRemotePairing(settings);
+    if (!pairing) {
+      return {
+        configured: false,
+        secureStorageAvailable: secureStorageAvailable(),
+      };
+    }
+    let device = null;
+    if (connectionMode(settings.connectionMode) === "cloud") {
+      try {
+        device = (await cloudJson(`/api/device-pairing?deviceId=${encodeURIComponent(pairing.deviceId)}`)).device;
+      } catch {
+        // Return the locally known state while Vox Cloud is temporarily unavailable.
+      }
+    }
+    return {
+      configured: true,
+      secureStorageAvailable: secureStorageAvailable(),
+      deviceId: pairing.deviceId,
+      name: pairing.name,
+      status: device?.status ?? pairing.status,
+      phoneLabel: device?.claimLabel ?? settings.remoteMacPairing?.phoneLabel ?? null,
+      pairingUrl:
+        device?.status === "pending" && Date.parse(device.expiresAt ?? "") > Date.now()
+          ? remotePairingUrl(pairing)
+          : undefined,
+    };
+  });
+
+  ipcMain.handle("vox-remote:create-pairing", async (event) => {
+    requireTrustedVoxSender(event);
+    const settings = await readSettings();
+    if (connectionMode(settings.connectionMode) !== "cloud") {
+      throw new Error("Phone pairing is available in Vox Cloud mode.");
+    }
+    if (!secureStorageAvailable()) {
+      throw new Error("Secure system storage is unavailable on this Mac.");
+    }
+    const previous = unlockedRemotePairing(settings);
+    if (previous) {
+      try {
+        await cloudJson(`/api/device-pairing?deviceId=${encodeURIComponent(previous.deviceId)}`, {
+          method: "DELETE",
+        });
+      } catch {
+        // Creating a replacement pairing locally still invalidates the old secret on this Mac.
+      }
+    }
+    const deviceId = randomUUID();
+    const secret = randomBytes(32).toString("base64url");
+    const name = "This Mac";
+    await cloudJson("/api/device-pairing", {
+      method: "POST",
+      body: JSON.stringify({ action: "create", deviceId, name }),
+    });
+    await saveSettings({
+      ...settings,
+      remoteMacPairing: {
+        deviceId,
+        name,
+        status: "pending",
+        encryptedSecret: safeStorage.encryptString(secret).toString("base64"),
+      },
+      processedRemoteCommandIds: [],
+    });
+    lastRemoteHeartbeatAt = 0;
+    void processRemoteRelay();
+    return {
+      configured: true,
+      deviceId,
+      name,
+      status: "pending",
+      pairingUrl: remotePairingUrl({ deviceId, secret }),
+    };
+  });
+
+  ipcMain.handle("vox-remote:revoke", async (event) => {
+    requireTrustedVoxSender(event);
+    const settings = await readSettings();
+    const pairing = unlockedRemotePairing(settings);
+    if (pairing) {
+      try {
+        await cloudJson(`/api/device-pairing?deviceId=${encodeURIComponent(pairing.deviceId)}`, {
+          method: "DELETE",
+        });
+      } catch {
+        // Removing the local key immediately prevents this Mac from accepting more commands.
+      }
+    }
+    const remaining = { ...settings };
+    delete remaining.remoteMacPairing;
+    delete remaining.processedRemoteCommandIds;
+    await saveSettings(remaining);
+    lastRemoteHeartbeatAt = 0;
+    return { revoked: true };
   });
 
   ipcMain.handle("vox-smart-home:status", async (event) => {
@@ -1115,6 +1462,8 @@ app.whenReady().then(async () => {
   });
   registerIpcHandlers();
   await createWindow();
+  remoteRelayTimer = setInterval(() => void processRemoteRelay(), 2_500);
+  void processRemoteRelay();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
@@ -1125,5 +1474,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  if (remoteRelayTimer) clearInterval(remoteRelayTimer);
+  remoteRelayTimer = null;
   void localVoxServer?.close();
 });

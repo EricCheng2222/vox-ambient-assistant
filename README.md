@@ -83,7 +83,21 @@ Open **Home** in Vox Desktop and choose **Discover**. The purifier must already 
 
 After pairing, voice commands can turn the purifier on or off, set speed 1–10, toggle auto/night/oscillation, and read available local sensor status. Heat controls and filter resets are deliberately excluded from this first version.
 
-Smart-home control is desktop-only and local-first: device credentials are encrypted with macOS secure storage, commands stay on the LAN, and no device credential or command is sent through the Vox backend. Dyson is the first adapter behind a general smart-home hub boundary intended to support more local device types later.
+Smart-home execution is desktop-only and local-first: device credentials are encrypted with macOS secure storage and device traffic stays on the LAN. A command spoken directly to Vox Desktop does not pass through the Vox backend. When a paired phone explicitly routes an action to the Mac, the backend relays only an end-to-end encrypted command envelope and never receives the device credential or plaintext command. Dyson is the first adapter behind a general smart-home hub boundary intended to support more local device types later.
+
+#### 6. Optional: pair the phone web app with your Mac
+
+Phone control is available only when Vox Desktop uses **Vox Cloud** and the phone is signed in to the same Vox account.
+
+1. Open **Pair phone** in Vox Desktop.
+2. Choose **Create pairing QR code**, then scan the private, short-lived QR code with your phone camera. If scanning is unavailable, use **Copy link instead**.
+3. Open the scanned page on the phone and choose **Pair securely**.
+4. Wait for the Mac to show **Phone connected**.
+5. On the phone, open **Route** in the header and explicitly choose **Paired Mac**.
+
+Pairing does not enable Mac routing by itself. The phone defaults to **Web only**, and the selected route remains visible in the header. In **Paired Mac** mode, supported app actions, smart-home commands, folder opening, and approved read-only Codex tasks travel through the paired Mac. Normal conversation, web search, reminders, files, and cloud memory continue to use the web service.
+
+The QR code is generated locally inside Vox Desktop and encodes a pairing link carrying a random device key in its URL fragment, which browsers do not send to the server. No third-party QR service sees it. Commands and results are AES-256-GCM encrypted on the endpoints; D1 stores only ciphertext. The Mac rejects expired and replayed command IDs and applies its local app, smart-home, sandbox, and confirmation policies after decryption. Revoke the phone from **Pair phone** on the Mac to delete the relay queue and invalidate its local key.
 
 ## Connection modes
 
@@ -96,10 +110,11 @@ Vox Desktop always loads its bundled interface, including in Cloud mode. Cloud m
 
 Personal mode currently keeps the transcript and preferences on one device. Cloud memory, cross-device sync, hosted files, reminders, and invite codes are intentionally unavailable because those features require the Vox backend.
 
-The interface labels the two scopes explicitly:
+The interface labels the scopes explicitly:
 
 - **Account · Vox Cloud** — reply length, voice, initiative, theme, transcript, memory, reminders, and files that synchronize through the signed-in account.
 - **Device · This Mac** — API keys, Codex workspace, installed-app access, Computer Use, macOS permissions, and smart-home credentials. Account data can never enable or widen these local capabilities.
+- **Route · Web only / Paired Mac** — a phone-web choice that determines whether local-capability requests remain unavailable or are sent through its encrypted pairing. Pairing alone never changes this choice.
 
 ## Main features
 
@@ -113,6 +128,7 @@ The interface labels the two scopes explicitly:
 - Optional cloud memory, reminders, generated files, invitations, and cross-device transcript sync
 - Desktop-local Codex and constrained Computer Use integration
 - Desktop-local smart-home hub with an initial Dyson Wi-Fi purifier adapter
+- Explicit phone-web routing to a securely paired Mac
 
 ## Conversation context and memory
 
@@ -132,6 +148,8 @@ Cloud memory is separate from this short-term context window. Vox stores concise
 | Camera does not work | Enable Vox under **Privacy & Security → Camera**. Camera access is optional. |
 | macOS says the developer cannot be verified | Use **Privacy & Security → Open Anyway** only for a build you made from this repository. |
 | Codex or Computer Use is unavailable | Confirm that local Codex is installed and signed in, then check its local app permissions. |
+| The phone shows Mac offline | Keep Vox Desktop running in Cloud mode, confirm both devices use the same Vox account, and wait a few seconds for the encrypted relay heartbeat. |
+| A paired phone does not control the Mac | On the phone, open **Route** and explicitly choose **Paired Mac**. Pairing defaults to **Web only**. |
 | The app says a provider budget is exhausted | Add provider credit or wait for the provider limit to reset. Personal mode uses your own provider accounts. |
 
 ## Development
@@ -179,6 +197,7 @@ VOX_DESKTOP_DEV_URL=http://localhost:5173 npm start
 - Cloud sessions use signed, expiring, HttpOnly cookies scoped to opaque user IDs.
 - The packaged desktop never executes JavaScript delivered by Vox Cloud. A per-process secret binds its allowlisted API gateway to the current desktop renderer, and cloud session cookies are attached only by Electron's main process.
 - Cloud routing cannot create local authority: Computer Use, Codex, workspace access, camera capture, and smart-home commands require independently detected local user intent and local policy checks.
+- Phone-to-Mac pairing uses a unique 256-bit endpoint key that is never stored in D1. The relay sees device IDs, timing metadata, and ciphertext, but not command or result contents. The Mac enforces expiry, replay prevention, local capability policy, and native confirmation for remote Codex tasks.
 - Activation codes are hashed; email addresses and synchronized transcript messages are encrypted before D1 storage.
 - Generated file bodies stay in private R2.
 - Personal provider keys are encrypted locally and are never returned to the renderer.
@@ -196,6 +215,7 @@ Report vulnerabilities privately as described in [SECURITY.md](./SECURITY.md). N
 npm run lint
 npm run build
 npm run test:privacy
+npm run test:remote-control
 npm --prefix desktop/VoxDesktop run check
 ```
 

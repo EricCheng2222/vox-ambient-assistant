@@ -86,16 +86,32 @@ test("Cloud mode proxies only allowlisted APIs through its per-process desktop b
     assert.equal(response.headers.get("x-content-type-options"), "nosniff");
     assert.match(response.headers.get("content-security-policy") ?? "", /default-src 'none'/u);
 
+    const pairing = await fetch(new URL("/api/device-pairing", server.url), {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "heartbeat" }),
+    });
+    assert.equal(pairing.status, 200);
+    assert.equal(proxied.at(-1).url, "https://vox.example/api/device-pairing");
+
+    const command = await fetch(new URL("/api/device-commands", server.url), {
+      method: "PATCH",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ completed: true }),
+    });
+    assert.equal(command.status, 200);
+    assert.equal(proxied.at(-1).url, "https://vox.example/api/device-commands");
+
     const unknown = await fetch(new URL("/api/not-a-desktop-endpoint", server.url), { headers });
     assert.equal(unknown.status, 404);
-    assert.equal(proxied.length, 1);
+    assert.equal(proxied.length, 3);
 
     const wrongMethod = await fetch(new URL("/api/preferences", server.url), {
       method: "POST",
       headers,
     });
     assert.equal(wrongMethod.status, 405);
-    assert.equal(proxied.length, 1);
+    assert.equal(proxied.length, 3);
   } finally {
     await server.close();
     await rm(webRoot, { recursive: true, force: true });

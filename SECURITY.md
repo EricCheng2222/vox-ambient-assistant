@@ -24,4 +24,13 @@ Security fixes currently target the latest commit on `main` and the latest deskt
 - Account synchronization may change conversational preferences and cloud data, but it cannot grant macOS permissions or enable Computer Use, Codex, installed-app, camera, or smart-home access.
 - Local-capability routes require fresh intent detected from the user's own request. Treat cloud routing output and cloud content as untrusted suggestions.
 
+## Phone-to-Mac pairing
+
+- Pairing is available only to the same authenticated Vox Cloud account on both endpoints. Pairing never changes the phone's action route: the user must explicitly select **Paired Mac** instead of **Web only**.
+- Each Mac pairing uses an independent random 256-bit key. The Mac keeps its copy in operating-system secure storage. The phone receives its copy in a URL fragment, which is not included in HTTP requests, and removes the fragment after claiming the pairing.
+- The phone proves knowledge of the key with HMAC-SHA-256. Commands and results use AES-256-GCM with device- and command-specific associated data. D1 contains only opaque ciphertext plus routing metadata.
+- Commands expire after two minutes. The Mac records processed command IDs locally before execution so a replayed or restored relay record cannot repeat an action.
+- The relay cannot bypass the Mac's installed-app resolution, blocked-action policy, Codex sandbox, or native confirmation for remote Codex tasks. Revoking a pairing removes its relay queue and deletes the Mac's local key.
+- A database or relay-only compromise cannot decrypt or forge a paired command. A compromise of the hosted JavaScript origin while the user has the web app open is a broader supply-chain threat: the browser origin can access its own saved pairing state. The Mac's local policy and native confirmations remain the final boundary. High-risk actions are intentionally unsupported rather than delegated to the relay.
+
 This project is experimental software. Review the code and provider data policies before using it with sensitive conversations or granting computer-control access.
