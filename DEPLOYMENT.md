@@ -38,6 +38,8 @@ repository.
 
 ```bash
 npx wrangler secret put OPENAI_API_KEY --config dist/server/wrangler.deploy.json
+npx wrangler secret put OPENAI_WEBHOOK_SECRET --config dist/server/wrangler.deploy.json
+npx wrangler secret put OPENAI_SIP_PROJECT_ID --config dist/server/wrangler.deploy.json
 npx wrangler secret put TYPESAFE_API_KEY --config dist/server/wrangler.deploy.json
 npx wrangler secret put VOX_MASTER_CODE --config dist/server/wrangler.deploy.json
 npx wrangler secret put VOX_SESSION_SECRET --config dist/server/wrangler.deploy.json
@@ -66,6 +68,17 @@ each synchronized transcript message with it before writing to D1; changing or
 losing it makes existing synchronized conversations unreadable.
 
 Use a long random value for `VOX_SESSION_SECRET`. Changing it signs everyone out. Removing a user from `VOX_USERS_JSON` immediately invalidates that user's existing session. `VOX_ACCESS_CODE` remains supported only as a single-owner compatibility setting.
+
+### Optional Direct SIP phone calls
+
+Direct SIP uses the same OpenAI project as `OPENAI_API_KEY` and keeps the Twilio number as the public phone entry point:
+
+1. In OpenAI Platform, open the project **Webhooks** page. Create an endpoint at `https://your-vox-domain.example/api/openai/realtime-sip`, subscribe only to `realtime.call.incoming`, and save its one-time signing secret as `OPENAI_WEBHOOK_SECRET`.
+2. Copy the `proj_...` value from that project's **General** settings into `OPENAI_SIP_PROJECT_ID`.
+3. Keep the Twilio number's incoming voice webhook set to `POST https://your-vox-domain.example/api/twilio/voice`. When the SIP project ID is present, Vox returns TwiML that bridges the call to `sip:$OPENAI_SIP_PROJECT_ID@sip.api.openai.com;transport=tls`; without it, the older speech-gather flow remains available as a fallback.
+4. Deploy the Worker. The prepared configuration binds `SIP_CALLS`, a per-call Durable Object that maintains the private sideband used for phrase verification, transcript sync, and reminder tools.
+
+Do not subscribe the OpenAI webhook to unrelated event types. Rotate `OPENAI_WEBHOOK_SECRET` immediately if it is exposed. Direct SIP is inbound-only; the existing explicit Twilio test-call path remains separate.
 
 ## Privacy and multiple users
 

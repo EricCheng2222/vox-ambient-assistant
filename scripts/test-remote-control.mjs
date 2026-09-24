@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import {
   createPairingProof,
@@ -36,6 +36,25 @@ const decryptedCommand = decryptRemoteCommand(secret, deviceId, {
 });
 assert.equal(decryptedCommand.command.kind, "desktop_control");
 assert.equal(decryptedCommand.command.appId, "safari");
+
+const phonePhrase = "A quiet cedar remembers mornings";
+const phoneSecret = createHash("sha256")
+  .update(phonePhrase.normalize("NFKC").toLocaleLowerCase("en-US").replace(/[\p{P}\p{S}\s]/gu, ""))
+  .digest("base64url");
+const phoneCommandId = randomUUID();
+const encryptedPhoneCommand = await encryptRemoteCommand(
+  { deviceId, name: "Test Mac", secret: phoneSecret },
+  phoneCommandId,
+  { kind: "phone_mac", prompt: "Open Music on my Mac" },
+);
+const decryptedPhoneCommand = decryptRemoteCommand(phoneSecret, deviceId, {
+  id: phoneCommandId,
+  ...encryptedPhoneCommand,
+});
+assert.deepEqual(decryptedPhoneCommand.command, {
+  kind: "phone_mac",
+  prompt: "Open Music on my Mac",
+});
 
 const encryptedResult = encryptRemoteResult(secret, deviceId, commandId, {
   ok: true,

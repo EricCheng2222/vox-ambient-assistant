@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 process.env.NODE_ENV = "production";
 process.env.VOX_SESSION_SECRET = "test-only-session-secret-that-is-long";
@@ -44,5 +45,21 @@ process.env.VOX_USERS_JSON = JSON.stringify([
   { id: "user-beta", name: "Beta", accessCode: "beta-test-code-456" },
 ]);
 assert.equal(await getAuthorizedUser(alphaRequest), null);
+
+const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+assert.match(pageSource, /sessionStorage\.setItem\(REMOTE_MAC_PAIRING_STORAGE_KEY/u);
+assert.doesNotMatch(pageSource, /localStorage\.setItem\(REMOTE_MAC_PAIRING_STORAGE_KEY/u);
+
+const workerSource = await readFile(new URL("../cloudflare/worker-entry.mjs", import.meta.url), "utf8");
+for (const header of [
+  "Content-Security-Policy",
+  "Permissions-Policy",
+  "Referrer-Policy",
+  "Strict-Transport-Security",
+  "X-Content-Type-Options",
+  "X-Frame-Options",
+]) {
+  assert.match(workerSource, new RegExp(header, "u"));
+}
 
 console.log("Privacy authentication checks passed.");

@@ -99,6 +99,18 @@ Pairing does not enable Mac routing by itself. The phone defaults to **Web only*
 
 The QR code is generated locally inside Vox Desktop and encodes a pairing link carrying a random device key in its URL fragment, which browsers do not send to the server. No third-party QR service sees it. Commands and results are AES-256-GCM encrypted on the endpoints; D1 stores only ciphertext. The Mac rejects expired and replayed command IDs and applies its local app, smart-home, sandbox, and confirmation policies after decryption. Revoke the phone from **Pair phone** on the Mac to delete the relay queue and invalidate its local key.
 
+#### 7. Optional: private realtime telephone assistant
+
+Vox Cloud can use a Twilio number as a deliberately limited telephone surface. The preferred path is Direct SIP: Twilio keeps the phone number, OpenAI Realtime carries the encrypted live audio, and the Vox backend keeps authentication, memory, transcript sync, reminders, and call policy on a private sideband connection. This removes the old listen-transcribe-wait-speak loop and makes the call behave much more like the continuous web voice session.
+
+Configure `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `TWILIO_WEBHOOK_BASE_URL`, `OPENAI_SIP_PROJECT_ID`, and `OPENAI_WEBHOOK_SECRET`. Keep the Twilio number's incoming voice webhook at `POST https://your-vox-domain.example/api/twilio/voice`. In the OpenAI project, subscribe a signed webhook at `POST https://your-vox-domain.example/api/openai/realtime-sip` to `realtime.call.incoming`. The Cloudflare deployment adds a per-call Durable Object so the private OpenAI sideband remains alive for the call.
+
+The phone surface is exclusive to the master/owner account; invited members cannot see or configure it. The owner chooses a private spoken sentence from **Call Vox**. Vox stores only a keyed hash of a normalized transcription—not the sentence or a voiceprint. Incoming callers may use any phone but must say the exact sentence. The Realtime model is locked to an authentication-only prompt until Vox verifies that transcript; a failure ends the call, repeated failures are rate-limited by a keyed caller fingerprint, unauthenticated calls time out after two minutes, and authenticated calls end after ten quiet minutes. The sentence is transcribed by OpenAI and should not be reused from another account or spoken where somebody else can hear it.
+
+An E.164 callback number is optional. When supplied, it is encrypted at rest and is used only for a call the signed-in owner explicitly requests. Caller phone numbers never identify or authenticate an account.
+
+The realtime call shares the selected Vox voice, concise memory, and bounded recent conversation with the web app; completed caller and Vox transcripts are encrypted into the same synced conversation. It supports conversation, factual questions, creating reminders, and listing pending reminders. It cannot control the paired Mac or smart home, contact another person, send a message, purchase, delete, log in, or disclose private data. Outbound calls are off by default and can only be requested manually by the signed-in user; autonomous check-ins and third-party calls are not enabled. Call recording is not requested or stored by Vox.
+
 ## Connection modes
 
 | Mode | AI billing | Sign-in | Data location | Available surfaces |
@@ -149,7 +161,7 @@ Cloud memory is separate from this short-term context window. Vox stores concise
 | macOS says the developer cannot be verified | Use **Privacy & Security → Open Anyway** only for a build you made from this repository. |
 | Codex or Computer Use is unavailable | Confirm that local Codex is installed and signed in, then check its local app permissions. |
 | The phone shows Mac offline | Keep Vox Desktop running in Cloud mode, confirm both devices use the same Vox account, and wait a few seconds for the encrypted relay heartbeat. |
-| A paired phone does not control the Mac | On the phone, open **Route** and explicitly choose **Paired Mac**. Pairing defaults to **Web only**. |
+| A paired phone does not control the Mac | In Vox Desktop, open **Phone control** and enable remote control until Vox quits. Then, on the phone, open **Route** and explicitly choose **Paired Mac**. Pairing alone grants no control. |
 | The app says a provider budget is exhausted | Add provider credit or wait for the provider limit to reset. Personal mode uses your own provider accounts. |
 
 ## Development

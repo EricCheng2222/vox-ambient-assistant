@@ -20,8 +20,17 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
   routePersonalTurn: (request) => ipcRenderer.invoke("vox-connection:personal-route", request),
   decidePersonalPresence: (request) =>
     ipcRenderer.invoke("vox-connection:personal-presence", request),
+  savePhoneRelayPassphrase: (passphrase) =>
+    ipcRenderer.invoke(
+      "vox-phone:save-relay-passphrase",
+      typeof passphrase === "string" ? passphrase.slice(0, 500) : "",
+    ),
+  removePhoneRelayPassphrase: () =>
+    ipcRenderer.invoke("vox-phone:remove-relay-passphrase"),
   getRemotePairingStatus: () => ipcRenderer.invoke("vox-remote:status"),
   createRemotePairing: () => ipcRenderer.invoke("vox-remote:create-pairing"),
+  armRemoteControl: () => ipcRenderer.invoke("vox-remote:arm"),
+  disarmRemoteControl: () => ipcRenderer.invoke("vox-remote:disarm"),
   revokeRemotePairing: () => ipcRenderer.invoke("vox-remote:revoke"),
   getSmartHomeStatus: () => ipcRenderer.invoke("vox-smart-home:status"),
   discoverSmartHomeDevices: (adapter) =>

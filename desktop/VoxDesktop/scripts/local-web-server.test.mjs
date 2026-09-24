@@ -102,16 +102,52 @@ test("Cloud mode proxies only allowlisted APIs through its per-process desktop b
     assert.equal(command.status, 200);
     assert.equal(proxied.at(-1).url, "https://vox.example/api/device-commands");
 
+    const callBadge = await fetch(new URL("/api/conversation", server.url), {
+      method: "PATCH",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "message-id", source: "phone", generation: 1 }),
+    });
+    assert.equal(callBadge.status, 200);
+    assert.equal(proxied.at(-1).url, "https://vox.example/api/conversation");
+    assert.equal(proxied.at(-1).method, "PATCH");
+
+    const phoneAssistant = await fetch(new URL("/api/phone-assistant", server.url), {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ enabled: true }),
+    });
+    assert.equal(phoneAssistant.status, 200);
+    assert.equal(proxied.at(-1).url, "https://vox.example/api/phone-assistant");
+
+    const phoneStatus = await fetch(new URL("/api/phone-assistant", server.url), { headers });
+    assert.equal(phoneStatus.status, 200);
+    assert.equal(proxied.at(-1).method, "GET");
+
+    const phoneSetup = await fetch(new URL("/api/phone-assistant", server.url), {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "configure", passphrase: "private sentence" }),
+    });
+    assert.equal(phoneSetup.status, 200);
+    assert.equal(proxied.at(-1).method, "POST");
+
+    const phoneDisconnect = await fetch(new URL("/api/phone-assistant", server.url), {
+      method: "DELETE",
+      headers,
+    });
+    assert.equal(phoneDisconnect.status, 200);
+    assert.equal(proxied.at(-1).method, "DELETE");
+
     const unknown = await fetch(new URL("/api/not-a-desktop-endpoint", server.url), { headers });
     assert.equal(unknown.status, 404);
-    assert.equal(proxied.length, 3);
+    assert.equal(proxied.length, 8);
 
     const wrongMethod = await fetch(new URL("/api/preferences", server.url), {
       method: "POST",
       headers,
     });
     assert.equal(wrongMethod.status, 405);
-    assert.equal(proxied.length, 3);
+    assert.equal(proxied.length, 8);
   } finally {
     await server.close();
     await rm(webRoot, { recursive: true, force: true });

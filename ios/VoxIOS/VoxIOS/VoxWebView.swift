@@ -1,6 +1,6 @@
 import SwiftUI
 import UIKit
-import WebKit
+@preconcurrency import WebKit
 
 struct VoxWebView: UIViewRepresentable {
     let url: URL
@@ -15,6 +15,11 @@ struct VoxWebView: UIViewRepresentable {
         configuration.websiteDataStore = .default()
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
+
+        let contentController = WKUserContentController()
+        contentController.addUserScript(PairingBridge.userScript(savedPairing: PairingKeychain.load()))
+        contentController.add(context.coordinator.pairingBridge, name: PairingBridge.handlerName)
+        configuration.userContentController = contentController
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -35,6 +40,7 @@ struct VoxWebView: UIViewRepresentable {
         )
         webView.scrollView.refreshControl = refreshControl
         context.coordinator.webView = webView
+        context.coordinator.pairingBridge.webView = webView
         context.coordinator.observeProgress(of: webView)
 
         #if DEBUG
@@ -54,13 +60,16 @@ struct VoxWebView: UIViewRepresentable {
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
         coordinator.stopObservingProgress()
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: PairingBridge.handlerName)
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         weak var webView: WKWebView?
+        let pairingBridge = PairingBridge()
+        private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
         private let loadingProgress: Binding<Double>
         private var progressObservation: NSKeyValueObservation?
@@ -98,6 +107,11 @@ struct VoxWebView: UIViewRepresentable {
                 return
             }
 
+            if destination.host == AppConfiguration.trustedHost, navigationAction.shouldPerformDownload {
+                decisionHandler(.download)
+                return
+            }
+
             if destination.host == AppConfiguration.trustedHost || destination.scheme == "about" {
                 decisionHandler(.allow)
                 return
@@ -108,6 +122,82 @@ struct VoxWebView: UIViewRepresentable {
                 UIApplication.shared.open(destination)
             }
             decisionHandler(.cancel)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationResponse: WKNavigationResponse,
+            decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+        ) {
+            let disposition = (navigationResponse.response as? HTTPURLResponse)?
+                .value(forHTTPHeaderField: "Content-Disposition")?
+                .lowercased() ?? ""
+            if disposition.hasPrefix("attachment") || !navigationResponse.canShowMIMEType {
+                decisionHandler(.download)
+            } else {
+                decisionHandler(.allow)
+            }
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            navigationAction: WKNavigationAction,
+            didBecome download: WKDownload
+        ) {
+            download.delegate = self
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            navigationResponse: WKNavigationResponse,
+            didBecome download: WKDownload
+        ) {
+            download.delegate = self
+        }
+
+        func download(
+            _ download: WKDownload,
+            decideDestinationUsing response: URLResponse,
+            suggestedFilename: String,
+            completionHandler: @escaping (URL?) -> Void
+        ) {
+            let folder = FileManager.default.temporaryDirectory
+                .appendingPathComponent("VoxDownloads", isDirectory: true)
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            } catch {
+                completionHandler(nil)
+                return
+            }
+            let name = (suggestedFilename as NSString).lastPathComponent
+            let destination = folder.appendingPathComponent(name.isEmpty ? "Vox download" : name)
+            downloadDestinations[ObjectIdentifier(download)] = destination
+            completionHandler(destination)
+        }
+
+        func downloadDidFinish(_ download: WKDownload) {
+            guard let fileURL = downloadDestinations.removeValue(forKey: ObjectIdentifier(download)) else {
+                return
+            }
+            presentShareSheet(for: fileURL)
+        }
+
+        func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+            downloadDestinations.removeValue(forKey: ObjectIdentifier(download))
+        }
+
+        private func presentShareSheet(for fileURL: URL) {
+            guard let webView, let presenter = webView.window?.rootViewController?.topmostPresented else { return }
+            let activity = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+            activity.popoverPresentationController?.sourceView = webView
+            activity.popoverPresentationController?.sourceRect = CGRect(
+                x: webView.bounds.midX,
+                y: webView.bounds.midY,
+                width: 1,
+                height: 1
+            )
+            presenter.present(activity, animated: true)
         }
 
         func webView(

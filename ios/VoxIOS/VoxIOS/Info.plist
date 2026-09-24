@@ -23,7 +23,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Vox uses the camera for a private local preview and sends a still frame only when you ask Vox to look.</string>
+	<string>Vox uses the camera to scan your Mac's pairing code and for a private local preview. It sends a still frame only when you ask Vox to look.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Vox uses the microphone so you can have a live voice conversation.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

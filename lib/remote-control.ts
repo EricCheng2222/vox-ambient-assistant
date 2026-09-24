@@ -8,6 +8,7 @@ export type RemoteMacCommand =
     }
   | { kind: "open_workspace" }
   | { kind: "smart_home"; prompt: string; deviceId?: string }
+  | { kind: "phone_mac"; prompt: string }
   | { kind: "local_codex"; prompt: string };
 
 export type StoredRemoteMacPairing = {

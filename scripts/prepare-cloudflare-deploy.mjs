@@ -1,8 +1,12 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const sourcePath = resolve("dist/server/wrangler.json");
 const outputPath = resolve("dist/server/wrangler.deploy.json");
+const workerEntryPath = resolve("dist/server/worker-entry.mjs");
+const workerEntrySourcePath = resolve("cloudflare/worker-entry.mjs");
+const sipControllerSourcePath = resolve("cloudflare/sip-call-durable-object.mjs");
+const sipControllerOutputPath = resolve("dist/server/sip-call-durable-object.mjs");
 
 const databaseId = process.env.CLOUDFLARE_D1_DATABASE_ID?.trim();
 const bucketName = process.env.CLOUDFLARE_R2_BUCKET_NAME?.trim();
@@ -34,6 +38,23 @@ config.r2_buckets = [
     bucket_name: bucketName,
   },
 ];
+config.main = "worker-entry.mjs";
+config.durable_objects = {
+  bindings: [
+    {
+      name: "SIP_CALLS",
+      class_name: "SipCallDurableObject",
+    },
+  ],
+};
+config.migrations = [
+  {
+    tag: "sip-calls-v1",
+    new_sqlite_classes: ["SipCallDurableObject"],
+  },
+];
 
+await copyFile(sipControllerSourcePath, sipControllerOutputPath);
+await copyFile(workerEntrySourcePath, workerEntryPath);
 await writeFile(outputPath, `${JSON.stringify(config, null, 2)}\n`);
 console.log(`Prepared ${outputPath} for Worker ${workerName}.`);

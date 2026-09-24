@@ -18,7 +18,7 @@ const contentTypes = new Map([
 
 const cloudApiMethods = new Map([
   ["/api/auth", new Set(["GET", "POST", "DELETE"])],
-  ["/api/conversation", new Set(["GET", "POST", "DELETE"])],
+  ["/api/conversation", new Set(["GET", "POST", "PATCH", "DELETE"])],
   ["/api/device-commands", new Set(["GET", "POST", "PATCH"])],
   ["/api/device-pairing", new Set(["GET", "POST", "DELETE"])],
   ["/api/files", new Set(["GET", "POST", "DELETE"])],
@@ -26,6 +26,7 @@ const cloudApiMethods = new Map([
   ["/api/jev-presence", new Set(["POST"])],
   ["/api/jev-route", new Set(["POST"])],
   ["/api/memories", new Set(["GET", "POST", "PATCH", "DELETE"])],
+  ["/api/phone-assistant", new Set(["GET", "POST", "PATCH", "DELETE"])],
   ["/api/preferences", new Set(["GET", "PATCH"])],
   ["/api/realtime-token", new Set(["POST"])],
   ["/api/reason", new Set(["POST"])],

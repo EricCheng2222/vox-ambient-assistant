@@ -724,6 +724,23 @@ html[data-vox-theme="holographic"] .theme-select-content {
 .vox-shell[data-vox-theme="holographic"] .message-user .message-role {
   color: rgb(230 189 112 / 48%);
 }
+.vox-shell[data-vox-theme="holographic"] .message-phone {
+  border-color: rgb(243 109 173 / 45%);
+  background: linear-gradient(135deg, rgb(103 30 73 / 64%), rgb(37 22 51 / 64%));
+  box-shadow: inset 0 0 0 1px rgb(243 109 173 / 9%), 0 8px 28px rgb(0 0 0 / 12%);
+}
+.vox-shell[data-vox-theme="holographic"] .message-phone::before,
+.vox-shell[data-vox-theme="holographic"] .message-phone.message-user::before {
+  background: #f36dad;
+  box-shadow: 0 0 12px rgb(243 109 173 / 48%);
+}
+.vox-shell[data-vox-theme="holographic"] .message-phone .message-role {
+  color: rgb(255 211 234 / 84%);
+}
+.vox-shell[data-vox-theme="holographic"] .message-phone-badge {
+  border-color: rgb(255 160 208 / 38%);
+  background: rgb(243 109 173 / 18%);
+}
 .vox-shell[data-vox-theme="holographic"] .message-copy {
   color: rgb(229 249 252 / 72%);
   font-size: 0.9rem;
@@ -962,6 +979,71 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
   content: "";
 }
 .message-user::before { background: rgb(255 255 255 / 16%); }
+.message-phone {
+  border: 1px solid rgb(243 109 173 / 42%);
+  border-radius: 0.85rem;
+  padding: 0.9rem 1rem 0.95rem 1.2rem;
+  background: linear-gradient(135deg, rgb(104 37 79 / 45%), rgb(72 40 96 / 30%));
+  box-shadow: inset 0 0 0 1px rgb(243 109 173 / 6%), 0 8px 28px rgb(0 0 0 / 10%);
+}
+.message-phone::before,
+.message-phone.message-user::before {
+  top: 0.8rem;
+  bottom: 0.8rem;
+  background: #f36dad;
+  box-shadow: 0 0 11px rgb(243 109 173 / 38%);
+}
+.message-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.message-phone-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+.message-phone-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid rgb(243 109 173 / 42%);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  color: #ffd0e8;
+  background: rgb(243 109 173 / 16%);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+}
+.message-source-toggle {
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 0.4rem;
+  padding: 0.2rem 0.25rem;
+  color: rgb(255 255 255 / 48%);
+  background: transparent;
+  font-size: 0.65rem;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.message-source-toggle:hover,
+.message-source-toggle:focus-visible {
+  color: #ffd0e8;
+  background: rgb(243 109 173 / 15%);
+}
+.message-source-toggle:focus-visible {
+  outline: 2px solid #f36dad;
+  outline-offset: 2px;
+}
+.message-source-toggle:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+.message-phone .message-role { color: rgb(255 205 230 / 76%); }
 .message-role {
   color: rgb(255 255 255 / 36%);
   font-size: 0.69rem;
@@ -1056,6 +1138,32 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
 .camera-capture-badge {
   color: var(--camera-capture-accent);
   animation: camera-capture-badge 2.05s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Vox Desktop has its own slim native rail, so the embedded surface stays
+   voice-first even while the local-tools drawer narrows the web view. */
+.vox-shell[data-vox-surface="desktop"] .hero-copy,
+.vox-shell[data-vox-surface="desktop"] .header-meta-chip,
+.vox-shell[data-vox-surface="desktop"] .control-deck-title,
+.vox-shell[data-vox-surface="desktop"] .control-save {
+  display: none;
+}
+.vox-shell[data-vox-surface="desktop"] .vox-header {
+  padding-inline: 1.5rem;
+}
+.vox-shell[data-vox-surface="desktop"] .vox-header-actions {
+  gap: 0.45rem;
+}
+.vox-shell[data-vox-surface="desktop"] .vox-header-actions button {
+  width: 2.5rem;
+  min-width: 2.5rem;
+  padding-inline: 0;
+  gap: 0;
+  font-size: 0;
+}
+.vox-shell[data-vox-surface="desktop"] .vox-header-actions button svg {
+  width: 1rem;
+  height: 1rem;
 }
 @media (min-width: 1024px) {
   .interface-grid {
@@ -1166,6 +1274,69 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
     background: #9bf2ff;
     box-shadow: 0 0 18px rgb(120 235 255 / 42%);
   }
+
+  /* The desktop app already supplies a native utility rail. Keep its web surface
+     focused on the live voice state instead of repeating the landing-page story. */
+  .vox-shell[data-vox-surface="desktop"] .interface-grid {
+    max-width: none;
+    grid-template-columns:
+      minmax(480px, 1fr)
+      8px
+      minmax(340px, var(--conversation-width, 400px));
+  }
+  .vox-shell[data-vox-surface="desktop"] .voice-console,
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="holographic"] .voice-console {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    justify-content: stretch;
+    justify-items: center;
+    overflow: hidden;
+    padding: clamp(1rem, 2.2dvh, 1.65rem) clamp(1.5rem, 3vw, 3rem) 1.1rem;
+  }
+  .vox-shell[data-vox-surface="desktop"] .voice-stage,
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="holographic"] .voice-stage {
+    align-self: center;
+    width: 100%;
+    max-width: 38rem;
+    margin: 0;
+    padding-block: 0;
+  }
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="holographic"] .holo-core-stage {
+    min-height: clamp(12rem, 24dvh, 15.5rem);
+  }
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="holographic"] .orb {
+    width: clamp(9.5rem, 20dvh, 11.5rem);
+    height: clamp(9.5rem, 20dvh, 11.5rem);
+  }
+  .vox-shell[data-vox-surface="desktop"] .control-deck,
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="holographic"] .control-deck {
+    width: min(100%, 46rem);
+    margin: 0;
+    padding: 0.7rem;
+    border-color: rgb(120 235 255 / 9%);
+    background: rgb(4 20 30 / 54%);
+  }
+  .vox-shell[data-vox-surface="desktop"] .control-grid,
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="holographic"] .control-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+  .vox-shell[data-vox-surface="desktop"] .control-module,
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="holographic"] .control-module {
+    min-width: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+  .vox-shell[data-vox-surface="desktop"] .conversation-console,
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="holographic"] .conversation-console {
+    padding: 1.35rem;
+  }
+  .vox-shell[data-vox-surface="desktop"] .conversation-stream,
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="holographic"] .conversation-stream {
+    margin-top: 0.9rem;
+  }
 }
 @media (max-width: 1023px) {
   .transcript-panel {
@@ -1208,6 +1379,93 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
   }
   .composer input {
     font-size: 1rem;
+  }
+}
+/* Phone layout: keep header, conversation actions and settings inside the screen. */
+.vox-tagline {
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .transcript-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.8rem;
+  }
+  .transcript-header > div:first-child p:first-child {
+    white-space: nowrap;
+  }
+  .transcript-actions {
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+  .transcript-actions [data-slot="button"] {
+    height: 2rem;
+    gap: 0.35rem;
+    padding-inline: 0.75rem;
+  }
+  .transcript-clear {
+    order: 1;
+    margin-left: auto;
+  }
+}
+@media (max-width: 480px) {
+  .vox-header {
+    gap: 0.6rem;
+  }
+  .vox-header > div:first-child {
+    min-width: 0;
+    gap: 0.6rem;
+  }
+  .vox-header > div:first-child > div {
+    min-width: 0;
+    overflow: hidden;
+  }
+  .vox-header > div:first-child p {
+    white-space: nowrap;
+  }
+  .vox-tagline {
+    font-size: 0.55rem;
+    letter-spacing: 0.08em;
+  }
+  .vox-header-actions {
+    flex-shrink: 0;
+    gap: 0.35rem;
+  }
+  .vox-header-actions [data-slot="button"] {
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0;
+  }
+  .header-session-chip {
+    padding: 0.4rem 0.6rem;
+    white-space: nowrap;
+  }
+  .vox-shell[data-vox-theme="holographic"] .control-deck {
+    padding: 0.85rem;
+  }
+  .vox-shell[data-vox-theme="holographic"] .control-module {
+    padding-left: 0.45rem;
+  }
+  .vox-shell[data-vox-theme="holographic"] .control-module [data-slot="select-trigger"] {
+    padding-inline: 0.6rem 0.45rem;
+  }
+}
+@media (max-width: 389px) {
+  .vox-tagline {
+    display: none;
+  }
+}
+@media (max-width: 480px) {
+  .vox-header .brand-mark {
+    flex-shrink: 0;
+  }
+  .vox-header:has(.vox-header-actions > button:nth-of-type(3)) .vox-tagline {
+    display: none;
+  }
+}
+@media (max-width: 389px) {
+  .vox-header:has(.vox-header-actions > button:nth-of-type(3)) .holo-version {
+    display: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {

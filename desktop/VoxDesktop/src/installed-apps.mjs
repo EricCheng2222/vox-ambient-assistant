@@ -5,35 +5,45 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 const exec = promisify(execFile);
+const installedAppsCacheTtlMs = 6 * 60 * 60 * 1000;
 let cached;
 let refreshedAt = 0;
+let refreshPromise;
 
 export async function installedApps() {
-  if (cached && Date.now() - refreshedAt < 60_000) return cached;
-  const apps = [];
-  async function scan(directory, depth = 0) {
-    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const location = path.join(directory, entry.name);
-      if (entry.name.endsWith(".app")) {
-        try {
-          const { stdout } = await exec("/usr/bin/plutil", ["-convert", "json", "-o", "-", path.join(location, "Contents/Info.plist")], { timeout: 3000 });
-          const info = JSON.parse(stdout);
-          if (typeof info.CFBundleIdentifier !== "string" || !/^[\w.-]+$/.test(info.CFBundleIdentifier)) continue;
-          const name = entry.name.slice(0, -4);
-          const aliases = [...new Set([name, info.CFBundleDisplayName, info.CFBundleName].filter(value => typeof value === "string" && value.length > 1))];
-          apps.push({ id: `installed:${info.CFBundleIdentifier}`, name, bundleId: info.CFBundleIdentifier, path: location, aliases });
-        } catch { /* Unreadable application bundles are not actionable. */ }
-      } else if (depth < 2 && !entry.name.startsWith(".")) {
-        await scan(location, depth + 1);
+  if (cached && Date.now() - refreshedAt < installedAppsCacheTtlMs) return cached;
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    const apps = [];
+    async function scan(directory, depth = 0) {
+      const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const location = path.join(directory, entry.name);
+        if (entry.name.endsWith(".app")) {
+          try {
+            const { stdout } = await exec("/usr/bin/plutil", ["-convert", "json", "-o", "-", path.join(location, "Contents/Info.plist")], { timeout: 3000 });
+            const info = JSON.parse(stdout);
+            if (typeof info.CFBundleIdentifier !== "string" || !/^[\w.-]+$/.test(info.CFBundleIdentifier)) continue;
+            const name = entry.name.slice(0, -4);
+            const aliases = [...new Set([name, info.CFBundleDisplayName, info.CFBundleName].filter(value => typeof value === "string" && value.length > 1))];
+            apps.push({ id: `installed:${info.CFBundleIdentifier}`, name, bundleId: info.CFBundleIdentifier, path: location, aliases });
+          } catch { /* Unreadable application bundles are not actionable. */ }
+        } else if (depth < 2 && !entry.name.startsWith(".")) {
+          await scan(location, depth + 1);
+        }
       }
     }
+    await Promise.all(["/Applications", "/System/Applications", path.join(homedir(), "Applications")].map(root => scan(root)));
+    cached = apps;
+    refreshedAt = Date.now();
+    return apps;
+  })();
+  try {
+    return await refreshPromise;
+  } finally {
+    refreshPromise = undefined;
   }
-  await Promise.all(["/Applications", "/System/Applications", path.join(homedir(), "Applications")].map(root => scan(root)));
-  cached = apps;
-  refreshedAt = Date.now();
-  return apps;
 }
 
 export function matchInstalledApp(text, apps) {

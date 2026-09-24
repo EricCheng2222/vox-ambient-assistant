@@ -43,6 +43,9 @@ const naturalComposeRequest =
 const directTransmitControl =
   /\b(?:click|press|tap|select|choose)\s+(?:the\s+)?(?:send|submit|post|publish|share|upload)(?:\s+button)?\b|(?:點擊|按下|按一下|選擇|选择).{0,12}(?:傳送|送出|發送|寄出|發文|發布|分享|上傳)/iu;
 
+const userKeepsTransmitControl =
+  /\b(?:i(?:'ll| will) send|let me send|do not send|don'?t send|without sending|leave (?:it|this) (?:as a )?draft)\b|(?:我自己(?:傳送|传送|送出|發送|发送)|不要(?:傳送|传送|送出|發送|发送)|不用(?:傳送|传送|送出|發送|发送)|別(?:傳送|传送|送出|發送|发送)|只(?:要|需)(?:輸入|输入|打字|草擬|草拟)|留在草稿)/iu;
+
 export function approvedDesktopApp(appId) {
   return typeof appId === "string" && Object.hasOwn(approvedDesktopApps, appId) ? approvedDesktopApps[appId] : null;
 }
@@ -51,9 +54,12 @@ export function isDraftOnlyDesktopControlPrompt(prompt) {
   if (typeof prompt !== "string") return false;
   const value = prompt.trim();
   if (!value || directTransmitControl.test(value)) return false;
+  const requestsTransmission = transmitAction.test(value);
+  if (requestsTransmission && !userKeepsTransmitControl.test(value)) return false;
   if (contextualDraftRequest.test(value)) return true;
   if (!communicationComposer.test(value)) return false;
-  return draftVerb.test(value) || transmitAction.test(value) || naturalComposeRequest.test(value);
+  return draftVerb.test(value) || naturalComposeRequest.test(value) ||
+    (requestsTransmission && userKeepsTransmitControl.test(value));
 }
 
 export function isBlockedDesktopControlPrompt(prompt) {

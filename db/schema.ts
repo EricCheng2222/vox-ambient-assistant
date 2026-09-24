@@ -135,6 +135,7 @@ export const conversationMessages = sqliteTable(
     id: text("id").notNull(),
     ownerId: text("owner_id").notNull(),
     role: text("role").notNull(),
+    source: text("source").notNull().default("local"),
     ciphertext: text("ciphertext").notNull(),
     iv: text("iv").notNull(),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -190,5 +191,45 @@ export const remoteCommands = sqliteTable(
       table.createdAt,
     ),
     index("idx_remote_commands_owner_created").on(table.ownerId, table.createdAt),
+  ],
+);
+
+export const phoneAssistantSettings = sqliteTable(
+  "phone_assistant_settings",
+  {
+    ownerId: text("owner_id").primaryKey(),
+    passphraseHash: text("passphrase_hash").unique(),
+    passphraseLength: integer("passphrase_length").notNull().default(0),
+    phoneHash: text("phone_hash").unique(),
+    phoneCiphertext: text("phone_ciphertext"),
+    phoneIv: text("phone_iv"),
+    phoneLastFour: text("phone_last_four"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    allowOutbound: integer("allow_outbound", { mode: "boolean" }).notNull().default(false),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_phone_assistant_passphrase_hash").on(table.passphraseHash),
+  ],
+);
+
+export const phoneCallSessions = sqliteTable(
+  "phone_call_sessions",
+  {
+    callSid: text("call_sid").primaryKey(),
+    ownerId: text("owner_id"),
+    callerHash: text("caller_hash").notNull(),
+    status: text("status").notNull().default("pending_phrase"),
+    failedAttempts: integer("failed_attempts").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    expiresAt: text("expires_at").notNull(),
+  },
+  (table) => [
+    index("idx_phone_call_sessions_owner_expires").on(
+      table.ownerId,
+      table.expiresAt,
+    ),
   ],
 );

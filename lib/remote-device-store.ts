@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { remoteCommands, remoteDevices } from "@/db/schema";
@@ -36,6 +36,27 @@ export async function getRemoteDevice(ownerId: string, id: string) {
     .select()
     .from(remoteDevices)
     .where(and(eq(remoteDevices.ownerId, ownerId), eq(remoteDevices.id, id)))
+    .limit(1);
+  return device ?? null;
+}
+
+export async function getAvailableRemoteDevice(ownerId: string) {
+  const onlineAfter = new Date(Date.now() - 90_000).toISOString();
+  const [device] = await getDb()
+    .select({
+      id: remoteDevices.id,
+      name: remoteDevices.name,
+      lastSeenAt: remoteDevices.lastSeenAt,
+    })
+    .from(remoteDevices)
+    .where(
+      and(
+        eq(remoteDevices.ownerId, ownerId),
+        eq(remoteDevices.status, "active"),
+        gt(remoteDevices.lastSeenAt, onlineAfter),
+      ),
+    )
+    .orderBy(desc(remoteDevices.lastSeenAt))
     .limit(1);
   return device ?? null;
 }

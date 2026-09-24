@@ -48,7 +48,7 @@ function refreshControls() {
   elements.cancel.hidden = !running;
   elements.run.hidden = running;
   elements.state.classList.toggle("is-busy", running);
-  elements.state.textContent = running ? "Local Codex working" : "Local Codex ready";
+  elements.state.textContent = running ? "Working" : "Ready";
   const dot = document.createElement("i");
   elements.state.prepend(dot);
 }

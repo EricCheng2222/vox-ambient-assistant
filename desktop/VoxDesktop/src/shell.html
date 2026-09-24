@@ -12,19 +12,17 @@
   </head>
   <body>
     <header class="desktop-bar">
-      <div class="brand" aria-label="Vox Desktop">
-        <span class="brand-orb" aria-hidden="true"><i></i><i></i><i></i></span>
-        <strong>VOX</strong>
-        <span class="desktop-label">DESKTOP</span>
+      <div class="desktop-context" aria-label="Vox Desktop">
+        <span class="desktop-label">LOCAL APP</span>
       </div>
       <div class="desktop-actions">
         <span class="connection-state" id="connection-state">
           <i></i>
-          Local Codex ready
+          Ready
         </span>
         <button id="toggle-codex" type="button" aria-expanded="false" aria-controls="codex-panel">
           <span aria-hidden="true">⌘</span>
-          Local Codex
+          Tools
         </button>
       </div>
     </header>
@@ -32,15 +30,15 @@
     <aside id="codex-panel" class="codex-panel" aria-hidden="true">
       <div class="panel-header">
         <div>
-          <p class="eyebrow">ON-DEVICE BRIDGE</p>
-          <h1>Local Codex</h1>
+          <p class="eyebrow">PRIVATE · ON THIS MAC</p>
+          <h1>Local workspace</h1>
         </div>
         <button id="close-codex" class="icon-button" type="button" aria-label="Close Local Codex">×</button>
       </div>
 
       <div class="privacy-note">
         <span aria-hidden="true">◇</span>
-        <p>This panel is bundled with the desktop app. The Vox website cannot read your prompt, project, or Codex output.</p>
+        <p>Your selected folder, task, and Codex output stay inside this desktop app.</p>
       </div>
 
       <form id="codex-form">

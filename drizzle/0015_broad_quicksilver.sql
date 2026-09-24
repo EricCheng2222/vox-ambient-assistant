@@ -1,0 +1,1 @@
+ALTER TABLE `conversation_messages` ADD `source` text DEFAULT 'local' NOT NULL;

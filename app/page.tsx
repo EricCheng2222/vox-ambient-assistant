@@ -27,6 +27,7 @@ import {
   KeyRound,
   Mic,
   MicOff,
+  PhoneCall,
   PhoneOff,
   Link2,
   ShieldCheck,
@@ -36,6 +37,7 @@ import {
   Table2,
   Trash2,
   UserPlus,
+  ScanQrCode,
   Volume2,
   Wifi,
   Wind,
@@ -206,11 +208,21 @@ type PresenceAction =
   | "morning_hello";
 type AuthState = "checking" | "selecting" | "authenticated" | "locked";
 type ConnectionMode = "cloud" | "personal";
+type CloudUserRole = "master" | "member";
 type WebActionRouting = "web_only" | "paired_mac";
 type InviteStatus = {
   generated: number;
   unlimited: boolean;
   canGenerate: boolean;
+};
+type PhoneAssistantStatus = {
+  serviceConfigured: boolean;
+  configured: boolean;
+  passphraseLength: number;
+  callbackPhoneLabel: string | null;
+  enabled: boolean;
+  allowOutbound: boolean;
+  inboundNumber: string | null;
 };
 type SmartHomeAdapter = {
   id: string;
@@ -243,6 +255,8 @@ type SmartHomeDiscoveredDevice = {
 type RemotePairingStatus = {
   configured: boolean;
   secureStorageAvailable: boolean;
+  armed?: boolean;
+  armedUntil?: string | null;
   deviceId?: string;
   name?: string;
   status?: "pending" | "active";
@@ -391,6 +405,10 @@ declare global {
       ownerId: string;
       close: () => void;
     };
+    readonly voxNativeIOS?: {
+      canScanPairing: boolean;
+      scanPairing: () => void;
+    };
     readonly voxLocalCodex?: {
       available: boolean;
       getConnectionStatus?: () => Promise<{
@@ -399,6 +417,7 @@ declare global {
         openAIKeyConfigured: boolean;
         typeSafeKeyConfigured: boolean;
         secureStorageAvailable: boolean;
+        phoneMacRoutingConfigured: boolean;
       }>;
       setConnectionMode?: (mode: ConnectionMode) => Promise<{
         mode: ConnectionMode;
@@ -421,8 +440,12 @@ declare global {
       decidePersonalPresence?: (request: Record<string, unknown>) => Promise<{
         action?: PresenceAction;
       }>;
+      savePhoneRelayPassphrase?: (passphrase: string) => Promise<{ configured: boolean }>;
+      removePhoneRelayPassphrase?: () => Promise<{ removed: boolean }>;
       getRemotePairingStatus?: () => Promise<RemotePairingStatus>;
       createRemotePairing?: () => Promise<RemotePairingStatus>;
+      armRemoteControl?: () => Promise<Pick<RemotePairingStatus, "armed" | "armedUntil">>;
+      disarmRemoteControl?: () => Promise<Pick<RemotePairingStatus, "armed" | "armedUntil">>;
       revokeRemotePairing?: () => Promise<{ revoked: boolean }>;
       getSmartHomeStatus?: () => Promise<SmartHomeStatus>;
       discoverSmartHomeDevices?: (adapter: string) => Promise<{
@@ -686,6 +709,7 @@ function Waveform({
 export default function Home() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [connectionMode, setConnectionMode] = useState<ConnectionMode | null>(null);
+  const [cloudUserRole, setCloudUserRole] = useState<CloudUserRole | null>(null);
   const [desktopPersonalAvailable, setDesktopPersonalAvailable] = useState(false);
   const [secureStorageAvailable, setSecureStorageAvailable] = useState(true);
   const [personalKeyConfigured, setPersonalKeyConfigured] = useState(false);
@@ -698,6 +722,7 @@ export default function Home() {
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("idle");
   const [messages, setMessages] = useState<Message[]>([]);
+  const [sourceEditId, setSourceEditId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [muted, setMuted] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -731,6 +756,14 @@ export default function Home() {
   const [inviteLoading, setInviteLoading] = useState(true);
   const [inviteCreating, setInviteCreating] = useState(false);
   const [inviteError, setInviteError] = useState("");
+  const [phoneAssistantOpen, setPhoneAssistantOpen] = useState(false);
+  const [phoneAssistantStatus, setPhoneAssistantStatus] = useState<PhoneAssistantStatus | null>(null);
+  const [phoneAssistantCallbackNumber, setPhoneAssistantCallbackNumber] = useState("");
+  const [phoneAssistantPassphrase, setPhoneAssistantPassphrase] = useState("");
+  const [phoneAssistantBusy, setPhoneAssistantBusy] = useState(false);
+  const [phoneAssistantError, setPhoneAssistantError] = useState("");
+  const [phoneAssistantEditing, setPhoneAssistantEditing] = useState(false);
+  const [phoneMacRoutingConfigured, setPhoneMacRoutingConfigured] = useState(false);
   const [smartHomeOpen, setSmartHomeOpen] = useState(false);
   const [smartHomeStatus, setSmartHomeStatus] = useState<SmartHomeStatus | null>(null);
   const [smartHomeBusy, setSmartHomeBusy] = useState(false);
@@ -754,6 +787,7 @@ export default function Home() {
   const [phonePairingCandidate, setPhonePairingCandidate] = useState<PhonePairingCandidate | null>(null);
   const [remoteMacPairing, setRemoteMacPairing] = useState<StoredRemoteMacPairing | null>(null);
   const [remoteMacReady, setRemoteMacReady] = useState(false);
+  const [nativePairingScanAvailable, setNativePairingScanAvailable] = useState(false);
   const [webActionRouting, setWebActionRouting] = useState<WebActionRouting>("web_only");
   const [conversationWidth, setConversationWidth] = useState(
     DEFAULT_CONVERSATION_WIDTH,
@@ -922,6 +956,14 @@ export default function Home() {
   }, [webActionRouting]);
 
   useEffect(() => {
+    // The Vox iOS app injects a native QR scanner so its web view can pair
+    // with a Mac directly; the Camera app would open the link in Safari.
+    if (window.voxNativeIOS?.canScanPairing === true) {
+      queueMicrotask(() => setNativePairingScanAvailable(true));
+    }
+  }, []);
+
+  useEffect(() => {
     const url = new URL(window.location.href);
     const deviceId = url.searchParams.get("pair") ?? "";
     const secret = new URLSearchParams(url.hash.slice(1)).get("vox-pair") ?? "";
@@ -948,6 +990,7 @@ export default function Home() {
           setDesktopPersonalAvailable(true);
           setSecureStorageAvailable(status.secureStorageAvailable);
           setPersonalKeyConfigured(status.personalKeyConfigured);
+          setPhoneMacRoutingConfigured(status.phoneMacRoutingConfigured === true);
           if (!status.mode) {
             setAuthState("selecting");
             return;
@@ -961,8 +1004,12 @@ export default function Home() {
 
         setConnectionMode("cloud");
         const response = await fetch("/api/auth", { cache: "no-store" });
-        const payload = (await response.json()) as { authenticated?: boolean };
+        const payload = (await response.json()) as {
+          authenticated?: boolean;
+          user?: { role?: CloudUserRole };
+        };
         if (active) {
+          setCloudUserRole(payload.user?.role ?? null);
           setAuthState(payload.authenticated ? "authenticated" : "locked");
         }
       } catch {
@@ -1022,6 +1069,7 @@ export default function Home() {
     void loadFiles();
     void loadReminders();
     void loadInviteStatus();
+    if (cloudUserRole === "master") void loadPhoneAssistantStatus();
     void loadPreferences();
     void syncConversation(false);
     // Loading is intentionally keyed to the authentication transition.
@@ -1037,6 +1085,28 @@ export default function Home() {
   }, [authState, connectionMode]);
 
   useEffect(() => {
+    if (
+      authState !== "authenticated" ||
+      connectionMode !== "cloud" ||
+      cloudUserRole !== "master"
+    ) return;
+    const syncPhoneSettings = () => {
+      if (document.visibilityState === "visible" && !phoneAssistantBusy) {
+        void loadPhoneAssistantStatus();
+      }
+    };
+    window.addEventListener("focus", syncPhoneSettings);
+    document.addEventListener("visibilitychange", syncPhoneSettings);
+    const timer = window.setInterval(syncPhoneSettings, 30_000);
+    return () => {
+      window.removeEventListener("focus", syncPhoneSettings);
+      document.removeEventListener("visibilitychange", syncPhoneSettings);
+      window.clearInterval(timer);
+    };
+    // Phone settings are synced from the owner account, not local device state.
+  }, [authState, connectionMode, cloudUserRole, phoneAssistantBusy]);
+
+  useEffect(() => {
     if (authState !== "authenticated" || connectionMode !== "cloud") return;
     if (window.voxLocalCodex?.getRemotePairingStatus) {
       void refreshDesktopPairingStatus();
@@ -1044,7 +1114,8 @@ export default function Home() {
       return () => window.clearInterval(timer);
     }
 
-    const stored = window.localStorage.getItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
+    const persistentPairing = window.localStorage.getItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
+    const stored = window.sessionStorage.getItem(REMOTE_MAC_PAIRING_STORAGE_KEY) ?? persistentPairing;
     if (stored) {
       try {
         const pairing = JSON.parse(stored) as StoredRemoteMacPairing;
@@ -1055,10 +1126,14 @@ export default function Home() {
         ) {
           remoteMacPairingRef.current = pairing;
           queueMicrotask(() => setRemoteMacPairing(pairing));
+          window.sessionStorage.setItem(REMOTE_MAC_PAIRING_STORAGE_KEY, JSON.stringify(pairing));
+          window.localStorage.removeItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
         } else {
+          window.sessionStorage.removeItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
           window.localStorage.removeItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
         }
       } catch {
+        window.sessionStorage.removeItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
         window.localStorage.removeItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
       }
     }
@@ -1286,6 +1361,39 @@ export default function Home() {
     }
   }
 
+  async function togglePhoneCallBadge(message: Message) {
+    if (connectionMode !== "cloud" || sourceEditId) return;
+    const source: NonNullable<Message["source"]> =
+      message.source === "phone" ? "local" : "phone";
+    setSourceEditId(message.id);
+    try {
+      const response = await fetch("/api/conversation", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          generation: conversationGenerationRef.current,
+          id: message.id,
+          source,
+        }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "The call badge could not be updated.");
+      }
+      const next = messagesRef.current.map((current) =>
+        current.id === message.id ? { ...current, source } : current,
+      );
+      messagesRef.current = next;
+      setMessages(next);
+    } catch (error) {
+      toast.error("Could not update the call badge", {
+        description: error instanceof Error ? error.message : "Please try again.",
+      });
+    } finally {
+      setSourceEditId(null);
+    }
+  }
+
   function addMessage(role: Message["role"], text: string) {
     const cleanText = text.trim();
     if (!cleanText) return;
@@ -1503,10 +1611,29 @@ export default function Home() {
       setRemotePairingStatus({
         configured: false,
         secureStorageAvailable: true,
+        armed: false,
+        armedUntil: null,
       });
       setRemotePairingUrl("");
     } catch (error) {
       setRemotePairingError(error instanceof Error ? error.message : "Could not disconnect the phone.");
+    } finally {
+      setRemotePairingBusy(false);
+    }
+  }
+
+  async function setRemoteControlArmed(armed: boolean) {
+    const bridge = window.voxLocalCodex;
+    const operation = armed ? bridge?.armRemoteControl : bridge?.disarmRemoteControl;
+    if (!operation) return;
+    setRemotePairingBusy(true);
+    setRemotePairingError("");
+    try {
+      const status = await operation();
+      setRemotePairingStatus((current) => current ? { ...current, ...status } : current);
+      toast.success(armed ? "Remote control allowed until Vox quits" : "Remote control paused");
+    } catch (error) {
+      setRemotePairingError(error instanceof Error ? error.message : "Could not change remote-control access.");
     } finally {
       setRemotePairingBusy(false);
     }
@@ -1573,7 +1700,10 @@ export default function Home() {
         name: payload.device?.name?.trim() || "This Mac",
         secret: phonePairingCandidate.secret,
       };
-      window.localStorage.setItem(REMOTE_MAC_PAIRING_STORAGE_KEY, JSON.stringify(pairing));
+      // Keep the command key for this browser session only. A long-lived key in
+      // localStorage would be exposed to any future script served by this origin.
+      window.sessionStorage.setItem(REMOTE_MAC_PAIRING_STORAGE_KEY, JSON.stringify(pairing));
+      window.localStorage.removeItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
       window.localStorage.setItem(WEB_ACTION_ROUTING_STORAGE_KEY, "web_only");
       remoteMacPairingRef.current = pairing;
       webActionRoutingRef.current = "web_only";
@@ -1598,6 +1728,7 @@ export default function Home() {
         cache: "no-store",
       });
       if (response.status === 404) {
+        window.sessionStorage.removeItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
         window.localStorage.removeItem(REMOTE_MAC_PAIRING_STORAGE_KEY);
         remoteMacPairingRef.current = null;
         remoteMacReadyRef.current = false;
@@ -2431,6 +2562,139 @@ export default function Home() {
       toast.success("Share code copied");
     } catch {
       toast.error("Could not copy the code");
+    }
+  }
+
+  async function loadPhoneAssistantStatus() {
+    try {
+      const response = await fetch("/api/phone-assistant", { cache: "no-store" });
+      const payload = (await response.json()) as PhoneAssistantStatus & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Phone assistant settings could not load.");
+      setPhoneAssistantStatus(payload);
+      setPhoneAssistantError("");
+    } catch (error) {
+      setPhoneAssistantError(
+        error instanceof Error ? error.message : "Phone assistant settings could not load.",
+      );
+    }
+  }
+
+  async function configurePhoneAssistant() {
+    setPhoneAssistantBusy(true);
+    setPhoneAssistantError("");
+    try {
+      const response = await fetch("/api/phone-assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "configure",
+          callbackPhoneNumber: phoneAssistantCallbackNumber,
+          passphrase: phoneAssistantPassphrase,
+        }),
+      });
+      const payload = (await response.json()) as PhoneAssistantStatus & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Phone access could not be enabled.");
+      let macRoutingWarning = "";
+      if (window.voxLocalCodex?.savePhoneRelayPassphrase) {
+        try {
+          await window.voxLocalCodex.savePhoneRelayPassphrase(phoneAssistantPassphrase);
+          setPhoneMacRoutingConfigured(true);
+        } catch (error) {
+          macRoutingWarning = error instanceof Error
+            ? error.message
+            : "Phone-to-Mac routing could not be secured on this Mac.";
+        }
+      }
+      setPhoneAssistantStatus(payload);
+      setPhoneAssistantCallbackNumber("");
+      setPhoneAssistantPassphrase("");
+      setPhoneAssistantEditing(false);
+      toast.success("Phone assistant connected");
+      if (macRoutingWarning) {
+        setPhoneAssistantError(`Phone access is connected, but Mac routing is not ready: ${macRoutingWarning}`);
+      }
+    } catch (error) {
+      setPhoneAssistantError(error instanceof Error ? error.message : "Phone access could not be enabled.");
+    } finally {
+      setPhoneAssistantBusy(false);
+    }
+  }
+
+  async function updatePhoneAssistant(patch: {
+    enabled?: boolean;
+    allowOutbound?: boolean;
+  }) {
+    setPhoneAssistantBusy(true);
+    setPhoneAssistantError("");
+    try {
+      const response = await fetch("/api/phone-assistant", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const payload = (await response.json()) as PhoneAssistantStatus & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "The phone setting could not be changed.");
+      setPhoneAssistantStatus(payload);
+    } catch (error) {
+      setPhoneAssistantError(error instanceof Error ? error.message : "The phone setting could not be changed.");
+    } finally {
+      setPhoneAssistantBusy(false);
+    }
+  }
+
+  async function configurePhoneMacRouting() {
+    const saveRelayPassphrase = window.voxLocalCodex?.savePhoneRelayPassphrase;
+    if (!saveRelayPassphrase) return;
+    setPhoneAssistantBusy(true);
+    setPhoneAssistantError("");
+    try {
+      await saveRelayPassphrase(phoneAssistantPassphrase);
+      setPhoneMacRoutingConfigured(true);
+      setPhoneAssistantPassphrase("");
+      toast.success("Phone-to-Mac routing enabled on this Mac");
+    } catch (error) {
+      setPhoneAssistantError(
+        error instanceof Error ? error.message : "Phone-to-Mac routing could not be enabled.",
+      );
+    } finally {
+      setPhoneAssistantBusy(false);
+    }
+  }
+
+  async function requestPhoneAssistantTestCall() {
+    setPhoneAssistantBusy(true);
+    setPhoneAssistantError("");
+    try {
+      const response = await fetch("/api/phone-assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "test_call" }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "The test call could not start.");
+      toast.success("Test call requested");
+    } catch (error) {
+      setPhoneAssistantError(error instanceof Error ? error.message : "The test call could not start.");
+    } finally {
+      setPhoneAssistantBusy(false);
+    }
+  }
+
+  async function disconnectPhoneAssistant() {
+    setPhoneAssistantBusy(true);
+    setPhoneAssistantError("");
+    try {
+      const response = await fetch("/api/phone-assistant", { method: "DELETE" });
+      const payload = (await response.json()) as PhoneAssistantStatus & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "The phone could not be disconnected.");
+      await window.voxLocalCodex?.removePhoneRelayPassphrase?.().catch(() => undefined);
+      setPhoneMacRoutingConfigured(false);
+      setPhoneAssistantStatus(payload);
+      toast.success("Phone assistant disconnected");
+    } catch (error) {
+      setPhoneAssistantError(error instanceof Error ? error.message : "The phone could not be disconnected.");
+    } finally {
+      setPhoneAssistantBusy(false);
     }
   }
 
@@ -3923,6 +4187,26 @@ export default function Home() {
         }
       };
       channel.onopen = () => {
+        if (desktopPersonalAvailable) {
+          channel.send(
+            JSON.stringify({
+              type: "session.update",
+              session: {
+                type: "realtime",
+                audio: {
+                  input: {
+                    turn_detection: {
+                      type: "semantic_vad",
+                      eagerness: "auto",
+                      create_response: false,
+                      interrupt_response: false,
+                    },
+                  },
+                },
+              },
+            }),
+          );
+        }
         setConnectionState("listening");
         refreshRealtimeContext();
         seedConversationCarryover(channel);
@@ -4062,6 +4346,7 @@ export default function Home() {
         }
         const status = await bridge.setConnectionMode("personal");
         setConnectionMode("personal");
+        setCloudUserRole(null);
         setPersonalKeyConfigured(status.personalKeyConfigured);
         setAuthState(status.personalKeyConfigured ? "authenticated" : "locked");
         return;
@@ -4070,7 +4355,11 @@ export default function Home() {
       if (bridge?.setConnectionMode) await bridge.setConnectionMode("cloud");
       setConnectionMode("cloud");
       const response = await fetch("/api/auth", { cache: "no-store" });
-      const payload = (await response.json()) as { authenticated?: boolean };
+      const payload = (await response.json()) as {
+        authenticated?: boolean;
+        user?: { role?: CloudUserRole };
+      };
+      setCloudUserRole(payload.user?.role ?? null);
       setAuthState(payload.authenticated ? "authenticated" : "locked");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "That connection could not be selected.");
@@ -4108,6 +4397,7 @@ export default function Home() {
   function openConnectionChooser() {
     disconnect();
     setAuthError("");
+    setCloudUserRole(null);
     setAuthState("selecting");
   }
 
@@ -4125,10 +4415,14 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code, email: normalizedEmail }),
       });
-      const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as {
+        error?: string;
+        user?: { role?: CloudUserRole };
+      };
       if (!response.ok) throw new Error(payload.error ?? "Access could not be verified.");
       setEmail("");
       setAccessCode("");
+      setCloudUserRole(payload.user?.role ?? null);
       setAuthState("authenticated");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Access could not be verified.");
@@ -4338,6 +4632,7 @@ export default function Home() {
     <main
       className="vox-shell min-h-dvh overflow-x-hidden bg-background text-foreground"
       data-vox-theme={theme}
+      data-vox-surface={desktopPersonalAvailable ? "desktop" : "web"}
     >
       <audio ref={audioRef} autoPlay className="sr-only" />
       <canvas ref={cameraCanvasRef} className="hidden" aria-hidden="true" />
@@ -4398,12 +4693,12 @@ export default function Home() {
               VOX
               <span className="holo-version"> / 02</span>
             </p>
-            <p className="text-[0.7rem] font-medium uppercase tracking-[0.17em] text-white/40">
+            <p className="vox-tagline text-[0.7rem] font-medium uppercase tracking-[0.17em] text-white/40">
               {theme === "holographic" ? "Cognitive voice interface" : "Live companion"}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="vox-header-actions flex items-center gap-2">
           {connectionMode === "cloud" && <Sheet
             open={invitesOpen}
             onOpenChange={(open) => {
@@ -4538,6 +4833,270 @@ export default function Home() {
             </SheetContent>
           </Sheet>}
 
+          {connectionMode === "cloud" && cloudUserRole === "master" && (
+            <Sheet
+              open={phoneAssistantOpen}
+              onOpenChange={(open) => {
+                setPhoneAssistantOpen(open);
+                if (open) void loadPhoneAssistantStatus();
+                else {
+                  setPhoneAssistantEditing(false);
+                  setPhoneAssistantCallbackNumber("");
+                  setPhoneAssistantPassphrase("");
+                  setPhoneAssistantError("");
+                }
+              }}
+            >
+              <SheetTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
+                  aria-label="Phone assistant settings"
+                  title="Phone assistant"
+                >
+                  <PhoneCall />
+                  <span className="hidden sm:inline">Call Vox</span>
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="w-[min(94vw,440px)] border-white/10 bg-[#10111b] text-white sm:max-w-[440px]">
+                <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
+                  <div className="flex items-center gap-2 text-[#f4ff74]">
+                    <PhoneCall size={18} />
+                    <SheetTitle className="font-display text-xl text-white">
+                      Phone assistant
+                    </SheetTitle>
+                  </div>
+                  <SheetDescription className="mt-2 leading-6 text-white/46">
+                    Calls begin on Vox Cloud. Say “switch to my Mac” when you
+                    want an action handled by your paired desktop, or “switch to
+                    cloud” to return. Sensitive actions still follow the Mac’s
+                    local safety policy.
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="flex-1 overflow-y-auto px-5 py-5">
+                  {!phoneAssistantStatus ? (
+                    <p className="py-10 text-center text-sm text-white/40">
+                      Checking phone service…
+                    </p>
+                  ) : !phoneAssistantStatus.serviceConfigured ? (
+                    <div className="rounded-2xl border border-[#f4ff74]/14 bg-[#f4ff74]/[0.045] p-4">
+                      <p className="text-sm font-semibold text-white/82">
+                        Twilio connection required
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-white/44">
+                        The interface is ready, but the service owner still needs
+                        to add the Twilio account credentials and phone number to
+                        the server. No calls can be placed until then.
+                      </p>
+                    </div>
+                  ) : !phoneAssistantStatus.configured || phoneAssistantEditing ? (
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4 text-xs leading-5 text-white/44">
+                        {phoneAssistantStatus.configured
+                          ? "Enter the complete replacement setup. For security, the existing sentence and callback number cannot be revealed on this device."
+                          : "Choose a private sentence you can say naturally. Vox stores only a keyed hash—not the sentence or a voiceprint. Anyone who knows the exact sentence could authenticate, so do not reuse a familiar quote or say it where others can hear."}
+                      </div>
+                      <label className="block text-sm text-white/68" htmlFor="phone-assistant-passphrase">
+                        Private spoken sentence
+                      </label>
+                      <input
+                        id="phone-assistant-passphrase"
+                        type="password"
+                        value={phoneAssistantPassphrase}
+                        onChange={(event) => setPhoneAssistantPassphrase(event.target.value.slice(0, 160))}
+                        placeholder="An uncommon sentence, at least 12 characters"
+                        autoComplete="new-password"
+                        className="h-12 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
+                      />
+                      <label className="block text-sm text-white/68" htmlFor="phone-assistant-callback">
+                        Callback number <span className="text-white/32">(optional)</span>
+                      </label>
+                      <input
+                        id="phone-assistant-callback"
+                        type="tel"
+                        value={phoneAssistantCallbackNumber}
+                        onChange={(event) => setPhoneAssistantCallbackNumber(event.target.value)}
+                        placeholder="+886…"
+                        autoComplete="tel"
+                        className="h-12 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
+                      />
+                      <p className="text-xs leading-5 text-white/36">
+                        {phoneAssistantStatus.configured
+                          ? "Enter the full callback number again to keep or replace it. Leaving it blank removes the saved callback number."
+                          : "This number is used only when you explicitly request a call from Vox. It is never used to authenticate an incoming call."}
+                      </p>
+                      <Button
+                        type="button"
+                        disabled={phoneAssistantBusy || phoneAssistantPassphrase.trim().length < 12}
+                        onClick={() => void configurePhoneAssistant()}
+                        className="h-12 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                      >
+                        <PhoneCall /> {phoneAssistantBusy
+                          ? "Saving…"
+                          : phoneAssistantStatus.configured
+                            ? "Update phone setup"
+                            : "Enable phone access"}
+                      </Button>
+                      {phoneAssistantStatus.configured && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          disabled={phoneAssistantBusy}
+                          onClick={() => {
+                            setPhoneAssistantEditing(false);
+                            setPhoneAssistantCallbackNumber("");
+                            setPhoneAssistantPassphrase("");
+                            setPhoneAssistantError("");
+                          }}
+                          className="h-10 w-full rounded-full text-white/48 hover:bg-white/[0.05] hover:text-white"
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 rounded-2xl border border-[#c8bcff]/14 bg-[#c8bcff]/[0.045] p-3 text-xs leading-5 text-white/48">
+                        <Globe2 className="size-4 shrink-0 text-[#c8bcff]" />
+                        Vox Cloud owner setting · synced across web and desktop
+                      </div>
+                      <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
+                        <p className="text-sm font-semibold text-white/82">
+                          {phoneAssistantStatus.enabled ? "Phone access on" : "Phone access paused"}
+                        </p>
+                        <p className="mt-2 text-xs leading-5 text-white/44">
+                          Private sentence configured. Call
+                          {phoneAssistantStatus.inboundNumber
+                            ? ` ${phoneAssistantStatus.inboundNumber}`
+                            : " the Vox number"}
+                          , then say your sentence when Vox asks. No caller phone
+                          number is used as authentication.
+                        </p>
+                      </div>
+                      <div className="rounded-2xl border border-emerald-300/12 bg-emerald-300/[0.045] p-4">
+                        <p className="text-sm font-semibold text-white/82">
+                          Voice routing · Cloud by default
+                        </p>
+                        <p className="mt-2 text-xs leading-5 text-white/44">
+                          During a call, say “use my Mac” before a local task.
+                          Vox confirms the route aloud and will not claim a Mac
+                          action succeeded until the paired desktop returns it.
+                        </p>
+                        {desktopPersonalAvailable && (
+                          phoneMacRoutingConfigured ? (
+                            <p className="mt-3 flex items-center gap-2 text-xs font-medium text-emerald-200/80">
+                              <ShieldCheck className="size-3.5" /> Ready on this Mac
+                            </p>
+                          ) : (
+                            <div className="mt-4 space-y-3">
+                              <p className="text-xs leading-5 text-white/44">
+                                One-time setup: enter the same private sentence
+                                used for phone authentication. Only a derived key
+                                is stored in macOS secure storage.
+                              </p>
+                              <input
+                                type="password"
+                                value={phoneAssistantPassphrase}
+                                onChange={(event) => setPhoneAssistantPassphrase(event.target.value.slice(0, 160))}
+                                placeholder="Your existing private sentence"
+                                autoComplete="current-password"
+                                className="h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/28 focus:border-emerald-300/40 focus:ring-2 focus:ring-emerald-300/10"
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                disabled={phoneAssistantBusy || phoneAssistantPassphrase.trim().length < 12}
+                                onClick={() => void configurePhoneMacRouting()}
+                                className="h-10 w-full rounded-full border-emerald-300/16 bg-emerald-300/[0.06] text-emerald-100 hover:bg-emerald-300/10 hover:text-white"
+                              >
+                                Enable call-to-Mac routing
+                              </Button>
+                            </div>
+                          )
+                        )}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={phoneAssistantBusy}
+                        onClick={() => void updatePhoneAssistant({ enabled: !phoneAssistantStatus.enabled })}
+                        className="h-11 w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+                      >
+                        {phoneAssistantStatus.enabled ? "Pause incoming calls" : "Enable incoming calls"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={phoneAssistantBusy}
+                        onClick={() => {
+                          setPhoneAssistantEditing(true);
+                          setPhoneAssistantError("");
+                        }}
+                        className="h-11 w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+                      >
+                        <PhoneCall /> Change spoken sentence or callback
+                      </Button>
+                      <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
+                        <p className="text-sm font-semibold text-white/78">Calls from Vox</p>
+                        <p className="mt-2 text-xs leading-5 text-white/42">
+                          Off by default. When enabled, Vox may call only for an
+                          action you explicitly request. Autonomous check-ins and
+                          third-party calls remain disabled.
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={phoneAssistantBusy || !phoneAssistantStatus.callbackPhoneLabel}
+                          onClick={() => void updatePhoneAssistant({ allowOutbound: !phoneAssistantStatus.allowOutbound })}
+                          className="mt-3 h-10 w-full rounded-full border-white/10 bg-black/15 text-white hover:bg-white/10 hover:text-white"
+                        >
+                          {phoneAssistantStatus.allowOutbound
+                            ? "Disable calls from Vox"
+                            : phoneAssistantStatus.callbackPhoneLabel
+                              ? "Enable requested calls"
+                              : "Callback number not configured"}
+                        </Button>
+                        {phoneAssistantStatus.allowOutbound && phoneAssistantStatus.callbackPhoneLabel && (
+                          <Button
+                            type="button"
+                            disabled={phoneAssistantBusy}
+                            onClick={() => void requestPhoneAssistantTestCall()}
+                            className="mt-2 h-10 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                          >
+                            <PhoneCall /> Request a test call
+                          </Button>
+                        )}
+                        {!phoneAssistantStatus.callbackPhoneLabel && (
+                          <p className="mt-3 text-xs leading-5 text-white/36">
+                            Add a callback number by reconnecting if you want Vox to
+                            place requested calls. Incoming calls already work
+                            without one.
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={phoneAssistantBusy}
+                        onClick={() => void disconnectPhoneAssistant()}
+                        className="h-10 w-full rounded-full text-[#ffaaa4] hover:bg-[#ff766c]/10 hover:text-[#ffc0bb]"
+                      >
+                        Disconnect phone
+                      </Button>
+                    </div>
+                  )}
+                  {phoneAssistantError && (
+                    <p className="mt-4 rounded-xl border border-[#ff766c]/16 bg-[#ff766c]/[0.055] px-3.5 py-3 text-xs leading-5 text-[#ffaaa4]">
+                      {phoneAssistantError}
+                    </p>
+                  )}
+                </div>
+              </SheetContent>
+            </Sheet>
+          )}
+
           {desktopPersonalAvailable && connectionMode === "cloud" && (
             <Sheet
               open={remotePairingOpen}
@@ -4588,13 +5147,27 @@ export default function Home() {
                     <div className="mt-5 space-y-4">
                       <div className="rounded-2xl border border-[#f4ff74]/16 bg-[#f4ff74]/[0.05] p-4">
                         <p className="flex items-center gap-2 text-sm font-semibold text-white/86">
-                          <span className="size-2 rounded-full bg-emerald-400" /> Phone connected
+                          <span className={`size-2 rounded-full ${remotePairingStatus.armed ? "bg-emerald-400" : "bg-amber-300"}`} />
+                          {remotePairingStatus.armed ? "Remote control active" : "Phone paired · control paused"}
                         </p>
                         <p className="mt-2 text-xs leading-5 text-white/44">
-                          {remotePairingStatus.phoneLabel || "Your phone browser"} may ask this Mac to use approved apps,
-                          local smart-home devices, the selected folder, or read-only Codex.
+                          {remotePairingStatus.armed
+                            ? `${remotePairingStatus.phoneLabel || "Your phone browser"} may ask this Mac to use approved apps until you pause control or quit Vox.`
+                            : "Pairing alone cannot operate this Mac. Enable control only when you expect to use it."}
                         </p>
                       </div>
+                      <Button
+                        type="button"
+                        variant={remotePairingStatus.armed ? "outline" : "default"}
+                        disabled={remotePairingBusy}
+                        onClick={() => void setRemoteControlArmed(!remotePairingStatus.armed)}
+                        className={remotePairingStatus.armed
+                          ? "h-11 w-full rounded-full border-amber-300/22 bg-amber-300/[0.06] text-amber-100 hover:bg-amber-300/12"
+                          : "h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"}
+                      >
+                        <ShieldCheck />
+                        {remotePairingStatus.armed ? "Pause remote control now" : "Allow remote control until Vox quits"}
+                      </Button>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
                           <Button
@@ -4700,6 +5273,20 @@ export default function Home() {
                 </div>
               </SheetContent>
             </Sheet>
+          )}
+
+          {!desktopPersonalAvailable && connectionMode === "cloud" && !remoteMacPairing && nativePairingScanAvailable && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => window.voxNativeIOS?.scanPairing()}
+              className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
+              aria-label="Pair with your Mac"
+            >
+              <ScanQrCode />
+              <span className="hidden sm:inline">Pair Mac</span>
+            </Button>
           )}
 
           {!desktopPersonalAvailable && connectionMode === "cloud" && remoteMacPairing && (
@@ -5033,7 +5620,7 @@ export default function Home() {
 
           {!desktopPersonalAvailable && connectionMode === "cloud" && (
             <div
-              className="hidden items-center gap-2 rounded-full border border-[#c8bcff]/16 bg-[#c8bcff]/[0.055] px-3 py-2 text-xs text-[#d8d1ff]/70 sm:flex"
+              className="header-meta-chip hidden items-center gap-2 rounded-full border border-[#c8bcff]/16 bg-[#c8bcff]/[0.055] px-3 py-2 text-xs text-[#d8d1ff]/70 sm:flex"
               title="These preferences and synced data belong to your Vox Cloud account"
             >
               <Globe2 className="size-3.5" /> Account · Vox Cloud
@@ -5042,7 +5629,7 @@ export default function Home() {
 
           {desktopPersonalAvailable && connectionMode === "cloud" && (
             <div
-              className="hidden items-center gap-2 rounded-full border border-[#f4ff74]/14 bg-[#f4ff74]/[0.045] px-3 py-2 text-xs text-[#f4ff74]/66 lg:flex"
+              className="header-meta-chip hidden items-center gap-2 rounded-full border border-[#f4ff74]/14 bg-[#f4ff74]/[0.045] px-3 py-2 text-xs text-[#f4ff74]/66 lg:flex"
               title="Computer Use, Codex, apps, and smart-home access stay under this Mac's local control"
             >
               <ShieldCheck className="size-3.5" /> Device · This Mac
@@ -5067,12 +5654,12 @@ export default function Home() {
             </Button>
           )}
 
-          <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/58">
+          <div className="header-session-chip flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/58">
             <span className={connected ? "live-dot" : "idle-dot"} />
             {connected ? (
               <>
-                <span className="min-[380px]:hidden">Live</span>
-                <span className="hidden min-[380px]:inline">Private live session</span>
+                <span className="min-[481px]:hidden">Live</span>
+                <span className="hidden min-[481px]:inline">Private live session</span>
               </>
             ) : (
               "Offline"
@@ -5494,12 +6081,12 @@ export default function Home() {
                   : "A lightweight live transcript"}
               </p>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="transcript-actions flex items-center gap-1.5">
               {messages.length > 0 && (
                 <button
                   type="button"
                   onClick={clearConversation}
-                  className="rounded-full px-3 py-1.5 text-xs text-white/36 transition hover:bg-white/5 hover:text-white/70"
+                  className="transcript-clear rounded-full px-3 py-1.5 text-xs text-white/36 transition hover:bg-white/5 hover:text-white/70"
                 >
                   Clear
                 </button>
@@ -5963,10 +6550,39 @@ export default function Home() {
               </div>
             ) : (
               messages.slice().reverse().map((message) => (
-                <article key={message.id} className={`message message-${message.role}`}>
-                  <p className="message-role">
-                    {message.role === "assistant" ? "Vox" : "You"}
-                  </p>
+                <article
+                  key={message.id}
+                  className={`message message-${message.role}${message.source === "phone" ? " message-phone" : ""}`}
+                >
+                  <div className="message-header">
+                    {message.source === "phone" ? (
+                      <div className="message-phone-header">
+                        <span className="message-phone-badge">
+                          <PhoneCall aria-hidden="true" size={12} />
+                          Phone call
+                        </span>
+                        <span className="message-role">
+                          {message.role === "assistant" ? "Vox" : "You"}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="message-role">
+                        {message.role === "assistant" ? "Vox" : "You"}
+                      </p>
+                    )}
+                    {connectionMode === "cloud" && (
+                      <button
+                        type="button"
+                        className="message-source-toggle"
+                        onClick={() => void togglePhoneCallBadge(message)}
+                        disabled={sourceEditId !== null}
+                        aria-label={message.source === "phone" ? "Remove phone call badge" : "Mark as phone call"}
+                        title={message.source === "phone" ? "Remove phone call badge" : "Mark as phone call"}
+                      >
+                        {message.source === "phone" ? "Remove badge" : "Mark as call"}
+                      </button>
+                    )}
+                  </div>
                   <p className="message-copy mt-2 text-[0.95rem] leading-6 text-white/74">
                     {message.text}
                   </p>

@@ -82,6 +82,7 @@ export async function getConversation(ownerId: string) {
     .select({
       id: conversationMessages.id,
       role: conversationMessages.role,
+      source: conversationMessages.source,
       ciphertext: conversationMessages.ciphertext,
       iv: conversationMessages.iv,
     })
@@ -93,6 +94,7 @@ export async function getConversation(ownerId: string) {
     records.map(async (record) => ({
       id: record.id,
       role: record.role as ConversationMessage["role"],
+      source: record.source === "phone" ? "phone" as const : "local" as const,
       text: await decryptText(record.ciphertext, record.iv),
     })),
   );
@@ -107,8 +109,8 @@ export async function appendConversationMessage(
   await ensureThread(ownerId);
   const encrypted = await encryptText(message.text);
   const result = await getDb().run(sql`
-    INSERT INTO conversation_messages (id, owner_id, role, ciphertext, iv)
-    SELECT ${message.id}, ${ownerId}, ${message.role}, ${encrypted.ciphertext}, ${encrypted.iv}
+    INSERT INTO conversation_messages (id, owner_id, role, source, ciphertext, iv)
+    SELECT ${message.id}, ${ownerId}, ${message.role}, ${message.source === "phone" ? "phone" : "local"}, ${encrypted.ciphertext}, ${encrypted.iv}
     WHERE EXISTS (
       SELECT 1 FROM conversation_threads
       WHERE owner_id = ${ownerId} AND generation = ${generation}
@@ -135,6 +137,25 @@ export async function appendConversationMessage(
       )
   `);
   return true;
+}
+
+export async function setConversationMessageSource(
+  ownerId: string,
+  generation: number,
+  id: string,
+  source: "local" | "phone",
+) {
+  const result = await getDb().run(sql`
+    UPDATE conversation_messages
+    SET source = ${source}
+    WHERE owner_id = ${ownerId}
+      AND id = ${id}
+      AND EXISTS (
+        SELECT 1 FROM conversation_threads
+        WHERE owner_id = ${ownerId} AND generation = ${generation}
+      )
+  `);
+  return Number(result.meta.changes ?? 0) > 0;
 }
 
 export async function clearConversation(ownerId: string) {

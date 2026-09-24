@@ -3,8 +3,9 @@ import {
   appendConversationMessage,
   clearConversation,
   getConversation,
+  setConversationMessageSource,
 } from "@/lib/conversation-store";
-import { isConversationRole } from "@/lib/conversation";
+import { isConversationRole, isConversationSource } from "@/lib/conversation";
 
 const noStore = { "Cache-Control": "no-store" };
 
@@ -58,6 +59,7 @@ export async function POST(request: Request) {
       id,
       role,
       text,
+      source: "local",
     });
     if (!stored) {
       return Response.json(
@@ -70,6 +72,53 @@ export async function POST(request: Request) {
     console.error("Conversation save failed", error);
     return Response.json(
       { error: "That message could not sync right now." },
+      { status: 503, headers: noStore },
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
+
+  const body = (await request.json().catch(() => null)) as {
+    generation?: unknown;
+    id?: unknown;
+    source?: unknown;
+  } | null;
+  const generation = Number(body?.generation);
+  const id = typeof body?.id === "string" ? body.id.trim() : "";
+  if (
+    !Number.isSafeInteger(generation) ||
+    generation < 1 ||
+    !id ||
+    id.length > 180 ||
+    !isConversationSource(body?.source)
+  ) {
+    return Response.json(
+      { error: "A valid conversation message and source are required." },
+      { status: 400, headers: noStore },
+    );
+  }
+
+  try {
+    const updated = await setConversationMessageSource(
+      auth.user.id,
+      generation,
+      id,
+      body.source,
+    );
+    if (!updated) {
+      return Response.json(
+        { error: "This message is no longer in the current conversation." },
+        { status: 409, headers: noStore },
+      );
+    }
+    return Response.json({ source: body.source }, { headers: noStore });
+  } catch (error) {
+    console.error("Conversation source update failed", error);
+    return Response.json(
+      { error: "The message could not be updated right now." },
       { status: 503, headers: noStore },
     );
   }

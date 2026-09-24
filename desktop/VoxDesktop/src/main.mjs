@@ -10,7 +10,7 @@ import {
 } from "electron";
 import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -19,6 +19,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Codex } from "@openai/codex-sdk";
 import { runComputerUseSession } from "./computer-use-session.mjs";
 import { installedApps, matchInstalledApp } from "./installed-apps.mjs";
+import {
+  inferPhoneDesktopApp,
+  isPhoneDesktopAction,
+  isPhoneSmartHomeRequest,
+  isPhoneWorkspaceRequest,
+  phoneDesktopIntent,
+} from "./phone-mac-route.mjs";
 import {
   createPersonalRealtimeSecret,
   validOpenAIKey,
@@ -60,8 +67,8 @@ const desktopSessionHeader = {
   name: "x-vox-desktop-session",
   value: randomBytes(32).toString("base64url"),
 };
-const toolbarHeight = 56;
-const drawerWidth = 460;
+const toolbarHeight = 44;
+const drawerWidth = 420;
 const maximumPromptLength = 12_000;
 const execFileAsync = promisify(execFile);
 const computerUseUnavailablePattern =
@@ -81,6 +88,15 @@ let lastSmartHomeCommandAt = 0;
 let remoteRelayTimer = null;
 let remoteRelayInFlight = false;
 let lastRemoteHeartbeatAt = 0;
+let lastRemoteDesktopAppId = "";
+let lastRemoteDesktopAppAt = 0;
+// Deliberately memory-only: relaunching Vox always returns remote control to a
+// safe, disarmed state even when the phone remains paired.
+let remoteControlArmed = false;
+
+function remoteControlArmStatus() {
+  return { armed: remoteControlArmed };
+}
 
 function isTrustedSender(event) {
   if (!mainWindow || event.sender !== mainWindow.webContents) return false;
@@ -184,6 +200,29 @@ function readEncryptedSetting(settings, name, label, legacyName) {
     return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
   } catch {
     throw new Error(`The saved ${label} could not be unlocked. Replace it and try again.`);
+  }
+}
+
+function normalizedPhoneRelayPassphrase(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/[\p{P}\p{S}\s]/gu, "");
+}
+
+function derivedPhoneRelaySecret(passphrase) {
+  const normalized = normalizedPhoneRelayPassphrase(passphrase);
+  if (normalized.length < 12 || normalized.length > 160) {
+    throw new Error("Use the same private sentence configured for phone access.");
+  }
+  return createHash("sha256").update(normalized, "utf8").digest("base64url");
+}
+
+function unlockedPhoneRelaySecret(settings) {
+  try {
+    return readEncryptedSetting(settings, "phoneRelaySecret", "phone-to-Mac key");
+  } catch {
+    return null;
   }
 }
 
@@ -345,6 +384,22 @@ async function isDesktopAppRunning(bundleId) {
     return hasRunningDesktopApp(stdout);
   } catch {
     return false;
+  }
+}
+
+async function frontmostInstalledDesktopApp(apps) {
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/lsappinfo", [], {
+      timeout: 3_000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    const bundleId = stdout.match(
+      /^\s*\d+\).*?\(in front\)\s*\n\s*bundleID="([^"]+)"/mu,
+    )?.[1];
+    if (!bundleId || bundleId === "com.ericcheng.vox.desktop") return null;
+    return apps.find((candidate) => candidate.bundleId === bundleId) ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -638,6 +693,8 @@ async function performRemoteDesktopControl(command) {
   const intent = closing || command.intent === "interact" ? "interact" : "launch";
   if (intent === "launch") {
     await launchApprovedDesktopApp(appPolicy);
+    lastRemoteDesktopAppId = command.appId;
+    lastRemoteDesktopAppAt = Date.now();
     return `Opened ${appPolicy.name} on the paired Mac.`;
   }
 
@@ -663,13 +720,62 @@ async function performRemoteDesktopControl(command) {
           ? "draft_message"
           : "interact",
     });
-    if (result.status === "completed") return result.finalResponse || "The remote action completed.";
+    if (result.status === "completed") {
+      lastRemoteDesktopAppId = command.appId;
+      lastRemoteDesktopAppAt = Date.now();
+      return result.finalResponse || "The remote action completed.";
+    }
     if (result.status === "setup-required") return result.message;
     if (result.status === "cancelled") return "The action was cancelled on the Mac.";
     throw new Error(result.message || "The Mac did not complete the remote action.");
   } finally {
     taskLaunchPending = false;
   }
+}
+
+async function performPhoneMacRequest(command) {
+  const prompt = typeof command.prompt === "string" ? command.prompt.trim() : "";
+  if (!prompt || prompt.length > maximumPromptLength) {
+    throw new Error("The phone request is invalid.");
+  }
+  if (isPhoneSmartHomeRequest(prompt)) {
+    return performRemoteSmartHomeCommand({ kind: "smart_home", prompt });
+  }
+  if (isPhoneWorkspaceRequest(prompt)) {
+    return performRemoteCommand({ kind: "open_workspace" });
+  }
+
+  const apps = await installedApps();
+  const explicit = matchInstalledApp(prompt, apps);
+  const explicitApp = explicit
+    ? apps.find((candidate) => candidate.id === explicit.id) ?? null
+    : null;
+  const inferredApp = inferPhoneDesktopApp(prompt, apps);
+  const frontmostApp = isPhoneDesktopAction(prompt)
+    ? await frontmostInstalledDesktopApp(apps)
+    : null;
+  const recentApp = Date.now() - lastRemoteDesktopAppAt <= 30 * 60_000
+    ? apps.find((candidate) => candidate.id === lastRemoteDesktopAppId) ?? null
+    : null;
+  const targetApp = explicitApp ?? inferredApp ?? recentApp ?? frontmostApp;
+
+  if (targetApp && (isPhoneDesktopAction(prompt) || explicit?.appOnly)) {
+    return performRemoteDesktopControl({
+      kind: "desktop_control",
+      prompt,
+      appId: targetApp.id,
+      intent: phoneDesktopIntent(prompt, explicit?.appOnly),
+      mode: "fast",
+    });
+  }
+  if (isPhoneDesktopAction(prompt)) {
+    throw new Error(
+      usesTaiwanMandarin(prompt)
+        ? "我還無法確定要操作哪個 App。請說出 App 名稱，或先在 Mac 上把它切到最前面。"
+        : "I could not determine which app to control. Name the app, or bring it to the front on the Mac first.",
+    );
+  }
+  return performRemoteCodexTask({ kind: "local_codex", prompt });
 }
 
 async function performRemoteCodexTask(command) {
@@ -709,6 +815,7 @@ async function performRemoteCommand(command) {
   if (!command || typeof command !== "object") throw new Error("The remote command is invalid.");
   if (command.kind === "desktop_control") return performRemoteDesktopControl(command);
   if (command.kind === "smart_home") return performRemoteSmartHomeCommand(command);
+  if (command.kind === "phone_mac") return performPhoneMacRequest(command);
   if (command.kind === "local_codex") return performRemoteCodexTask(command);
   if (command.kind === "open_workspace") {
     const settings = await readSettings();
@@ -768,17 +875,32 @@ async function processRemoteRelay() {
         : [];
       if (processed.includes(envelope.id)) continue;
       let result;
+      let commandSecret = pairing.secret;
       try {
-        const payload = decryptRemoteCommand(pairing.secret, pairing.deviceId, envelope);
+        let payload;
+        try {
+          payload = decryptRemoteCommand(pairing.secret, pairing.deviceId, envelope);
+        } catch (pairingError) {
+          const phoneSecret = unlockedPhoneRelaySecret(settings);
+          if (!phoneSecret) throw pairingError;
+          commandSecret = phoneSecret;
+          payload = decryptRemoteCommand(phoneSecret, pairing.deviceId, envelope);
+          if (payload.command.kind !== "phone_mac") {
+            throw new Error("A phone-authenticated command may only use the phone-to-Mac route.");
+          }
+        }
         await saveSettings({
           ...settings,
           processedRemoteCommandIds: [...processed.slice(-99), envelope.id],
         });
+        if (!remoteControlArmStatus().armed) {
+          throw new Error("Remote control is paused on this Mac. Open Vox Desktop and allow it until Vox quits.");
+        }
         result = { ok: true, answer: await performRemoteCommand(payload.command) };
       } catch (error) {
         result = { ok: false, error: error instanceof Error ? error.message : "The remote command failed." };
       }
-      const encrypted = encryptRemoteResult(pairing.secret, pairing.deviceId, envelope.id, result);
+      const encrypted = encryptRemoteResult(commandSecret, pairing.deviceId, envelope.id, result);
       await cloudJson("/api/device-commands", {
         method: "PATCH",
         body: JSON.stringify({
@@ -816,6 +938,7 @@ function registerIpcHandlers() {
       mode: connectionMode(settings.connectionMode),
       ...personalKeysStatus(settings),
       secureStorageAvailable: secureStorageAvailable(),
+      phoneMacRoutingConfigured: encryptedSettingConfigured(settings, "phoneRelaySecret"),
     };
   });
 
@@ -900,6 +1023,29 @@ function registerIpcHandlers() {
     return createPersonalPresence(apiKey, request);
   });
 
+  ipcMain.handle("vox-phone:save-relay-passphrase", async (event, rawPassphrase) => {
+    requireTrustedVoxSender(event);
+    if (!secureStorageAvailable()) {
+      throw new Error("Secure system storage is unavailable on this Mac.");
+    }
+    const relaySecret = derivedPhoneRelaySecret(rawPassphrase);
+    const settings = await readSettings();
+    await saveSettings({
+      ...settings,
+      phoneRelaySecret: safeStorage.encryptString(relaySecret).toString("base64"),
+    });
+    return { configured: true };
+  });
+
+  ipcMain.handle("vox-phone:remove-relay-passphrase", async (event) => {
+    requireTrustedVoxSender(event);
+    const settings = await readSettings();
+    const remaining = { ...settings };
+    delete remaining.phoneRelaySecret;
+    await saveSettings(remaining);
+    return { removed: true };
+  });
+
   ipcMain.handle("vox-remote:status", async (event) => {
     requireTrustedVoxSender(event);
     const settings = await readSettings();
@@ -908,6 +1054,7 @@ function registerIpcHandlers() {
       return {
         configured: false,
         secureStorageAvailable: secureStorageAvailable(),
+        ...remoteControlArmStatus(),
       };
     }
     let device = null;
@@ -929,7 +1076,25 @@ function registerIpcHandlers() {
         device?.status === "pending" && Date.parse(device.expiresAt ?? "") > Date.now()
           ? remotePairingUrl(pairing)
           : undefined,
+      ...remoteControlArmStatus(),
     };
+  });
+
+  ipcMain.handle("vox-remote:arm", async (event) => {
+    requireTrustedVoxSender(event);
+    const settings = await readSettings();
+    const pairing = unlockedRemotePairing(settings);
+    if (!pairing || pairing.status !== "active") {
+      throw new Error("Pair and activate a phone before enabling remote control.");
+    }
+    remoteControlArmed = true;
+    return remoteControlArmStatus();
+  });
+
+  ipcMain.handle("vox-remote:disarm", (event) => {
+    requireTrustedVoxSender(event);
+    remoteControlArmed = false;
+    return remoteControlArmStatus();
   });
 
   ipcMain.handle("vox-remote:create-pairing", async (event) => {
@@ -996,6 +1161,7 @@ function registerIpcHandlers() {
     delete remaining.remoteMacPairing;
     delete remaining.processedRemoteCommandIds;
     await saveSettings(remaining);
+    remoteControlArmed = false;
     lastRemoteHeartbeatAt = 0;
     return { revoked: true };
   });
@@ -1461,6 +1627,9 @@ app.whenReady().then(async () => {
     }),
   });
   registerIpcHandlers();
+  // Installed-app discovery is useful for voice routing, but it must never sit
+  // on the first conversational turn's latency path.
+  void installedApps().catch(() => undefined);
   await createWindow();
   remoteRelayTimer = setInterval(() => void processRemoteRelay(), 2_500);
   void processRemoteRelay();
@@ -1474,6 +1643,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  remoteControlArmed = false;
   if (remoteRelayTimer) clearInterval(remoteRelayTimer);
   remoteRelayTimer = null;
   void localVoxServer?.close();
