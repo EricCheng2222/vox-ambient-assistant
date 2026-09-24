@@ -37,6 +37,41 @@ export function formatReminderTime(value: string) {
   }).format(date);
 }
 
+export type ReminderPostpone = "10m" | "1h" | "tomorrow";
+
+export const reminderPostponeOptions: Array<{ id: ReminderPostpone; label: string }> = [
+  { id: "10m", label: "10 minutes" },
+  { id: "1h", label: "1 hour" },
+  { id: "tomorrow", label: "Tomorrow at 9:00" },
+];
+
+const TAIPEI_OFFSET_MS = 8 * 60 * 60_000;
+
+// New due time for a postponed reminder. "Tomorrow" is 09:00 Taiwan time,
+// matching how reminder times are parsed and displayed.
+export function postponedDueAt(option: ReminderPostpone, now = new Date()) {
+  if (option === "10m") return new Date(now.getTime() + 10 * 60_000).toISOString();
+  if (option === "1h") return new Date(now.getTime() + 60 * 60_000).toISOString();
+  const taipei = new Date(now.getTime() + TAIPEI_OFFSET_MS);
+  return new Date(
+    Date.UTC(taipei.getUTCFullYear(), taipei.getUTCMonth(), taipei.getUTCDate() + 1, 9) -
+      TAIPEI_OFFSET_MS,
+  ).toISOString();
+}
+
+export function isReminderPostpone(value: unknown): value is ReminderPostpone {
+  return value === "10m" || value === "1h" || value === "tomorrow";
+}
+
+export function isReminderOverdue(reminder: Pick<Reminder, "status" | "dueAt">, now = Date.now()) {
+  return reminder.status === "pending" && Date.parse(reminder.dueAt) <= now;
+}
+
+// Matches the server list: finished reminders disappear once their time passes.
+export function isReminderVisible(reminder: Pick<Reminder, "status" | "dueAt">, now = Date.now()) {
+  return reminder.status === "pending" || Date.parse(reminder.dueAt) > now;
+}
+
 export function isReminderDelivery(value: unknown): value is ReminderDelivery {
   return value === "app" || value === "call";
 }

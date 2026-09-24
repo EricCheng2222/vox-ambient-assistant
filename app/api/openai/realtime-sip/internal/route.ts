@@ -223,7 +223,7 @@ async function executePhoneTool(ownerId: string, name: unknown, rawArguments: un
     });
   }
   if (name === "list_reminders") {
-    const reminders = (await listReminders(ownerId, 8))
+    const reminders = (await listReminders(ownerId, 40))
       .filter((reminder) => reminder.status === "pending" && Date.parse(reminder.dueAt) > Date.now())
       .slice(0, 5);
     return Response.json({

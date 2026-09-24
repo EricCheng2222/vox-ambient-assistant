@@ -19,14 +19,22 @@ const publicReminder = {
   updatedAt: reminders.updatedAt,
 };
 
+// Pending reminders stay listed, overdue or not, until the user completes or
+// postpones them. Completed and dismissed reminders drop out once their time
+// has passed.
 export async function listReminders(
   ownerId: string,
-  limit = 80,
+  limit = 200,
 ): Promise<Reminder[]> {
   return getDb()
     .select(publicReminder)
     .from(reminders)
-    .where(eq(reminders.ownerId, ownerId))
+    .where(
+      and(
+        eq(reminders.ownerId, ownerId),
+        or(eq(reminders.status, "pending"), gt(reminders.dueAt, new Date().toISOString())),
+      ),
+    )
     .orderBy(asc(reminders.dueAt))
     .limit(limit) as Promise<Reminder[]>;
 }
@@ -65,12 +73,17 @@ export async function updateReminderStatus(
   id: string,
   status: ReminderStatus,
 ) {
+  const now = new Date().toISOString();
   const [reminder] = await getDb()
     .update(reminders)
     .set({
       status,
-      notifiedAt: status === "pending" ? null : undefined,
-      updatedAt: new Date().toISOString(),
+      // Reopening re-arms alerts only for a reminder that is not yet due, so an
+      // undo never re-announces (or re-calls about) one that already fired.
+      notifiedAt: status === "pending"
+        ? sql`CASE WHEN ${reminders.dueAt} > ${now} THEN NULL ELSE ${reminders.notifiedAt} END`
+        : undefined,
+      updatedAt: now,
     })
     .where(and(eq(reminders.ownerId, ownerId), eq(reminders.id, id)))
     .returning(publicReminder);
@@ -93,6 +106,29 @@ export async function updateReminderDelivery(
         eq(reminders.id, id),
         eq(reminders.status, "pending"),
         gt(reminders.dueAt, now),
+      ),
+    )
+    .returning(publicReminder);
+  return (reminder ?? null) as Reminder | null;
+}
+
+export async function postponeReminder(ownerId: string, id: string, dueAt: string) {
+  const [reminder] = await getDb()
+    .update(reminders)
+    .set({
+      dueAt,
+      status: "pending",
+      notifiedAt: null,
+      callStatus: null,
+      callAttempts: 0,
+      calledAt: null,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(
+      and(
+        eq(reminders.ownerId, ownerId),
+        eq(reminders.id, id),
+        eq(reminders.status, "pending"),
       ),
     )
     .returning(publicReminder);

@@ -28,6 +28,7 @@ import {
   Mic,
   MicOff,
   PhoneCall,
+  AlarmClock,
   PhoneOff,
   Link2,
   ShieldCheck,
@@ -92,7 +93,21 @@ import {
   type MemoryRecord,
 } from "@/lib/memory";
 import { formatFileSize, type AgentFile } from "@/lib/agent-file";
-import { formatReminderTime, type Reminder } from "@/lib/reminder";
+import {
+  formatReminderTime,
+  isReminderOverdue,
+  isReminderVisible,
+  reminderPostponeOptions,
+  type Reminder,
+  type ReminderPostpone,
+} from "@/lib/reminder";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   parseRealtimeVoice,
   realtimeVoiceOptions,
@@ -413,8 +428,8 @@ declare global {
     };
     readonly voxNativeReminders?: {
       available: boolean;
-      getPermission?: () => Promise<"granted" | "denied" | "prompt">;
-      requestPermission: () => Promise<"granted" | "denied">;
+      getPermission?: () => Promise<"granted" | "provisional" | "denied" | "prompt">;
+      requestPermission: () => Promise<"granted" | "provisional" | "denied" | "prompt">;
       sync: (
         reminders: Array<Pick<Reminder, "id" | "title" | "notes" | "dueAt">>,
       ) => Promise<number>;
@@ -598,6 +613,28 @@ function formatMemoryDate(value: string) {
     month: "short",
     day: "numeric",
   }).format(date);
+}
+
+type AlertPermission =
+  | "unknown"
+  | "granted"
+  | "provisional"
+  | "denied"
+  | "prompt"
+  | "unsupported";
+
+function isAlertPermission(value: unknown): value is AlertPermission {
+  return (
+    value === "granted" ||
+    value === "provisional" ||
+    value === "denied" ||
+    value === "prompt"
+  );
+}
+
+function browserAlertPermission(): AlertPermission {
+  if (!("Notification" in window)) return "unsupported";
+  return Notification.permission === "default" ? "prompt" : Notification.permission;
 }
 
 // Upcoming reminders handed to the iOS app, which schedules them as local
@@ -967,9 +1004,12 @@ export default function Home() {
       phoneAssistantStatus.callbackPhoneLabel,
   );
   const [nativeRemindersAvailable, setNativeRemindersAvailable] = useState(false);
-  const [alertPermission, setAlertPermission] = useState<
-    "unknown" | "granted" | "denied" | "prompt" | "unsupported"
-  >("unknown");
+  const [alertPermission, setAlertPermission] = useState<AlertPermission>("unknown");
+  // Only the newest permission read may update the UI; older replies are stale.
+  const alertPermissionReadRef = useRef(0);
+  const reminderBusyRef = useRef(new Set<string>());
+  const [busyReminderIds, setBusyReminderIds] = useState<string[]>([]);
+  const remindersRef = useRef<Reminder[]>([]);
   const [phoneAssistantCallbackNumber, setPhoneAssistantCallbackNumber] = useState("");
   const [phoneAssistantPassphrase, setPhoneAssistantPassphrase] = useState("");
   const [phoneAssistantBusy, setPhoneAssistantBusy] = useState(false);
@@ -1187,33 +1227,28 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    // Re-read on return to the app: the permission can change in Settings.
-    const readAlertPermission = () => {
-      const nativeReminders = window.voxNativeReminders;
-      if (nativeReminders?.available) {
-        setNativeRemindersAvailable(true);
-        if (!nativeReminders.getPermission) {
-          setAlertPermission((current) => (current === "unknown" ? "prompt" : current));
-          return;
-        }
-        void nativeReminders
-          .getPermission()
-          .then(setAlertPermission)
-          .catch(() => setAlertPermission("prompt"));
-      } else if ("Notification" in window) {
-        setAlertPermission(
-          Notification.permission === "default" ? "prompt" : Notification.permission,
-        );
-      } else {
-        setAlertPermission("unsupported");
-      }
-    };
+    remindersRef.current = reminders;
+  }, [reminders]);
+
+  useEffect(() => {
     queueMicrotask(readAlertPermission);
+    // The iOS app pushes the permission whenever it returns to the foreground,
+    // which also covers changes made in the Settings app.
+    const onNativePermission = (event: Event) => {
+      const permission = (event as CustomEvent<unknown>).detail;
+      if (!isAlertPermission(permission)) return;
+      alertPermissionReadRef.current += 1;
+      setAlertPermission(permission);
+    };
     const onVisible = () => {
       if (document.visibilityState === "visible") readAlertPermission();
     };
+    window.addEventListener("voxnativealertpermission", onNativePermission);
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("voxnativealertpermission", onNativePermission);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   useEffect(() => {
@@ -1455,6 +1490,8 @@ export default function Home() {
     void checkDueReminders();
     const timer = window.setInterval(() => void checkDueReminders(), 15_000);
     return () => window.clearInterval(timer);
+    // The poll reads live state through refs and state setters only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authState, connectionMode]);
 
   useEffect(() => {
@@ -3006,97 +3043,181 @@ export default function Home() {
     return payload.reminder;
   }
 
-  async function setReminderStatus(reminder: Reminder, status: Reminder["status"]) {
+  // One request at a time per reminder: double taps and rapid toggles would
+  // otherwise race and leave the list disagreeing with the server.
+  async function runReminderAction(id: string, action: () => Promise<void>) {
+    if (reminderBusyRef.current.has(id)) return;
+    reminderBusyRef.current.add(id);
+    setBusyReminderIds([...reminderBusyRef.current]);
     try {
-      const response = await fetch("/api/reminders", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: reminder.id, status }),
-      });
-      const payload = (await response.json()) as { reminder?: Reminder };
-      if (!response.ok || !payload.reminder) throw new Error("Update failed.");
-      setReminders((current) =>
-        current.map((candidate) =>
-          candidate.id === reminder.id ? (payload.reminder as Reminder) : candidate,
-        ),
-      );
-      if (status === "completed") {
-        toast.success("Reminder completed", {
-          action: {
-            label: "Undo",
-            onClick: () => void setReminderStatus(payload.reminder as Reminder, "pending"),
-          },
-        });
-      } else {
-        toast.success(status === "pending" ? "Reminder reopened" : "Reminder updated");
+      await action();
+    } finally {
+      reminderBusyRef.current.delete(id);
+      setBusyReminderIds([...reminderBusyRef.current]);
+    }
+  }
+
+  async function patchReminder(id: string, change: Record<string, unknown>) {
+    const response = await fetch("/api/reminders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, ...change }),
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      reminder?: Reminder;
+      error?: string;
+    };
+    if (!response.ok || !payload.reminder) throw new Error(payload.error ?? "Update failed.");
+    const updated = payload.reminder;
+    setReminders((current) =>
+      current
+        .map((candidate) => (candidate.id === id ? updated : candidate))
+        .sort((left, right) => Date.parse(left.dueAt) - Date.parse(right.dueAt)),
+    );
+    return updated;
+  }
+
+  function reminderToastId(id: string) {
+    return `vox-reminder-${id}`;
+  }
+
+  function setReminderStatus(reminder: Reminder, status: Reminder["status"]) {
+    return runReminderAction(reminder.id, async () => {
+      try {
+        const updated = await patchReminder(reminder.id, { status });
+        if (status === "completed") {
+          toast.success("Reminder completed", {
+            id: reminderToastId(reminder.id),
+            action: {
+              label: "Undo",
+              onClick: () => {
+                // The toast can outlive the change it offers to undo.
+                const latest = remindersRef.current.find((candidate) => candidate.id === reminder.id);
+                if (latest?.status === "completed" && latest.updatedAt === updated.updatedAt) {
+                  void setReminderStatus(latest, "pending");
+                }
+              },
+            },
+          });
+        } else {
+          toast.success(status === "pending" ? "Reminder reopened" : "Reminder updated", {
+            id: reminderToastId(reminder.id),
+          });
+        }
+      } catch {
+        toast.error("Could not update that reminder");
       }
-    } catch {
-      toast.error("Could not update that reminder");
-    }
+    });
   }
 
-  async function setReminderDelivery(reminder: Reminder, delivery: Reminder["delivery"]) {
-    try {
-      const response = await fetch("/api/reminders", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: reminder.id, delivery }),
-      });
-      const payload = (await response.json()) as { reminder?: Reminder; error?: string };
-      if (!response.ok || !payload.reminder) throw new Error(payload.error ?? "Update failed.");
-      setReminders((current) =>
-        current.map((candidate) =>
-          candidate.id === reminder.id ? (payload.reminder as Reminder) : candidate,
-        ),
-      );
-      toast.success(delivery === "call" ? "Vox will call you for this reminder" : "Phone call removed");
-    } catch (error) {
-      toast.error("Could not change how this reminder is delivered", {
-        description: error instanceof Error ? error.message : undefined,
-      });
-    }
+  function postponeScheduledReminder(reminder: Reminder, postpone: ReminderPostpone) {
+    return runReminderAction(reminder.id, async () => {
+      try {
+        const updated = await patchReminder(reminder.id, { postpone });
+        toast.success("Reminder postponed", {
+          id: reminderToastId(reminder.id),
+          description: formatReminderTime(updated.dueAt),
+        });
+      } catch (error) {
+        toast.error("Could not postpone that reminder", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
+    });
   }
 
-  async function deleteScheduledReminder(reminder: Reminder) {
-    try {
-      const response = await fetch("/api/reminders", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: reminder.id }),
-      });
-      if (!response.ok) throw new Error("Delete failed.");
-      setReminders((current) =>
-        current.filter((candidate) => candidate.id !== reminder.id),
-      );
-      toast.success("Reminder deleted");
-    } catch {
-      toast.error("Could not delete that reminder");
+  function setReminderDelivery(reminder: Reminder, delivery: Reminder["delivery"]) {
+    return runReminderAction(reminder.id, async () => {
+      try {
+        await patchReminder(reminder.id, { delivery });
+        toast.success(
+          delivery === "call" ? "Vox will call you for this reminder" : "Phone call removed",
+          { id: reminderToastId(reminder.id) },
+        );
+      } catch (error) {
+        toast.error("Could not change how this reminder is delivered", {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
+    });
+  }
+
+  function deleteScheduledReminder(reminder: Reminder) {
+    return runReminderAction(reminder.id, async () => {
+      try {
+        const response = await fetch("/api/reminders", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: reminder.id }),
+        });
+        if (!response.ok) throw new Error("Delete failed.");
+        setReminders((current) =>
+          current.filter((candidate) => candidate.id !== reminder.id),
+        );
+        // Replaces any pending Undo or Snooze toast for this reminder.
+        toast.success("Reminder deleted", { id: reminderToastId(reminder.id) });
+      } catch {
+        toast.error("Could not delete that reminder");
+      }
+    });
+  }
+
+  function readAlertPermission() {
+    const read = ++alertPermissionReadRef.current;
+    const nativeReminders = window.voxNativeReminders;
+    if (!nativeReminders?.available) {
+      setAlertPermission(browserAlertPermission());
+      return;
     }
+    setNativeRemindersAvailable(true);
+    if (!nativeReminders.getPermission) {
+      // Older iOS builds cannot report permission; offer the button, which
+      // reports the real state when tapped.
+      setAlertPermission((current) => (current === "unknown" ? "prompt" : current));
+      return;
+    }
+    void nativeReminders
+      .getPermission()
+      .then((permission) => {
+        if (read === alertPermissionReadRef.current) setAlertPermission(permission);
+      })
+      .catch(() => {
+        if (read === alertPermissionReadRef.current) setAlertPermission("prompt");
+      });
   }
 
   async function enableBrowserNotifications() {
+    alertPermissionReadRef.current += 1;
+    const read = alertPermissionReadRef.current;
     const nativeReminders = window.voxNativeReminders;
     if (nativeReminders?.available) {
       const permission = await nativeReminders.requestPermission().catch(() => "denied" as const);
-      setAlertPermission(permission);
+      if (read === alertPermissionReadRef.current) setAlertPermission(permission);
+      if (permission === "granted" || permission === "provisional") {
+        void nativeReminders.sync(nativeReminderPayload(remindersRef.current)).catch(() => undefined);
+      }
       if (permission === "granted") {
-        toast.success("iPhone alerts enabled", {
+        toast.success("iPhone alerts are on", {
           description: "Upcoming reminders will alert you even when Vox is closed.",
         });
-        void nativeReminders.sync(nativeReminderPayload(reminders)).catch(() => undefined);
+      } else if (permission === "provisional") {
+        toast.info("iPhone alerts are quiet", {
+          description: "They appear in Notification Center without a banner or sound.",
+        });
       } else {
-        toast.error("iPhone alerts are off", {
-          description: "Allow notifications for Vox in the iPhone Settings app.",
+        toast.error("iPhone alerts are still off", {
+          description: "Allow them in iPhone Settings → Notifications → Vox.",
         });
       }
       return;
     }
     if (!("Notification" in window)) {
-      toast.error("This browser does not support notifications.");
+      setAlertPermission("unsupported");
       return;
     }
-    const permission = await Notification.requestPermission();
-    setAlertPermission(permission === "default" ? "prompt" : permission);
+    await Notification.requestPermission();
+    const permission = browserAlertPermission();
+    if (read === alertPermissionReadRef.current) setAlertPermission(permission);
     if (permission === "granted") {
       toast.success("Browser notifications enabled");
     } else {
@@ -3119,7 +3240,18 @@ export default function Home() {
       );
 
       for (const reminder of due) {
-        toast.info("Reminder", { description: reminder.title, duration: 12_000 });
+        toast.info("Reminder", {
+          id: reminderToastId(reminder.id),
+          description: reminder.title,
+          duration: 12_000,
+          action: {
+            label: "Snooze 10 min",
+            onClick: () => {
+              const latest = remindersRef.current.find((candidate) => candidate.id === reminder.id);
+              if (latest?.status === "pending") void postponeScheduledReminder(latest, "10m");
+            },
+          },
+        });
         if ("Notification" in window && Notification.permission === "granted") {
           new Notification("Vox reminder", {
             body: reminder.title,
@@ -6457,7 +6589,13 @@ export default function Home() {
                 </button>
               )}
               {connectionMode === "cloud" && <>
-              <Sheet open={remindersOpen} onOpenChange={setRemindersOpen}>
+              <Sheet
+                open={remindersOpen}
+                onOpenChange={(open) => {
+                  setRemindersOpen(open);
+                  if (open) readAlertPermission();
+                }}
+              >
                 <SheetTrigger asChild>
                   <Button
                     type="button"
@@ -6489,7 +6627,9 @@ export default function Home() {
                       <p className="text-xs leading-5 text-white/56">
                         {nativeRemindersAvailable
                           ? "Vox schedules upcoming reminders as iPhone alerts, so they arrive even when the app is closed."
-                          : "Vox checks due reminders while this app is open. Enable browser alerts so they can appear outside this tab."}
+                          : alertPermission === "unsupported"
+                            ? "Vox shows due reminders while this app is open. This browser can’t show alerts outside the tab."
+                            : "Vox checks due reminders while this app is open, and browser alerts can show them outside this tab."}
                         {phoneAssistantStatus?.configured &&
                           " Use the phone button on a reminder to have Vox call you when it is due."}
                       </p>
@@ -6498,12 +6638,39 @@ export default function Home() {
                           <CheckCircle2 className="size-3.5" aria-hidden="true" />
                           {nativeRemindersAvailable ? "iPhone alerts are on" : "Browser alerts are on"}
                         </p>
+                      ) : alertPermission === "provisional" ? (
+                        <div className="mt-3">
+                          <p className="text-xs leading-5 text-white/50">
+                            iPhone alerts are quiet: they go to Notification Center without a
+                            banner or sound.
+                          </p>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="mt-2 rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10"
+                            onClick={() => void enableBrowserNotifications()}
+                          >
+                            <Bell /> Turn on banners and sound
+                          </Button>
+                        </div>
                       ) : alertPermission === "denied" ? (
-                        <p className="mt-3 text-xs leading-5 text-[#ffaaa4]/80">
-                          {nativeRemindersAvailable
-                            ? "Alerts are turned off. Allow them in iPhone Settings → Notifications → Vox."
-                            : "Alerts are blocked. Allow notifications for this site in your browser settings."}
-                        </p>
+                        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <p className="text-xs leading-5 text-[#ffaaa4]/80">
+                            {nativeRemindersAvailable
+                              ? "Alerts are off. Allow them in iPhone Settings → Notifications → Vox."
+                              : "Alerts are blocked. Allow notifications for this site in your browser settings."}
+                          </p>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="link"
+                            className="h-auto p-0 text-xs text-white/70"
+                            onClick={() => void enableBrowserNotifications()}
+                          >
+                            Check again
+                          </Button>
+                        </div>
                       ) : alertPermission === "prompt" ? (
                         <Button
                           type="button"
@@ -6540,7 +6707,7 @@ export default function Home() {
                           Try again
                         </Button>
                       </div>
-                    ) : reminders.length === 0 ? (
+                    ) : !reminders.some((reminder) => isReminderVisible(reminder)) ? (
                       <div className="flex min-h-64 flex-col items-center justify-center text-center">
                         <div className="grid size-12 place-items-center rounded-2xl border border-white/10 bg-white/[0.04] text-white/45">
                           <Bell size={21} />
@@ -6553,7 +6720,7 @@ export default function Home() {
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {reminders.map((reminder) => (
+                        {reminders.filter((reminder) => isReminderVisible(reminder)).map((reminder) => (
                           <article
                             key={reminder.id}
                             className={`rounded-2xl border p-4 ${
@@ -6574,7 +6741,14 @@ export default function Home() {
                                 <p className="text-sm font-semibold leading-5 text-white/82">
                                   {reminder.title}
                                 </p>
-                                <p className="mt-1.5 text-xs text-[#c8bcff]/70">
+                                <p
+                                  className={`mt-1.5 text-xs ${
+                                    isReminderOverdue(reminder) ? "text-[#ffaaa4]/85" : "text-[#c8bcff]/70"
+                                  }`}
+                                >
+                                  {isReminderOverdue(reminder) && (
+                                    <span className="font-semibold">Overdue · </span>
+                                  )}
                                   {formatReminderTime(reminder.dueAt)}
                                 </p>
                                 {reminder.delivery === "call" && (
@@ -6615,7 +6789,10 @@ export default function Home() {
                                           ? "Have Vox phone you when this is due"
                                           : "Turn on calls from Vox in Call Vox first"
                                     }
-                                    disabled={reminder.delivery !== "call" && !reminderCallsAvailable}
+                                    disabled={
+                                      busyReminderIds.includes(reminder.id) ||
+                                      (reminder.delivery !== "call" && !reminderCallsAvailable)
+                                    }
                                     onClick={() =>
                                       void setReminderDelivery(
                                         reminder,
@@ -6625,6 +6802,39 @@ export default function Home() {
                                   >
                                     <PhoneCall />
                                   </Button>
+                                )}
+                                {reminder.status === "pending" && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        size="icon-sm"
+                                        variant="ghost"
+                                        className="rounded-full text-white/38 hover:bg-[#f4ff74]/10 hover:text-[#f4ff74]"
+                                        aria-label={`Postpone ${reminder.title}`}
+                                        disabled={busyReminderIds.includes(reminder.id)}
+                                        title="Postpone"
+                                      >
+                                        <AlarmClock />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent
+                                      align="end"
+                                      className="border-white/10 bg-[#171823] text-white"
+                                    >
+                                      <DropdownMenuLabel className="text-xs text-white/45">
+                                        Postpone
+                                      </DropdownMenuLabel>
+                                      {reminderPostponeOptions.map((option) => (
+                                        <DropdownMenuItem
+                                          key={option.id}
+                                          onSelect={() => void postponeScheduledReminder(reminder, option.id)}
+                                        >
+                                          {option.label}
+                                        </DropdownMenuItem>
+                                      ))}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 )}
                                 {reminder.status !== "dismissed" && (
                                   <Button
@@ -6643,6 +6853,7 @@ export default function Home() {
                                         : `Complete ${reminder.title}`
                                     }
                                     title={reminder.status === "completed" ? "Mark as not done" : "Mark as done"}
+                                    disabled={busyReminderIds.includes(reminder.id)}
                                     onClick={() =>
                                       void setReminderStatus(
                                         reminder,
@@ -6661,6 +6872,7 @@ export default function Home() {
                                       variant="ghost"
                                       className="rounded-full text-white/32 hover:bg-[#ff766c]/10 hover:text-[#ff9d96]"
                                       aria-label={`Delete ${reminder.title}`}
+                                      disabled={busyReminderIds.includes(reminder.id)}
                                     >
                                       <Trash2 />
                                     </Button>

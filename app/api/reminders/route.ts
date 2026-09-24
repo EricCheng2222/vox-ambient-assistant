@@ -1,9 +1,15 @@
 import { requireUser } from "@/lib/auth";
-import { isReminderDelivery, type ReminderStatus } from "@/lib/reminder";
+import {
+  isReminderDelivery,
+  isReminderPostpone,
+  postponedDueAt,
+  type ReminderStatus,
+} from "@/lib/reminder";
 import {
   createReminder,
   deleteReminder,
   listReminders,
+  postponeReminder,
   updateReminderDelivery,
   updateReminderStatus,
 } from "@/lib/reminder-store";
@@ -162,8 +168,20 @@ export async function PATCH(request: Request) {
     id?: unknown;
     status?: ReminderStatus;
     delivery?: unknown;
+    postpone?: unknown;
   };
   const id = typeof body.id === "string" ? body.id.trim() : "";
+
+  if (body.postpone !== undefined) {
+    if (!id || !isReminderPostpone(body.postpone)) {
+      return Response.json({ error: "A valid reminder update is required." }, { status: 400 });
+    }
+    const reminder = await postponeReminder(auth.user.id, id, postponedDueAt(body.postpone));
+    if (!reminder) {
+      return Response.json({ error: "Only an open reminder can be postponed." }, { status: 404 });
+    }
+    return Response.json({ reminder });
+  }
 
   if (body.delivery !== undefined) {
     if (!id || !isReminderDelivery(body.delivery)) {

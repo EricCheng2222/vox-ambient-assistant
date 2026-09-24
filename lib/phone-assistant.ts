@@ -140,7 +140,7 @@ export async function handlePhoneAssistantPrompt(ownerId: string, prompt: string
     });
   }
   if (decision.action === "list_reminders") {
-    const reminders = (await listReminders(ownerId, 8)).filter(
+    const reminders = (await listReminders(ownerId, 40)).filter(
       (reminder) => reminder.status === "pending" && Date.parse(reminder.dueAt) > Date.now(),
     );
     if (!reminders.length) return finish({ answer: "你目前沒有尚未完成的提醒。", end: false });

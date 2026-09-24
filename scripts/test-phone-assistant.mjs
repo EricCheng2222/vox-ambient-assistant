@@ -129,7 +129,35 @@ assert.match(styles, /\.message-phone/u);
 assert.match(styles, /\.message-phone-badge/u);
 
 // Reminder phone calls: spoken script, Twilio language, and scheduler wiring.
-const { isReminderDelivery, reminderCallScript } = await import("../lib/reminder.ts");
+const {
+  isReminderDelivery,
+  isReminderOverdue,
+  isReminderPostpone,
+  isReminderVisible,
+  postponedDueAt,
+  reminderCallScript,
+} = await import("../lib/reminder.ts");
+// Reminder list lifecycle: finished reminders leave once due; open ones stay.
+const clock = Date.parse("2026-09-25T10:00:00.000Z");
+const past = "2026-09-25T09:00:00.000Z";
+const future = "2026-09-25T11:00:00.000Z";
+assert.equal(isReminderVisible({ status: "pending", dueAt: past }, clock), true);
+assert.equal(isReminderVisible({ status: "completed", dueAt: past }, clock), false);
+assert.equal(isReminderVisible({ status: "dismissed", dueAt: past }, clock), false);
+assert.equal(isReminderVisible({ status: "completed", dueAt: future }, clock), true);
+assert.equal(isReminderOverdue({ status: "pending", dueAt: past }, clock), true);
+assert.equal(isReminderOverdue({ status: "pending", dueAt: future }, clock), false);
+assert.equal(isReminderPostpone("1h"), true);
+assert.equal(isReminderPostpone("2h"), false);
+assert.equal(postponedDueAt("10m", new Date(clock)), "2026-09-25T10:10:00.000Z");
+assert.equal(postponedDueAt("1h", new Date(clock)), "2026-09-25T11:00:00.000Z");
+// 10:00 UTC is 18:00 in Taipei; tomorrow 09:00 Taipei is 01:00 UTC on the 26th.
+assert.equal(postponedDueAt("tomorrow", new Date(clock)), "2026-09-26T01:00:00.000Z");
+// 17:00 UTC is already 01:00 on the 26th in Taipei, so "tomorrow" is the 27th.
+assert.equal(
+  postponedDueAt("tomorrow", new Date("2026-09-25T17:00:00.000Z")),
+  "2026-09-27T01:00:00.000Z",
+);
 assert.equal(isReminderDelivery("call"), true);
 assert.equal(isReminderDelivery("sms"), false);
 assert.deepEqual(reminderCallScript({ title: "打電話給牙醫", notes: null }), {

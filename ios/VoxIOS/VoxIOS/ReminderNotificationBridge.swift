@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import UserNotifications
 @preconcurrency import WebKit
 
@@ -10,6 +11,52 @@ final class ReminderNotificationBridge: NSObject, WKScriptMessageHandlerWithRepl
     private static let identifierPrefix = "vox-reminder-"
     /// iOS keeps at most 64 pending local notifications per app.
     private static let maximumScheduled = 60
+    static let permissionEvent = "voxnativealertpermission"
+
+    weak var webView: WKWebView?
+    private var activeObserver: NSObjectProtocol?
+
+    override init() {
+        super.init()
+        // Tell the page the current permission whenever the app returns to the
+        // foreground, since the user may have changed it in Settings.
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.publishPermission()
+        }
+    }
+
+    deinit {
+        if let activeObserver { NotificationCenter.default.removeObserver(activeObserver) }
+    }
+
+    static func currentPermission(_ completion: @escaping (String) -> Void) {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let permission: String
+            switch settings.authorizationStatus {
+            case .authorized, .ephemeral: permission = "granted"
+            // Provisional delivery is silent (Notification Center only), so the
+            // page still offers to request full banner-and-sound alerts.
+            case .provisional: permission = "provisional"
+            case .denied: permission = "denied"
+            default: permission = "prompt"
+            }
+            DispatchQueue.main.async { completion(permission) }
+        }
+    }
+
+    private func publishPermission() {
+        Self.currentPermission { [weak self] permission in
+            guard let webView = self?.webView,
+                  webView.url?.host == AppConfiguration.trustedHost else { return }
+            webView.evaluateJavaScript(
+                "window.dispatchEvent(new CustomEvent(\(Self.jsLiteral(Self.permissionEvent)), { detail: \(Self.jsLiteral(permission)) }))"
+            )
+        }
+    }
 
     static func userScript() -> WKUserScript {
         let host = jsLiteral(AppConfiguration.trustedHost)
@@ -48,18 +95,12 @@ final class ReminderNotificationBridge: NSObject, WKScriptMessageHandlerWithRepl
 
         switch type {
         case "getPermission":
-            UNUserNotificationCenter.current().getNotificationSettings { settings in
-                let permission: String
-                switch settings.authorizationStatus {
-                case .authorized, .provisional, .ephemeral: permission = "granted"
-                case .denied: permission = "denied"
-                default: permission = "prompt"
-                }
-                DispatchQueue.main.async { replyHandler(permission, nil) }
-            }
+            Self.currentPermission { replyHandler($0, nil) }
         case "requestPermission":
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-                DispatchQueue.main.async { replyHandler(granted ? "granted" : "denied", nil) }
+            // Reply with the resulting state rather than the prompt's yes/no, so
+            // quiet (provisional) delivery is reported accurately.
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
+                Self.currentPermission { replyHandler($0, nil) }
             }
         case "sync":
             let reminders = (body["reminders"] as? [[String: Any]] ?? []).compactMap(ScheduledReminder.init)

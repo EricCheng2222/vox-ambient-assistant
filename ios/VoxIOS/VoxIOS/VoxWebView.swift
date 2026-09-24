@@ -46,6 +46,7 @@ struct VoxWebView: UIViewRepresentable {
         webView.scrollView.refreshControl = refreshControl
         context.coordinator.webView = webView
         context.coordinator.pairingBridge.webView = webView
+        context.coordinator.reminderBridge.webView = webView
         context.coordinator.observeProgress(of: webView)
 
         #if DEBUG
