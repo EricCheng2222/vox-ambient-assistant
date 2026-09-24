@@ -142,9 +142,11 @@ import {
 import type { ConversationMessage } from "@/lib/conversation";
 import {
   parseVisualTheme,
+  themeVoices,
   visualThemeOptions,
   type VisualTheme,
 } from "@/lib/visual-theme";
+import { playHudCue, type HudCue } from "@/lib/hud-sounds";
 import {
   fallbackVisionNeed,
   visualTurnInstruction,
@@ -506,6 +508,19 @@ const statusCopy: Record<ConnectionState, string> = {
   error: "Connection needs attention",
 };
 
+const holoStatusCopy: Record<ConnectionState, string> = {
+  idle: "Standing by",
+  connecting: "Initializing voice systems…",
+  listening: "Online — listening",
+  thinking: "Processing",
+  searching: "Accessing the live web",
+  scheduling: "Scheduling your reminder",
+  creating: "Assembling your file",
+  working: "Local Codex engaged",
+  speaking: "Speaking — interrupt anytime",
+  error: "System fault — attention required",
+};
+
 const initiativeTiming: Record<
   Initiative,
   { minimumQuietMs: number; recheckMs: number }
@@ -617,6 +632,160 @@ function isLikelySelfEcho(text: string, assistantText: string) {
     candidate.length >= 4 &&
     reference.length >= 4 &&
     (reference.includes(candidate) || candidate.includes(reference))
+  );
+}
+
+const REACTOR_TICKS = Array.from({ length: 120 }, (_, index) => index);
+const REACTOR_SPOKES = Array.from({ length: 24 }, (_, index) => index);
+
+function reactorPoint(radius: number, degrees: number) {
+  const radians = ((degrees - 90) * Math.PI) / 180;
+  return {
+    x: +(200 + radius * Math.cos(radians)).toFixed(2),
+    y: +(200 + radius * Math.sin(radians)).toFixed(2),
+  };
+}
+
+function analyserLevel(analyser: AnalyserNode | null, samples: Uint8Array<ArrayBuffer>) {
+  if (!analyser || analyser.fftSize !== samples.length) return 0;
+  analyser.getByteTimeDomainData(samples);
+  let energy = 0;
+  for (const sample of samples) {
+    const centered = (sample - 128) / 128;
+    energy += centered * centered;
+  }
+  return Math.sqrt(energy / samples.length);
+}
+
+function HoloReactor({
+  live,
+  state,
+  outputAnalyserRef,
+  inputAnalyserRef,
+}: {
+  live: boolean;
+  state: ConnectionState;
+  outputAnalyserRef: { current: AnalyserNode | null };
+  inputAnalyserRef: { current: AnalyserNode | null };
+}) {
+  const rootRef = useRef<SVGSVGElement | null>(null);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    if (!live) {
+      root.style.setProperty("--holo-level", "0");
+      return;
+    }
+
+    const samples = new Uint8Array(512);
+    let level = 0;
+    let animationFrame = 0;
+    const draw = () => {
+      const spoken = Math.min(
+        1,
+        Math.max(0, (analyserLevel(outputAnalyserRef.current, samples) - 0.01) / 0.16),
+      );
+      const heard = Math.min(
+        1,
+        Math.max(0, (analyserLevel(inputAnalyserRef.current, samples) - 0.018) / 0.2),
+      );
+      const target = Math.max(spoken, heard * 0.55);
+      level += (target - level) * (target > level ? 0.35 : 0.1);
+      root.style.setProperty("--holo-level", level.toFixed(3));
+      animationFrame = window.requestAnimationFrame(draw);
+    };
+
+    draw();
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      root.style.setProperty("--holo-level", "0");
+    };
+  }, [inputAnalyserRef, live, outputAnalyserRef]);
+
+  return (
+    <svg
+      ref={rootRef}
+      className="holo-reactor"
+      data-state={state}
+      viewBox="0 0 400 400"
+      aria-hidden="true"
+    >
+      <defs>
+        <radialGradient id="vox-holo-core-glow">
+          <stop offset="0" stopColor="#f4ffff" />
+          <stop offset="0.22" stopColor="#b5f6ff" />
+          <stop offset="0.55" stopColor="#35b7d8" stopOpacity="0.6" />
+          <stop offset="1" stopColor="#0b3a4d" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <g className="reactor-spin reactor-ticks">
+        {REACTOR_TICKS.map((index) => {
+          const major = index % 5 === 0;
+          const start = reactorPoint(major ? 184 : 188, index * 3);
+          const end = reactorPoint(194, index * 3);
+          return (
+            <line
+              key={index}
+              x1={start.x}
+              y1={start.y}
+              x2={end.x}
+              y2={end.y}
+              className={major ? "reactor-tick-major" : undefined}
+            />
+          );
+        })}
+      </g>
+      <circle className="reactor-hairline" cx="200" cy="200" r="177" />
+      <circle
+        className="reactor-spin reactor-segments"
+        cx="200"
+        cy="200"
+        r="166"
+        pathLength={360}
+      />
+      <circle
+        className="reactor-spin reactor-arcs"
+        cx="200"
+        cy="200"
+        r="151"
+        pathLength={360}
+      />
+      <circle
+        className="reactor-spin reactor-accent"
+        cx="200"
+        cy="200"
+        r="151"
+        pathLength={360}
+      />
+      <circle className="reactor-hairline" cx="200" cy="200" r="138" />
+      <circle
+        className="reactor-spin reactor-dots"
+        cx="200"
+        cy="200"
+        r="128"
+        pathLength={360}
+      />
+      <g className="reactor-spokes">
+        {REACTOR_SPOKES.map((index) => {
+          const start = reactorPoint(106, index * 15);
+          const end = reactorPoint(116, index * 15);
+          return (
+            <line key={index} x1={start.x} y1={start.y} x2={end.x} y2={end.y} />
+          );
+        })}
+      </g>
+      <circle
+        className="reactor-spin reactor-inner"
+        cx="200"
+        cy="200"
+        r="95"
+        pathLength={360}
+      />
+      <circle className="reactor-pulse" cx="200" cy="200" r="82" />
+      <circle className="reactor-core" cx="200" cy="200" r="64" fill="url(#vox-holo-core-glow)" />
+      <circle className="reactor-core-ring" cx="200" cy="200" r="40" />
+    </svg>
   );
 }
 
@@ -822,6 +991,7 @@ export default function Home() {
   const visionItemIdsRef = useRef(new Set<string>());
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const inputAnalyserRef = useRef<AnalyserNode | null>(null);
+  const outputAnalyserRef = useRef<AnalyserNode | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const assistantDraftRef = useRef("");
   const mandarinTranscriptionRef = useRef(false);
@@ -837,6 +1007,7 @@ export default function Home() {
   const proactiveCountRef = useRef(0);
   const memoriesRef = useRef<MemoryRecord[]>([]);
   const replyLengthRef = useRef<ReplyLength>(defaultUserPreferences.replyLength);
+  const themeRef = useRef<VisualTheme>(defaultUserPreferences.theme);
   const preferenceSavesRef = useRef(0);
   const preferenceRevisionRef = useRef(0);
   const sessionCarryoverRef = useRef(false);
@@ -1479,6 +1650,7 @@ export default function Home() {
     void audioContextRef.current?.close().catch(() => undefined);
     audioContextRef.current = null;
     inputAnalyserRef.current = null;
+    outputAnalyserRef.current = null;
     inputRmsRef.current = 0;
     assistantEchoFloorRef.current = 0;
     assistantSpeakingSinceRef.current = null;
@@ -1546,8 +1718,33 @@ export default function Home() {
 
   function chooseTheme(value: string) {
     const nextTheme = parseVisualTheme(value);
+    const previousTheme = themeRef.current;
+    themeRef.current = nextTheme;
     setTheme(nextTheme);
-    void savePreferences({ theme: nextTheme });
+    // The holographic theme brings its own signature voice. Leaving it restores
+    // the default voice only if the user had not picked a different one.
+    const nextVoice =
+      nextTheme === "holographic" || voice === themeVoices[previousTheme]
+        ? themeVoices[nextTheme]
+        : voice;
+    if (nextVoice !== voice && nextTheme !== previousTheme) {
+      setVoice(nextVoice);
+      void savePreferences({ theme: nextTheme, voice: nextVoice });
+      const label =
+        realtimeVoiceOptions.find((option) => option.id === nextVoice)?.label ?? nextVoice;
+      toast.info(`Voice set to ${label}`, {
+        description: connected || connectionState === "connecting"
+          ? "Start a new conversation to hear it. You can change the voice anytime."
+          : "You can change the voice anytime.",
+      });
+    } else {
+      void savePreferences({ theme: nextTheme });
+    }
+    refreshRealtimeContext();
+  }
+
+  function playThemeCue(cue: HudCue) {
+    if (themeRef.current === "holographic") playHudCue(cue);
   }
 
   function clearPairingLinkFromAddressBar() {
@@ -2203,6 +2400,7 @@ export default function Home() {
     setReplyLength(next.replyLength);
     setVoice(next.voice);
     setInitiative(next.initiative);
+    themeRef.current = next.theme;
     setTheme(next.theme);
     refreshRealtimeContext(next.replyLength);
   }
@@ -2313,7 +2511,7 @@ export default function Home() {
             truncation: realtimeTruncationConfig(),
             audio: { input: { transcription: transcriptionConfig(mandarinTranscriptionRef.current) } },
             instructions: [
-              buildVoiceInstructions(memoriesRef.current),
+              buildVoiceInstructions(memoriesRef.current, themeRef.current),
               replyLengthInstruction(nextReplyLength),
             ]
               .filter(Boolean)
@@ -2964,7 +3162,7 @@ export default function Home() {
       const ritual: ConversationRitual =
         decision.action === "morning_hello" ? "good_morning" : "none";
       const instructions = [
-        buildVoiceInstructions(memoriesRef.current),
+        buildVoiceInstructions(memoriesRef.current, themeRef.current),
         languageInstruction,
         proactiveInstruction[decision.action],
         memoryUseInstruction(memoryUse),
@@ -3637,7 +3835,7 @@ export default function Home() {
         sendTurnResponse(
           "realtime_answer",
           [
-            buildVoiceInstructions(memoriesRef.current),
+            buildVoiceInstructions(memoriesRef.current, themeRef.current),
             turnLanguageInstruction,
             replyLengthInstruction(replyLengthRef.current),
             adaptiveReplyLengthInstruction(
@@ -4114,7 +4312,7 @@ export default function Home() {
         tokenPayload = await createToken({
           voice,
           instructions: [
-            buildVoiceInstructions([]),
+            buildVoiceInstructions([], themeRef.current),
             replyLengthInstruction(replyLengthRef.current),
           ].join("\n\n"),
           mandarinTranscription: mandarinTranscriptionRef.current,
@@ -4123,7 +4321,7 @@ export default function Home() {
         const tokenResponse = await fetch("/api/realtime-token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ voice, replyLength: replyLengthRef.current, mandarinTranscription: mandarinTranscriptionRef.current }),
+          body: JSON.stringify({ voice, replyLength: replyLengthRef.current, mandarinTranscription: mandarinTranscriptionRef.current, theme: themeRef.current }),
         });
         tokenPayload = (await tokenResponse.json()) as RealtimeTokenPayload;
         if (!tokenResponse.ok) {
@@ -4160,6 +4358,20 @@ export default function Home() {
         if (audioRef.current) {
           audioRef.current.srcObject = event.streams[0];
           void audioRef.current.play().catch(() => undefined);
+        }
+        const audioContext = audioContextRef.current;
+        if (audioContext && event.streams[0]) {
+          try {
+            // Read-only tap on Vox's voice for the holographic reactor; playback
+            // still goes through the audio element.
+            const analyser = audioContext.createAnalyser();
+            analyser.fftSize = 512;
+            analyser.smoothingTimeConstant = 0.4;
+            audioContext.createMediaStreamSource(event.streams[0]).connect(analyser);
+            outputAnalyserRef.current = analyser;
+          } catch {
+            outputAnalyserRef.current = null;
+          }
         }
       };
       peer.onconnectionstatechange = () => {
@@ -4208,6 +4420,7 @@ export default function Home() {
           );
         }
         setConnectionState("listening");
+        playThemeCue("online");
         refreshRealtimeContext();
         seedConversationCarryover(channel);
       };
@@ -4247,6 +4460,7 @@ export default function Home() {
   }
 
   function disconnect(resetState = true) {
+    if (resetState && channelRef.current?.readyState === "open") playThemeCue("offline");
     displayAnswersRef.current.clear();
     responseDisplayKeysRef.current.clear();
     routeTurnRef.current += 1;
@@ -4306,6 +4520,7 @@ export default function Home() {
       ?.getAudioTracks()
       .forEach((track) => (track.enabled = !nextMuted));
     setMuted(nextMuted);
+    if (streamRef.current) playThemeCue(nextMuted ? "mute" : "unmute");
   }
 
   function sendText(event: FormEvent<HTMLFormElement>) {
@@ -5682,21 +5897,21 @@ export default function Home() {
             {theme === "holographic" ? (
               <>
                 <div className="holo-command-line">
-                  <span>VOICE / PRESENCE / MEMORY</span>
-                  <span>{connected ? "LINK ACTIVE" : "SYSTEM READY"}</span>
+                  <span>SYS.VOX // VOICE · VISION · MEMORY</span>
+                  <span>{connected ? "ALL SYSTEMS ONLINE" : "STANDING BY"}</span>
                 </div>
                 <div className="eyebrow">
                   <span className={connected ? "live-dot" : "idle-dot"} />
-                  Adaptive intelligence online
+                  {connected ? "Voice link established" : "Personal AI aide"}
                 </div>
                 <h1 className="holo-title font-display">
-                  Intelligence,
+                  At your
                   <br />
-                  <span>in the room.</span>
+                  <span>service.</span>
                 </h1>
                 <p className="holo-lede">
-                  A private voice link that listens, thinks, remembers, and knows
-                  when the moment needs an answer.
+                  Speak whenever you’re ready. Interruptions are welcome, silences
+                  are respected, and nothing is reported as done until it is.
                 </p>
               </>
             ) : (
@@ -5736,41 +5951,42 @@ export default function Home() {
                     : "Start voice conversation"
                 }
               >
-                <span className="orb-ring orb-ring-one" />
-                <span className="orb-ring orb-ring-two" />
-                <span className="holo-ring holo-ring-one" />
-                <span className="holo-ring holo-ring-two" />
-                <span className="orb-core">
-                  {theme === "holographic" ? (
-                    <span
-                      className={`holo-core-energy is-${connectionState}`}
-                      aria-hidden="true"
-                    />
-                  ) : connectionState === "creating" ? (
-                    <FileText size={34} />
-                  ) : connectionState === "working" ? (
-                    <Code2 size={34} />
-                  ) : connectionState === "searching" ? (
-                    <Globe2 size={34} />
-                  ) : muted ? (
-                    <MicOff size={34} />
-                  ) : (
-                    <Mic size={34} />
-                  )}
-                </span>
+                {theme === "holographic" ? (
+                  <HoloReactor
+                    live={connected}
+                    state={connected && muted ? "idle" : connectionState}
+                    outputAnalyserRef={outputAnalyserRef}
+                    inputAnalyserRef={inputAnalyserRef}
+                  />
+                ) : (
+                  <>
+                    <span className="orb-ring orb-ring-one" />
+                    <span className="orb-ring orb-ring-two" />
+                    <span className="orb-core">
+                      {connectionState === "creating" ? (
+                        <FileText size={34} />
+                      ) : connectionState === "working" ? (
+                        <Code2 size={34} />
+                      ) : connectionState === "searching" ? (
+                        <Globe2 size={34} />
+                      ) : muted ? (
+                        <MicOff size={34} />
+                      ) : (
+                        <Mic size={34} />
+                      )}
+                    </span>
+                  </>
+                )}
               </button>
               <div className="holo-telemetry holo-telemetry-right" aria-hidden="true">
                 <span>CORE STATE</span>
-                <strong>{statusCopy[connectionState].toUpperCase()}</strong>
-              </div>
-              <div className="holo-core-caption" aria-hidden="true">
-                VOX / COGNITIVE CORE / 01
+                <strong>{holoStatusCopy[connectionState].toUpperCase()}</strong>
               </div>
             </div>
 
             <div className="voice-status mt-7 text-center sm:mt-10" aria-live="polite">
               <p className="font-display text-xl font-medium tracking-tight sm:text-2xl">
-                {statusCopy[connectionState]}
+                {(theme === "holographic" ? holoStatusCopy : statusCopy)[connectionState]}
               </p>
               <p className="mt-2 min-h-5 text-sm text-white/42">
                 {errorMessage ||

@@ -3,6 +3,7 @@ import { transcriptionConfig } from "@/lib/transcription-language";
 import { listMemories } from "@/lib/memory-store";
 import { requireUser } from "@/lib/auth";
 import { parseRealtimeVoice } from "@/lib/realtime-voice";
+import { parseVisualTheme } from "@/lib/visual-theme";
 import { parseReplyLength, replyLengthInstruction } from "@/lib/reply-length";
 import { API_BUDGET_MESSAGE, isProviderBudgetError } from "@/lib/provider-error";
 import { realtimeTruncationConfig } from "@/lib/conversation-context";
@@ -25,9 +26,11 @@ export async function POST(request: Request) {
     voice?: unknown;
     replyLength?: unknown;
     mandarinTranscription?: unknown;
+    theme?: unknown;
   };
   const voice = parseRealtimeVoice(requestBody.voice);
   const replyLength = parseReplyLength(requestBody.replyLength);
+  const theme = parseVisualTheme(requestBody.theme);
 
   const remembered = await listMemories(auth.user.id, 24).catch((error) => {
     console.error("Starting Realtime without saved memory", error);
@@ -49,7 +52,7 @@ export async function POST(request: Request) {
           model: REALTIME_MODEL,
           output_modalities: ["audio"],
           truncation: realtimeTruncationConfig(),
-          instructions: `${buildVoiceInstructions(remembered)}\n\n${replyLengthInstruction(replyLength)}`,
+          instructions: `${buildVoiceInstructions(remembered, theme)}\n\n${replyLengthInstruction(replyLength)}`,
           audio: {
             input: {
               transcription: transcriptionConfig(requestBody.mandarinTranscription === true),
