@@ -24,7 +24,7 @@ assert.equal(parseVisualTheme("neon"), "holographic");
 assert.equal(parseVisualTheme("unknown"), "ambient");
 
 assert.equal(themeVoices.ambient, "marin");
-assert.equal(themeVoices.holographic, "ballad");
+assert.equal(themeVoices.holographic, "verse");
 assert.equal(themePersonaInstruction("ambient"), "");
 const persona = themePersonaInstruction("holographic");
 assert.match(persona, /British accent/u);
