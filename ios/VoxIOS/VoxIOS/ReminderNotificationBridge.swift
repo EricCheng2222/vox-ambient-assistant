@@ -21,6 +21,7 @@ final class ReminderNotificationBridge: NSObject, WKScriptMessageHandlerWithRepl
           Object.defineProperty(window, "voxNativeReminders", {
             value: Object.freeze({
               available: true,
+              getPermission: () => handler.postMessage({ type: "getPermission" }),
               requestPermission: () => handler.postMessage({ type: "requestPermission" }),
               sync: (reminders) => handler.postMessage({ type: "sync", reminders }),
             }),
@@ -46,6 +47,16 @@ final class ReminderNotificationBridge: NSObject, WKScriptMessageHandlerWithRepl
         }
 
         switch type {
+        case "getPermission":
+            UNUserNotificationCenter.current().getNotificationSettings { settings in
+                let permission: String
+                switch settings.authorizationStatus {
+                case .authorized, .provisional, .ephemeral: permission = "granted"
+                case .denied: permission = "denied"
+                default: permission = "prompt"
+                }
+                DispatchQueue.main.async { replyHandler(permission, nil) }
+            }
         case "requestPermission":
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
                 DispatchQueue.main.async { replyHandler(granted ? "granted" : "denied", nil) }

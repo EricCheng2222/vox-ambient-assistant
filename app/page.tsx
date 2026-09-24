@@ -413,6 +413,7 @@ declare global {
     };
     readonly voxNativeReminders?: {
       available: boolean;
+      getPermission?: () => Promise<"granted" | "denied" | "prompt">;
       requestPermission: () => Promise<"granted" | "denied">;
       sync: (
         reminders: Array<Pick<Reminder, "id" | "title" | "notes" | "dueAt">>,
@@ -966,6 +967,9 @@ export default function Home() {
       phoneAssistantStatus.callbackPhoneLabel,
   );
   const [nativeRemindersAvailable, setNativeRemindersAvailable] = useState(false);
+  const [alertPermission, setAlertPermission] = useState<
+    "unknown" | "granted" | "denied" | "prompt" | "unsupported"
+  >("unknown");
   const [phoneAssistantCallbackNumber, setPhoneAssistantCallbackNumber] = useState("");
   const [phoneAssistantPassphrase, setPhoneAssistantPassphrase] = useState("");
   const [phoneAssistantBusy, setPhoneAssistantBusy] = useState(false);
@@ -1183,7 +1187,33 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    queueMicrotask(() => setNativeRemindersAvailable(window.voxNativeReminders?.available === true));
+    // Re-read on return to the app: the permission can change in Settings.
+    const readAlertPermission = () => {
+      const nativeReminders = window.voxNativeReminders;
+      if (nativeReminders?.available) {
+        setNativeRemindersAvailable(true);
+        if (!nativeReminders.getPermission) {
+          setAlertPermission((current) => (current === "unknown" ? "prompt" : current));
+          return;
+        }
+        void nativeReminders
+          .getPermission()
+          .then(setAlertPermission)
+          .catch(() => setAlertPermission("prompt"));
+      } else if ("Notification" in window) {
+        setAlertPermission(
+          Notification.permission === "default" ? "prompt" : Notification.permission,
+        );
+      } else {
+        setAlertPermission("unsupported");
+      }
+    };
+    queueMicrotask(readAlertPermission);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") readAlertPermission();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
 
   useEffect(() => {
@@ -2990,7 +3020,16 @@ export default function Home() {
           candidate.id === reminder.id ? (payload.reminder as Reminder) : candidate,
         ),
       );
-      toast.success(status === "completed" ? "Reminder completed" : "Reminder updated");
+      if (status === "completed") {
+        toast.success("Reminder completed", {
+          action: {
+            label: "Undo",
+            onClick: () => void setReminderStatus(payload.reminder as Reminder, "pending"),
+          },
+        });
+      } else {
+        toast.success(status === "pending" ? "Reminder reopened" : "Reminder updated");
+      }
     } catch {
       toast.error("Could not update that reminder");
     }
@@ -3038,7 +3077,8 @@ export default function Home() {
   async function enableBrowserNotifications() {
     const nativeReminders = window.voxNativeReminders;
     if (nativeReminders?.available) {
-      const permission = await nativeReminders.requestPermission().catch(() => "denied");
+      const permission = await nativeReminders.requestPermission().catch(() => "denied" as const);
+      setAlertPermission(permission);
       if (permission === "granted") {
         toast.success("iPhone alerts enabled", {
           description: "Upcoming reminders will alert you even when Vox is closed.",
@@ -3056,6 +3096,7 @@ export default function Home() {
       return;
     }
     const permission = await Notification.requestPermission();
+    setAlertPermission(permission === "default" ? "prompt" : permission);
     if (permission === "granted") {
       toast.success("Browser notifications enabled");
     } else {
@@ -6452,15 +6493,28 @@ export default function Home() {
                         {phoneAssistantStatus?.configured &&
                           " Use the phone button on a reminder to have Vox call you when it is due."}
                       </p>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="mt-3 rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10"
-                        onClick={() => void enableBrowserNotifications()}
-                      >
-                        <Bell /> {nativeRemindersAvailable ? "Enable iPhone alerts" : "Enable browser alerts"}
-                      </Button>
+                      {alertPermission === "granted" ? (
+                        <p className="mt-3 flex items-center gap-1.5 text-xs font-medium text-[#f4ff74]/80">
+                          <CheckCircle2 className="size-3.5" aria-hidden="true" />
+                          {nativeRemindersAvailable ? "iPhone alerts are on" : "Browser alerts are on"}
+                        </p>
+                      ) : alertPermission === "denied" ? (
+                        <p className="mt-3 text-xs leading-5 text-[#ffaaa4]/80">
+                          {nativeRemindersAvailable
+                            ? "Alerts are turned off. Allow them in iPhone Settings → Notifications → Vox."
+                            : "Alerts are blocked. Allow notifications for this site in your browser settings."}
+                        </p>
+                      ) : alertPermission === "prompt" ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="mt-3 rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10"
+                          onClick={() => void enableBrowserNotifications()}
+                        >
+                          <Bell /> {nativeRemindersAvailable ? "Enable iPhone alerts" : "Enable browser alerts"}
+                        </Button>
+                      ) : null}
                       {phoneAssistantStatus?.configured && !reminderCallsAvailable && (
                         <p className="mt-3 text-xs leading-5 text-white/40">
                           Phone-call reminders need a callback number and “calls from
@@ -6572,15 +6626,28 @@ export default function Home() {
                                     <PhoneCall />
                                   </Button>
                                 )}
-                                {reminder.status === "pending" && (
+                                {reminder.status !== "dismissed" && (
                                   <Button
                                     type="button"
                                     size="icon-sm"
                                     variant="ghost"
-                                    className="rounded-full text-white/38 hover:bg-[#f4ff74]/10 hover:text-[#f4ff74]"
-                                    aria-label={`Complete ${reminder.title}`}
+                                    className={`rounded-full hover:bg-[#f4ff74]/10 hover:text-[#f4ff74] ${
+                                      reminder.status === "completed"
+                                        ? "text-[#f4ff74]/80"
+                                        : "text-white/38"
+                                    }`}
+                                    aria-pressed={reminder.status === "completed"}
+                                    aria-label={
+                                      reminder.status === "completed"
+                                        ? `Reopen ${reminder.title}`
+                                        : `Complete ${reminder.title}`
+                                    }
+                                    title={reminder.status === "completed" ? "Mark as not done" : "Mark as done"}
                                     onClick={() =>
-                                      void setReminderStatus(reminder, "completed")
+                                      void setReminderStatus(
+                                        reminder,
+                                        reminder.status === "completed" ? "pending" : "completed",
+                                      )
                                     }
                                   >
                                     <CheckCircle2 />
