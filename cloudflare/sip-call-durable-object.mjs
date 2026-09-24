@@ -191,7 +191,7 @@ const phoneTools = [
     type: "function",
     name: "run_on_mac",
     description:
-      "Run an actionable request on the caller's paired Mac, including Computer Use in any locally installed app that Vox is allowed to control. Use only while the execution route is Mac. Pass the caller's complete request, preserving app names, visible context, and constraints. The Mac resolves the target app and enforces its own local safety policy.",
+      "Run an actionable request on the caller's paired Mac, including Computer Use in any locally installed app that Vox is allowed to control. Use only while the execution route is Mac. Pass the caller's complete request, preserving app names, visible context, and constraints. The Mac resolves the target app and enforces its own local safety policy. Complex tasks can take several minutes (up to ten): before calling, tell the caller briefly that it may take a while and that they can keep talking; keep the conversation going normally while it runs, and report the result naturally when it arrives. Never claim the task finished before its result arrives.",
     parameters: {
       type: "object",
       properties: {
@@ -215,6 +215,10 @@ export class SipCallDurableObject {
     this.hangupAfterResponse = false;
     this.skipNextAssistantSync = false;
     this.pendingToolCalls = new Set();
+    this.responseActive = false;
+    this.callerSpeaking = false;
+    // A tool result that arrived while someone was talking; spoken at the next pause.
+    this.pendingToolReport = false;
     this.executionRoute = "cloud";
     this.phoneRelaySecret = null;
   }
@@ -392,13 +396,29 @@ export class SipCallDurableObject {
       return;
     }
 
+    if (event.type === "input_audio_buffer.speech_started") this.callerSpeaking = true;
+    if (event.type === "input_audio_buffer.speech_stopped") this.callerSpeaking = false;
+    if (event.type === "response.created") {
+      this.responseActive = true;
+      // This response already sees any tool result added before it started.
+      this.pendingToolReport = false;
+    }
+
     if (event.type === "response.function_call_arguments.done" && this.authenticated) {
       await this.executeTool(event);
       return;
     }
 
-    if (event.type === "response.done" && this.hangupAfterResponse) {
-      await this.hangup();
+    if (event.type === "response.done") {
+      this.responseActive = false;
+      if (this.hangupAfterResponse) {
+        await this.hangup();
+        return;
+      }
+      if (this.pendingToolReport && !this.callerSpeaking) {
+        this.pendingToolReport = false;
+        this.send({ type: "response.create" });
+      }
       return;
     }
 
@@ -535,17 +555,34 @@ export class SipCallDurableObject {
           arguments: args,
         });
       }
-      this.send({
-        type: "conversation.item.create",
-        item: {
-          type: "function_call_output",
-          call_id: callId,
-          output: String(result?.output ?? '{"ok":false,"error":"Tool unavailable."}'),
-        },
+      this.reportToolResult(callId, result);
+    } catch (error) {
+      console.error("SIP tool failed", event.name, error instanceof Error ? error.message : error);
+      // Never leave the model waiting on a tool that failed.
+      this.reportToolResult(callId, {
+        output: JSON.stringify({ ok: false, error: "That request could not be completed right now." }),
       });
-      this.send({ type: "response.create" });
     } finally {
       this.pendingToolCalls.delete(callId);
+    }
+  }
+
+  reportToolResult(callId, result) {
+    if (this.closed) return;
+    this.send({
+      type: "conversation.item.create",
+      item: {
+        type: "function_call_output",
+        call_id: callId,
+        output: String(result?.output ?? '{"ok":false,"error":"Tool unavailable."}'),
+      },
+    });
+    // Report at a natural pause: not over the caller, and not on top of a reply
+    // already in progress (a long Mac task can finish mid-conversation).
+    if (this.responseActive || this.callerSpeaking) {
+      this.pendingToolReport = true;
+    } else {
+      this.send({ type: "response.create" });
     }
   }
 
@@ -598,9 +635,17 @@ export class SipCallDurableObject {
       };
     }
 
-    const deadline = Date.now() + 185_000;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 750));
+    // The command must be picked up within its queue window; once the Mac starts
+    // it, wait for long Computer Use tasks (up to ten minutes) and keep the call
+    // from idling out while the caller waits or talks about something else.
+    let deadline = Date.now() + 4 * 60_000;
+    let lastIdleReset = Date.now();
+    while (Date.now() < deadline && !this.closed) {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      if (Date.now() - lastIdleReset > 60_000) {
+        lastIdleReset = Date.now();
+        await this.resetIdleAlarm();
+      }
       const status = await this.internalRequest({
         action: "mac_status",
         callId: this.callId,
@@ -622,10 +667,13 @@ export class SipCallDurableObject {
         );
         return { output: JSON.stringify(result) };
       }
+      if (command?.status === "running" && command.expiresAt) {
+        deadline = Math.max(deadline, Date.parse(command.expiresAt));
+      }
       if (command?.expiresAt && Date.parse(command.expiresAt) <= Date.now()) break;
     }
     return {
-      output: JSON.stringify({ ok: false, error: "The Mac did not answer in time." }),
+      output: JSON.stringify({ ok: false, error: "The Mac did not finish in time." }),
     };
   }
 

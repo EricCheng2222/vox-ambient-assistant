@@ -1087,6 +1087,26 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
   background: transparent;
   font-size: 0.9rem;
 }
+.mac-task-status {
+  display: flex;
+  max-width: min(100%, 26rem);
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 999px;
+  color: rgb(255 255 255 / 62%);
+  background: rgb(255 255 255 / 4%);
+  font-size: 0.75rem;
+}
+.vox-shell[data-vox-theme="holographic"] .mac-task-status {
+  border-color: rgb(120 235 255 / 22%);
+  color: rgb(192 240 248 / 70%);
+  background: rgb(5 30 44 / 55%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+}
 .composer input::placeholder { color: rgb(255 255 255 / 29%); }
 .composer input:disabled { cursor: not-allowed; }
 

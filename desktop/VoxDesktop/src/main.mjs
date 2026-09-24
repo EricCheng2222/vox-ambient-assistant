@@ -827,6 +827,37 @@ async function performRemoteCommand(command) {
   throw new Error("That remote command type is not supported.");
 }
 
+async function postRemoteResult(pairing, commandSecret, commandId, result) {
+  const encrypted = encryptRemoteResult(commandSecret, pairing.deviceId, commandId, result);
+  await cloudJson("/api/device-commands", {
+    method: "PATCH",
+    body: JSON.stringify({
+      id: commandId,
+      deviceId: pairing.deviceId,
+      resultCiphertext: encrypted.ciphertext,
+      resultIv: encrypted.iv,
+    }),
+  });
+}
+
+async function runStartedRemoteCommand(pairing, commandSecret, commandId, command) {
+  let result;
+  try {
+    result = { ok: true, answer: await performRemoteCommand(command) };
+  } catch (error) {
+    result = { ok: false, error: error instanceof Error ? error.message : "The remote command failed." };
+  }
+  // The phone may be suspended; the relay keeps the encrypted result for it.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await postRemoteResult(pairing, commandSecret, commandId, result);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 2_000 * (attempt + 1)));
+    }
+  }
+}
+
 async function processRemoteRelay() {
   if (remoteRelayInFlight || activeConnectionMode !== "cloud") return;
   remoteRelayInFlight = true;
@@ -874,10 +905,9 @@ async function processRemoteRelay() {
         ? settings.processedRemoteCommandIds.filter((id) => typeof id === "string")
         : [];
       if (processed.includes(envelope.id)) continue;
-      let result;
       let commandSecret = pairing.secret;
+      let payload;
       try {
-        let payload;
         try {
           payload = decryptRemoteCommand(pairing.secret, pairing.deviceId, envelope);
         } catch (pairingError) {
@@ -896,20 +926,22 @@ async function processRemoteRelay() {
         if (!remoteControlArmStatus().armed) {
           throw new Error("Remote control is paused on this Mac. Open Vox Desktop and allow it until Vox quits.");
         }
-        result = { ok: true, answer: await performRemoteCommand(payload.command) };
+        // Acknowledge before running: this refuses a command that expired in
+        // the queue and extends a started one so a long task can finish.
+        await cloudJson("/api/device-commands", {
+          method: "PATCH",
+          body: JSON.stringify({ action: "start", id: envelope.id, deviceId: pairing.deviceId }),
+        });
       } catch (error) {
-        result = { ok: false, error: error instanceof Error ? error.message : "The remote command failed." };
+        await postRemoteResult(pairing, commandSecret, envelope.id, {
+          ok: false,
+          error: error instanceof Error ? error.message : "The remote command failed.",
+        }).catch(() => undefined);
+        continue;
       }
-      const encrypted = encryptRemoteResult(commandSecret, pairing.deviceId, envelope.id, result);
-      await cloudJson("/api/device-commands", {
-        method: "PATCH",
-        body: JSON.stringify({
-          id: envelope.id,
-          deviceId: pairing.deviceId,
-          resultCiphertext: encrypted.ciphertext,
-          resultIv: encrypted.iv,
-        }),
-      });
+      // Run in the background so heartbeats and new commands keep flowing
+      // while a long Computer Use task works.
+      void runStartedRemoteCommand(pairing, commandSecret, envelope.id, payload.command);
     }
   } catch {
     // Pairing and relay failures stay silent; the UI reports connectivity on demand.

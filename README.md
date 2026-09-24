@@ -128,6 +128,17 @@ The interface labels the scopes explicitly:
 - **Device · This Mac** — API keys, Codex workspace, installed-app access, Computer Use, macOS permissions, and smart-home credentials. Account data can never enable or widen these local capabilities.
 - **Route · Web only / Paired Mac** — a phone-web choice that determines whether local-capability requests remain unavailable or are sent through its encrypted pairing. Pairing alone never changes this choice.
 
+## Long tasks on the Mac
+
+Computer Use and local Codex tasks can take a while; Computer Use may run for up to ten minutes. The conversation does not wait for them. Keep talking about anything else, and Vox reports the result at the next natural pause, without talking over you or over its own reply. If a task runs for more than about 25 seconds, Vox mentions once that it is still working. Ask “is it done yet?” at any time. A status line under the voice controls shows what the Mac is working on.
+
+How the result reaches you depends on where you asked:
+
+- **Vox Desktop or a browser with a live voice session** — Vox says it at the next pause.
+- **No live voice session** — the result is added to the conversation with an in-app notice, plus a system notification when Vox is not the front window or tab.
+- **Phone web app or iOS app** — the request survives the app being suspended or reloaded. When you return to Vox, it collects the result and reports it the same way. Results are kept for six hours.
+- **Telephone call** — Vox keeps the call open while the Mac works and tells you the result at a pause in the conversation.
+
 ## Main features
 
 - Interruptible OpenAI Realtime speech-to-speech conversation

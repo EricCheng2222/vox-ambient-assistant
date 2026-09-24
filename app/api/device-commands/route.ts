@@ -4,6 +4,7 @@ import {
   enqueueRemoteCommand,
   getRemoteCommand,
   listPendingRemoteCommands,
+  startRemoteCommand,
 } from "@/lib/remote-device-store";
 
 const noStore = { "Cache-Control": "no-store" };
@@ -54,6 +55,16 @@ export async function PATCH(request: Request) {
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   const id = typeof body?.id === "string" ? body.id : "";
   const deviceId = typeof body?.deviceId === "string" ? body.deviceId : "";
+  if (body?.action === "start") {
+    // The Mac acknowledges pickup before running; only a command still inside
+    // its pickup window may start, and starting extends it for a long task.
+    if (!idPattern.test(id) || !idPattern.test(deviceId)) {
+      return Response.json({ error: "Invalid command." }, { status: 400, headers: noStore });
+    }
+    const started = await startRemoteCommand(auth.user.id, { id, deviceId });
+    if (!started) return Response.json({ error: "Command is unavailable." }, { status: 409, headers: noStore });
+    return Response.json({ started: true }, { headers: noStore });
+  }
   const resultCiphertext = typeof body?.resultCiphertext === "string" ? body.resultCiphertext : "";
   const resultIv = typeof body?.resultIv === "string" ? body.resultIv : "";
   if (!idPattern.test(id) || !idPattern.test(deviceId) || !encodedPattern.test(resultCiphertext) || !encodedPattern.test(resultIv) || resultCiphertext.length > 32_000 || resultIv.length > 128) {

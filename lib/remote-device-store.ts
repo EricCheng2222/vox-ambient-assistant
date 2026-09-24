@@ -1,9 +1,14 @@
-import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { remoteCommands, remoteDevices } from "@/db/schema";
 
 const MAX_PENDING_COMMANDS = 12;
+// A command must be picked up within its original two-minute window. Once the
+// Mac starts it, it may run long (Computer Use allows ten minutes), and its
+// result stays readable so a suspended phone can collect it later.
+const RUNNING_COMMAND_TTL_MS = 12 * 60_000;
+const COMPLETED_RESULT_TTL_MS = 6 * 60 * 60_000;
 
 export async function createRemoteDevice(
   ownerId: string,
@@ -208,6 +213,29 @@ export async function getRemoteCommand(ownerId: string, id: string) {
   return command ?? null;
 }
 
+export async function startRemoteCommand(
+  ownerId: string,
+  input: { id: string; deviceId: string },
+) {
+  const now = Date.now();
+  const result = await getDb()
+    .update(remoteCommands)
+    .set({
+      status: "running",
+      expiresAt: new Date(now + RUNNING_COMMAND_TTL_MS).toISOString(),
+    })
+    .where(
+      and(
+        eq(remoteCommands.ownerId, ownerId),
+        eq(remoteCommands.deviceId, input.deviceId),
+        eq(remoteCommands.id, input.id),
+        eq(remoteCommands.status, "pending"),
+        gt(remoteCommands.expiresAt, new Date(now).toISOString()),
+      ),
+    );
+  return Number(result.meta.changes ?? 0) > 0;
+}
+
 export async function completeRemoteCommand(
   ownerId: string,
   input: { id: string; deviceId: string; resultCiphertext: string; resultIv: string },
@@ -219,13 +247,14 @@ export async function completeRemoteCommand(
       resultCiphertext: input.resultCiphertext,
       resultIv: input.resultIv,
       completedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + COMPLETED_RESULT_TTL_MS).toISOString(),
     })
     .where(
       and(
         eq(remoteCommands.ownerId, ownerId),
         eq(remoteCommands.deviceId, input.deviceId),
         eq(remoteCommands.id, input.id),
-        eq(remoteCommands.status, "pending"),
+        inArray(remoteCommands.status, ["pending", "running"]),
       ),
     );
   return Number(result.meta.changes ?? 0) > 0;

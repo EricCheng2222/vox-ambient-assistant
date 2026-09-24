@@ -1,6 +1,10 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
+// Complex multi-step tasks may take several minutes; each individual tool call
+// still has its own stall timeout below.
+export const COMPUTER_USE_TIME_LIMIT_MS = 10 * 60_000;
+
 export function computerUseFailure(item) {
   const details = JSON.stringify({ error: item.error, result: item.result });
   if (/declined TCCs|SCStreamErrorDomain[^\n]*-3801/i.test(details)) {
@@ -89,7 +93,10 @@ export async function runComputerUseSession({ executable, cwd, prompt, bundleId,
       completionCheckRunning = false;
     }
   };
-  const timeout = setTimeout(() => { fail(new Error("Computer Use task timed out.")); child.kill(); }, 180_000);
+  const timeout = setTimeout(() => {
+    fail(new Error("Computer Use task stopped after reaching its 10-minute limit."));
+    child.kill();
+  }, COMPUTER_USE_TIME_LIMIT_MS);
   child.stderr.resume();
   child.on("error", fail);
   child.stdin.on("error", fail);
