@@ -47,6 +47,8 @@ config.durable_objects = {
     },
   ],
 };
+// Every minute: place phone calls for reminders that asked to be delivered by call.
+config.triggers = { crons: ["* * * * *"] };
 config.migrations = [
   {
     tag: "sip-calls-v1",

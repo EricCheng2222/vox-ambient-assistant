@@ -52,15 +52,26 @@ export function smartHomeFailureMessage(
   const message = rawMessage
     .replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/iu, "")
     .trim();
+  // Paired-Mac relay failures come first: they are not Dyson problems, and
+  // "did not answer" also appears in the relay's expiry message.
+  const macPaused = /remote control is paused/iu.test(message);
+  const macUnreachable = /paired Mac is offline|Mac did not (?:accept|answer)|command expired/iu.test(message);
+  const noDevice = /configured smart-home device/iu.test(message);
   const credentialFailure = /rejected its local device credential|not authorized|bad (?:user|password)/iu.test(message);
   const connectionFailure = /could not connect|did not answer|connack|ECONNRESET|network/iu.test(message);
 
   if (language === "taiwan_mandarin") {
+    if (macPaused) return "Mac 上的遠端控制目前暫停中。請在 Vox Desktop 的「Phone control」選擇允許直到 Vox 結束，再試一次。";
+    if (macUnreachable) return "目前連不上配對的 Mac。請確認 Vox Desktop 正在以 Vox Cloud 模式執行，稍後再試一次。";
+    if (noDevice) return "Mac 上還沒有可用的智慧家庭裝置。請先在 Vox Desktop 的「Home」連結 Dyson。";
     if (credentialFailure) return "Dyson 沒有接受目前儲存的本機憑證，請重新連結裝置。";
     if (connectionFailure) return "目前連不上 Dyson。請確認它已開機並連上同一個 Wi-Fi；如果剛設定完成，可以重新開機後再試一次。";
     return "目前無法控制 Dyson，請稍後再試一次。";
   }
 
+  if (macPaused) return "Remote control is paused on the Mac. In Vox Desktop, open Phone control and allow it until Vox quits, then try again.";
+  if (macUnreachable) return "I can’t reach the paired Mac right now. Make sure Vox Desktop is running in Vox Cloud mode, then try again.";
+  if (noDevice) return "The Mac has no smart-home device set up yet. Connect the Dyson from Home in Vox Desktop first.";
   if (credentialFailure) return "Dyson did not accept the saved local credential. Please reconnect the device.";
   if (connectionFailure) return "I can’t reach Dyson right now. Make sure it is powered on and connected to the same Wi-Fi; if it was just configured, restart it and try again.";
   return "I can’t control Dyson right now. Please try again shortly.";

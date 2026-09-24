@@ -70,8 +70,7 @@ final class PairingBridge: NSObject, WKScriptMessageHandler {
             } else {
                 return
             }
-            userContentController.removeAllUserScripts()
-            userContentController.addUserScript(PairingBridge.userScript(savedPairing: PairingKeychain.load()))
+            VoxWebView.installUserScripts(on: userContentController)
         case "scanPairing":
             presentScanner()
         default:

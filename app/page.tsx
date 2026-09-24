@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { speechText } from "@/lib/speech-text";
-import { mandarinFromHistory, shouldLockMandarin, transcriptionConfig } from "@/lib/transcription-language";
+import { isTranscriptionPromptEcho, mandarinFromHistory, shouldLockMandarin, transcriptionConfig } from "@/lib/transcription-language";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -411,6 +411,13 @@ declare global {
       canScanPairing: boolean;
       scanPairing: () => void;
     };
+    readonly voxNativeReminders?: {
+      available: boolean;
+      requestPermission: () => Promise<"granted" | "denied">;
+      sync: (
+        reminders: Array<Pick<Reminder, "id" | "title" | "notes" | "dueAt">>,
+      ) => Promise<number>;
+    };
     readonly voxLocalCodex?: {
       available: boolean;
       getConnectionStatus?: () => Promise<{
@@ -590,6 +597,32 @@ function formatMemoryDate(value: string) {
     month: "short",
     day: "numeric",
   }).format(date);
+}
+
+// Upcoming reminders handed to the iOS app, which schedules them as local
+// notifications so they alert even while Vox is closed.
+function nativeReminderPayload(reminders: Reminder[]) {
+  const now = Date.now();
+  return reminders
+    .filter((reminder) => reminder.status === "pending" && Date.parse(reminder.dueAt) > now)
+    .map(({ id, title, notes, dueAt }) => ({ id, title, notes, dueAt }));
+}
+
+function reminderCallLabel(reminder: Reminder, phoneLabel: string | null) {
+  switch (reminder.callStatus) {
+    case "calling":
+      return "Calling you now…";
+    case "called":
+      return `Called${reminder.calledAt ? ` at ${formatReminderTime(reminder.calledAt)}` : ""}`;
+    case "failed":
+      return "Vox couldn’t place the call";
+    case "unavailable":
+      return "Call not placed — calls from Vox were off";
+    case "missed":
+      return "Call not placed — it was already too late";
+    default:
+      return phoneLabel ? `Vox will call ${phoneLabel}` : "Vox will call you";
+  }
 }
 
 function FileGlyph({ file }: { file: AgentFile }) {
@@ -927,6 +960,12 @@ export default function Home() {
   const [inviteError, setInviteError] = useState("");
   const [phoneAssistantOpen, setPhoneAssistantOpen] = useState(false);
   const [phoneAssistantStatus, setPhoneAssistantStatus] = useState<PhoneAssistantStatus | null>(null);
+  const reminderCallsAvailable = Boolean(
+    phoneAssistantStatus?.enabled &&
+      phoneAssistantStatus.allowOutbound &&
+      phoneAssistantStatus.callbackPhoneLabel,
+  );
+  const [nativeRemindersAvailable, setNativeRemindersAvailable] = useState(false);
   const [phoneAssistantCallbackNumber, setPhoneAssistantCallbackNumber] = useState("");
   const [phoneAssistantPassphrase, setPhoneAssistantPassphrase] = useState("");
   const [phoneAssistantBusy, setPhoneAssistantBusy] = useState(false);
@@ -1142,6 +1181,18 @@ export default function Home() {
       queueMicrotask(() => setPhonePairingCandidate({ deviceId, secret }));
     }
   }, []);
+
+  useEffect(() => {
+    queueMicrotask(() => setNativeRemindersAvailable(window.voxNativeReminders?.available === true));
+  }, []);
+
+  useEffect(() => {
+    const nativeReminders = window.voxNativeReminders;
+    // Skip while loading or after a failed load so an empty list never clears
+    // notifications that are still scheduled.
+    if (!nativeReminders?.available || remindersLoading || remindersError) return;
+    void nativeReminders.sync(nativeReminderPayload(reminders)).catch(() => undefined);
+  }, [reminders, remindersError, remindersLoading]);
 
   useEffect(() => {
     document.documentElement.dataset.voxTheme = theme;
@@ -2904,19 +2955,24 @@ export default function Home() {
     });
     const payload = (await response.json()) as {
       reminder?: Reminder;
+      deliveryNotice?: string;
       error?: string;
     };
     if (!response.ok || !payload.reminder) {
       throw new Error(payload.error ?? "Vox could not schedule that reminder.");
+    }
+    if (payload.deliveryNotice) {
+      toast.warning("Saved without a phone call", { description: payload.deliveryNotice });
     }
     setReminders((current) => [
       payload.reminder as Reminder,
       ...current.filter((reminder) => reminder.id !== payload.reminder?.id),
     ]);
     setRemindersOpen(true);
-    toast.success("Reminder scheduled", {
-      description: formatReminderTime(payload.reminder.dueAt),
-    });
+    toast.success(
+      payload.reminder.delivery === "call" ? "Reminder scheduled · Vox will call you" : "Reminder scheduled",
+      { description: formatReminderTime(payload.reminder.dueAt) },
+    );
     return payload.reminder;
   }
 
@@ -2940,6 +2996,28 @@ export default function Home() {
     }
   }
 
+  async function setReminderDelivery(reminder: Reminder, delivery: Reminder["delivery"]) {
+    try {
+      const response = await fetch("/api/reminders", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: reminder.id, delivery }),
+      });
+      const payload = (await response.json()) as { reminder?: Reminder; error?: string };
+      if (!response.ok || !payload.reminder) throw new Error(payload.error ?? "Update failed.");
+      setReminders((current) =>
+        current.map((candidate) =>
+          candidate.id === reminder.id ? (payload.reminder as Reminder) : candidate,
+        ),
+      );
+      toast.success(delivery === "call" ? "Vox will call you for this reminder" : "Phone call removed");
+    } catch (error) {
+      toast.error("Could not change how this reminder is delivered", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  }
+
   async function deleteScheduledReminder(reminder: Reminder) {
     try {
       const response = await fetch("/api/reminders", {
@@ -2958,6 +3036,21 @@ export default function Home() {
   }
 
   async function enableBrowserNotifications() {
+    const nativeReminders = window.voxNativeReminders;
+    if (nativeReminders?.available) {
+      const permission = await nativeReminders.requestPermission().catch(() => "denied");
+      if (permission === "granted") {
+        toast.success("iPhone alerts enabled", {
+          description: "Upcoming reminders will alert you even when Vox is closed.",
+        });
+        void nativeReminders.sync(nativeReminderPayload(reminders)).catch(() => undefined);
+      } else {
+        toast.error("iPhone alerts are off", {
+          description: "Allow notifications for Vox in the iPhone Settings app.",
+        });
+      }
+      return;
+    }
     if (!("Notification" in window)) {
       toast.error("This browser does not support notifications.");
       return;
@@ -4075,6 +4168,21 @@ export default function Home() {
       case "conversation.item.input_audio_transcription.completed": {
         const transcript = event.transcript ?? "";
         speechAwaitingTranscriptRef.current = false;
+        if (isTranscriptionPromptEcho(transcript)) {
+          // The transcriber returned its own instructions, not speech: drop the
+          // item so it never reaches the transcript, routing, or the model.
+          if (event.item_id && channelRef.current?.readyState === "open") {
+            channelRef.current.send(
+              JSON.stringify({ type: "conversation.item.delete", item_id: event.item_id }),
+            );
+            conversationItemsRef.current = conversationItemsRef.current.filter(
+              (item) => item.id !== event.item_id,
+            );
+          }
+          interruptedWorkStateRef.current = null;
+          setConnectionState(activeResponseIdRef.current ? "speaking" : "listening");
+          break;
+        }
         if (!claimInputTranscription(transcript, event.item_id)) {
           interruptedWorkStateRef.current = null;
           break;
@@ -6338,8 +6446,11 @@ export default function Home() {
                   <div className="flex-1 overflow-y-auto px-5 py-5">
                     <div className="mb-5 rounded-xl border border-[#f4ff74]/12 bg-[#f4ff74]/[0.05] p-3.5">
                       <p className="text-xs leading-5 text-white/56">
-                        Vox checks due reminders while this app is open. Enable
-                        browser alerts so they can appear outside this tab.
+                        {nativeRemindersAvailable
+                          ? "Vox schedules upcoming reminders as iPhone alerts, so they arrive even when the app is closed."
+                          : "Vox checks due reminders while this app is open. Enable browser alerts so they can appear outside this tab."}
+                        {phoneAssistantStatus?.configured &&
+                          " Use the phone button on a reminder to have Vox call you when it is due."}
                       </p>
                       <Button
                         type="button"
@@ -6348,8 +6459,14 @@ export default function Home() {
                         className="mt-3 rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10"
                         onClick={() => void enableBrowserNotifications()}
                       >
-                        <Bell /> Enable browser alerts
+                        <Bell /> {nativeRemindersAvailable ? "Enable iPhone alerts" : "Enable browser alerts"}
                       </Button>
+                      {phoneAssistantStatus?.configured && !reminderCallsAvailable && (
+                        <p className="mt-3 text-xs leading-5 text-white/40">
+                          Phone-call reminders need a callback number and “calls from
+                          Vox” turned on in Call Vox.
+                        </p>
+                      )}
                     </div>
 
                     {remindersLoading ? (
@@ -6406,6 +6523,12 @@ export default function Home() {
                                 <p className="mt-1.5 text-xs text-[#c8bcff]/70">
                                   {formatReminderTime(reminder.dueAt)}
                                 </p>
+                                {reminder.delivery === "call" && (
+                                  <p className="mt-1 flex items-center gap-1.5 text-xs text-[#f4ff74]/70">
+                                    <PhoneCall className="size-3" aria-hidden="true" />
+                                    {reminderCallLabel(reminder, phoneAssistantStatus?.callbackPhoneLabel ?? null)}
+                                  </p>
+                                )}
                                 {reminder.notes && (
                                   <p className="mt-2 text-xs leading-5 text-white/40">
                                     {reminder.notes}
@@ -6413,6 +6536,42 @@ export default function Home() {
                                 )}
                               </div>
                               <div className="flex shrink-0 items-center gap-1">
+                                {phoneAssistantStatus?.configured &&
+                                  reminder.status === "pending" &&
+                                  Date.parse(reminder.dueAt) > Date.now() && (
+                                  <Button
+                                    type="button"
+                                    size="icon-sm"
+                                    variant="ghost"
+                                    className={`rounded-full hover:bg-[#f4ff74]/10 hover:text-[#f4ff74] ${
+                                      reminder.delivery === "call"
+                                        ? "bg-[#f4ff74]/10 text-[#f4ff74]"
+                                        : "text-white/38"
+                                    }`}
+                                    aria-pressed={reminder.delivery === "call"}
+                                    aria-label={
+                                      reminder.delivery === "call"
+                                        ? `Stop calling for ${reminder.title}`
+                                        : `Call me for ${reminder.title}`
+                                    }
+                                    title={
+                                      reminder.delivery === "call"
+                                        ? "Vox will phone you when this is due"
+                                        : reminderCallsAvailable
+                                          ? "Have Vox phone you when this is due"
+                                          : "Turn on calls from Vox in Call Vox first"
+                                    }
+                                    disabled={reminder.delivery !== "call" && !reminderCallsAvailable}
+                                    onClick={() =>
+                                      void setReminderDelivery(
+                                        reminder,
+                                        reminder.delivery === "call" ? "app" : "call",
+                                      )
+                                    }
+                                  >
+                                    <PhoneCall />
+                                  </Button>
+                                )}
                                 {reminder.status === "pending" && (
                                   <Button
                                     type="button"

@@ -67,5 +67,24 @@ assert.equal(
   ),
   "Dyson did not accept the saved local credential. Please reconnect the device.",
 );
+assert.equal(
+  smartHomeFailureMessage(
+    "Remote control is paused on this Mac. Open Vox Desktop and allow it until Vox quits.",
+    "taiwan_mandarin",
+  ),
+  "Mac 上的遠端控制目前暫停中。請在 Vox Desktop 的「Phone control」選擇允許直到 Vox 結束，再試一次。",
+);
+assert.match(
+  smartHomeFailureMessage("The Mac did not answer before the command expired.", "english"),
+  /can’t reach the paired Mac/u,
+);
+assert.match(
+  smartHomeFailureMessage("The paired Mac is offline or not ready.", "taiwan_mandarin"),
+  /連不上配對的 Mac/u,
+);
+assert.match(
+  smartHomeFailureMessage("Choose a configured smart-home device on the Mac first.", "english"),
+  /no smart-home device/u,
+);
 
 console.log("Smart-home route checks passed.");

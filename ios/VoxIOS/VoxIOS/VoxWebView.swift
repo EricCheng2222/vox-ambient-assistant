@@ -17,8 +17,13 @@ struct VoxWebView: UIViewRepresentable {
         configuration.mediaTypesRequiringUserActionForPlayback = []
 
         let contentController = WKUserContentController()
-        contentController.addUserScript(PairingBridge.userScript(savedPairing: PairingKeychain.load()))
+        Self.installUserScripts(on: contentController)
         contentController.add(context.coordinator.pairingBridge, name: PairingBridge.handlerName)
+        contentController.addScriptMessageHandler(
+            context.coordinator.reminderBridge,
+            contentWorld: .page,
+            name: ReminderNotificationBridge.handlerName
+        )
         configuration.userContentController = contentController
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -53,6 +58,14 @@ struct VoxWebView: UIViewRepresentable {
         return webView
     }
 
+    /// Native bridges exposed to the trusted Vox page. Rebuilt whenever the
+    /// saved pairing changes, because that script embeds the pairing.
+    static func installUserScripts(on contentController: WKUserContentController) {
+        contentController.removeAllUserScripts()
+        contentController.addUserScript(PairingBridge.userScript(savedPairing: PairingKeychain.load()))
+        contentController.addUserScript(ReminderNotificationBridge.userScript())
+    }
+
     func updateUIView(_ webView: WKWebView, context: Context) {
         guard webView.url == nil else { return }
         webView.load(URLRequest(url: url, cachePolicy: .useProtocolCachePolicy))
@@ -61,6 +74,10 @@ struct VoxWebView: UIViewRepresentable {
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
         coordinator.stopObservingProgress()
         webView.configuration.userContentController.removeScriptMessageHandler(forName: PairingBridge.handlerName)
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: ReminderNotificationBridge.handlerName,
+            contentWorld: .page
+        )
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
@@ -69,6 +86,7 @@ struct VoxWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         weak var webView: WKWebView?
         let pairingBridge = PairingBridge()
+        let reminderBridge = ReminderNotificationBridge()
         private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
         private let loadingProgress: Binding<Double>

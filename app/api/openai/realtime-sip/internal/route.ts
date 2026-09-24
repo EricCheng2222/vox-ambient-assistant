@@ -4,6 +4,7 @@ import { getUserPreferences } from "@/lib/preference-store";
 import {
   authenticatedPhoneCallOwner,
   endPhoneCall,
+  getPhoneAssistantDestination,
   verifyPhoneCallPassphrase,
 } from "@/lib/phone-assistant-store";
 import { searchPhoneWeb } from "@/lib/phone-web-search";
@@ -202,13 +203,23 @@ async function executePhoneTool(ownerId: string, name: unknown, rawArguments: un
         output: JSON.stringify({ ok: false, error: "A precise future time is required." }),
       });
     }
+    const wantsCall = argumentsObject.call_me === true;
+    const callAvailable = wantsCall &&
+      Boolean(await getPhoneAssistantDestination(ownerId).catch(() => null));
     const reminder = await createReminder(ownerId, {
       title,
       notes,
       dueAt: new Date(dueTime).toISOString(),
+      delivery: callAvailable ? "call" : "app",
     });
     return Response.json({
-      output: JSON.stringify({ ok: true, reminder }),
+      output: JSON.stringify({
+        ok: true,
+        reminder,
+        ...(wantsCall && !callAvailable
+          ? { note: "Saved as an app reminder: calls from Vox are not enabled for this account." }
+          : {}),
+      }),
     });
   }
   if (name === "list_reminders") {

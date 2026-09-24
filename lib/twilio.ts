@@ -95,8 +95,10 @@ export function twiml(parts: string) {
   });
 }
 
-export function say(text: string) {
-  return `<Say language="zh-TW">${escapeXml(text)}</Say>`;
+export type TwilioSayLanguage = "zh-TW" | "en-GB";
+
+export function say(text: string, language: TwilioSayLanguage = "zh-TW") {
+  return `<Say language="${language}">${escapeXml(text)}</Say>`;
 }
 
 export function dialSip(uri: string) {
@@ -116,13 +118,20 @@ export function gatherSpeech(
   return `<Gather input="speech" action="${escapeXml(action)}" method="POST" language="zh-TW" timeout="${timeoutSeconds}" speechTimeout="${speechTimeout}" actionOnEmptyResult="true">${promptXml}</Gather>`;
 }
 
-export async function placeTwilioCall(to: string, message: string) {
+export async function placeTwilioCall(
+  to: string,
+  message: string,
+  options: { language?: TwilioSayLanguage; repeat?: boolean } = {},
+) {
   const config = getTwilioConfig();
   if (!config) throw new Error("Twilio is not configured.");
+  const spoken = say(message, options.language);
   const form = new URLSearchParams({
     To: to,
     From: config.phoneNumber,
-    Twiml: `<?xml version="1.0" encoding="UTF-8"?><Response>${say(message)}<Hangup/></Response>`,
+    Twiml: `<?xml version="1.0" encoding="UTF-8"?><Response>${spoken}${
+      options.repeat ? `<Pause length="1"/>${spoken}` : ""
+    }<Hangup/></Response>`,
   });
   const authorization = btoa(`${config.accountSid}:${config.authToken}`);
   const response = await fetch(

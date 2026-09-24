@@ -27,6 +27,18 @@ const transcriptionPrompt = [
   "Transcribe only audible speech verbatim, never translate or answer it. Preserve English names and code-switching exactly as spoken. Preserve fillers, hesitation, repetitions and unfinished sentences. Silence is not speech.",
 ].join(" ");
 
+function isTranscriptionPromptEcho(text) {
+  const normalized = text.toLocaleLowerCase().replace(/\s+/g, " ");
+  return [
+    "transcribe only audible speech",
+    "never translate or answer it",
+    "preserve english names and code-switching",
+    "silence is not speech",
+    "the speaker may use english or mandarin",
+    "must be written in taiwan traditional chinese",
+  ].some((marker) => normalized.includes(marker));
+}
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -141,8 +153,12 @@ const phoneTools = [
         title: { type: "string" },
         notes: { type: ["string", "null"] },
         due_at: { type: "string", description: "Future ISO 8601 timestamp with timezone." },
+        call_me: {
+          type: "boolean",
+          description: "True only when the caller explicitly asks Vox to phone them when the reminder is due.",
+        },
       },
-      required: ["title", "notes", "due_at"],
+      required: ["title", "notes", "due_at", "call_me"],
       additionalProperties: false,
     },
   },
@@ -341,7 +357,9 @@ export class SipCallDurableObject {
 
     if (event.type === "conversation.item.input_audio_transcription.completed") {
       const transcript = String(event.transcript ?? "").trim();
-      if (!transcript) return;
+      // On silence the transcriber can echo its own prompt. Never treat that as
+      // a passphrase attempt or as something the caller said.
+      if (!transcript || isTranscriptionPromptEcho(transcript)) return;
       if (!this.authenticated) {
         await this.authenticate(transcript);
         return;

@@ -54,11 +54,20 @@ export const reminders = sqliteTable(
     status: text("status").notNull().default("pending"),
     source: text("source").notNull().default("conversation"),
     notifiedAt: text("notified_at"),
+    delivery: text("delivery").notNull().default("app"),
+    callStatus: text("call_status"),
+    callAttempts: integer("call_attempts").notNull().default(0),
+    calledAt: text("called_at"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("idx_reminders_owner_due_at").on(table.ownerId, table.dueAt),
+    index("idx_reminders_delivery_status_due_at").on(
+      table.delivery,
+      table.status,
+      table.dueAt,
+    ),
     index("idx_reminders_owner_status_due_at").on(
       table.ownerId,
       table.status,

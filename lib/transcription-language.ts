@@ -23,3 +23,24 @@ export function transcriptionConfig(mandarinLocked: boolean) {
     ].join(" "),
   };
 }
+
+// Phrases that appear only in Vox's transcription prompts. On silence or noise
+// the transcription model can return its own prompt as if the user said it.
+const TRANSCRIPTION_PROMPT_ECHO_MARKERS = [
+  "transcribe only audible speech",
+  "never translate or answer it",
+  "preserve english names and code-switching",
+  "preserve fillers, hesitation",
+  "do not invent words or infer duration",
+  "silence is not speech",
+  "the speaker may use english or mandarin",
+  "must be written in taiwan traditional chinese",
+  "這段對話以台灣華語為主",
+  "中文逐字稿一律使用繁體中文",
+  "不要轉成英文、拼音或簡體中文",
+];
+
+export function isTranscriptionPromptEcho(text: string) {
+  const normalized = text.toLocaleLowerCase().replace(/\s+/g, " ");
+  return TRANSCRIPTION_PROMPT_ECHO_MARKERS.some((marker) => normalized.includes(marker));
+}

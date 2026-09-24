@@ -34,12 +34,39 @@ function securedResponse(response) {
   });
 }
 
+function runApplication(request, env, context) {
+  return typeof application?.fetch === "function"
+    ? application.fetch(request, env, context)
+    : application(request, env, context);
+}
+
+function schedulerToken() {
+  // Random values cannot be generated at global scope in Workers, so mint the
+  // in-isolate token on first use. It never leaves this isolate.
+  if (typeof globalThis.__voxSchedulerToken !== "string") {
+    globalThis.__voxSchedulerToken = `${crypto.randomUUID()}${crypto.randomUUID()}`;
+  }
+  return globalThis.__voxSchedulerToken;
+}
+
+async function dispatchReminderCalls(env, context) {
+  const response = await runApplication(
+    new Request("https://vox.internal/api/reminders/call-dispatch", {
+      method: "POST",
+      headers: { "x-vox-scheduler": schedulerToken() },
+    }),
+    env,
+    context,
+  );
+  if (!response.ok) console.error("Reminder call dispatch returned", response.status);
+}
+
 const worker = {
   async fetch(request, env, context) {
-    const response = typeof application?.fetch === "function"
-      ? await application.fetch(request, env, context)
-      : await application(request, env, context);
-    return securedResponse(response);
+    return securedResponse(await runApplication(request, env, context));
+  },
+  async scheduled(_event, env, context) {
+    context.waitUntil(dispatchReminderCalls(env, context));
   },
 };
 

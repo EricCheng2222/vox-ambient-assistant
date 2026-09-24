@@ -13,6 +13,7 @@
 		A10000000000000000000004 /* AppConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* AppConfiguration.swift */; };
 		A10000000000000000000005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* Assets.xcassets */; };
 		A10000000000000000000006 /* PairingBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* PairingBridge.swift */; };
+		A10000000000000000000007 /* ReminderNotificationBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* ReminderNotificationBridge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +24,7 @@
 		A20000000000000000000005 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A20000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A20000000000000000000008 /* PairingBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingBridge.swift; sourceTree = "<group>"; };
+		A20000000000000000000009 /* ReminderNotificationBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderNotificationBridge.swift; sourceTree = "<group>"; };
 		A20000000000000000000007 /* VoxIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoxIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -51,6 +53,7 @@
 				A20000000000000000000004 /* AppConfiguration.swift */,
 				A20000000000000000000002 /* ContentView.swift */,
 				A20000000000000000000008 /* PairingBridge.swift */,
+				A20000000000000000000009 /* ReminderNotificationBridge.swift */,
 				A20000000000000000000003 /* VoxWebView.swift */,
 				A20000000000000000000001 /* VoxIOSApp.swift */,
 				A20000000000000000000005 /* Assets.xcassets */,
@@ -139,6 +142,7 @@
 				A10000000000000000000004 /* AppConfiguration.swift in Sources */,
 				A10000000000000000000002 /* ContentView.swift in Sources */,
 				A10000000000000000000006 /* PairingBridge.swift in Sources */,
+				A10000000000000000000007 /* ReminderNotificationBridge.swift in Sources */,
 				A10000000000000000000003 /* VoxWebView.swift in Sources */,
 				A10000000000000000000001 /* VoxIOSApp.swift in Sources */,
 			);

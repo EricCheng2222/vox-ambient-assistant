@@ -101,4 +101,8 @@ After the first deployment, attach a custom domain in Cloudflare Workers & Pages
 
 ## Reminder delivery
 
-Reminder schedules are persisted in D1. The current notification worker runs in the open browser and checks the backend every 15 seconds, so no Cloudflare Cron Trigger is required. Browser alerts require the user to enable notification permission from the Reminders panel. For alerts while the app is fully closed, add a Web Push, email, or messaging delivery provider before relying on Vox for critical reminders.
+Reminder schedules are persisted in D1 and can be delivered three ways:
+
+- **In the app** — the open web app checks the backend every 15 seconds and can show browser alerts once notification permission is enabled from the Reminders panel.
+- **iPhone alerts** — the iOS app schedules upcoming reminders as local notifications, which fire even when Vox is closed. It learns about new reminders the next time the app opens.
+- **Phone call** — the owner can mark a reminder for phone-call delivery. The prepared Worker configuration adds a Cloudflare Cron Trigger (`* * * * *`) that calls the owner's callback number through Twilio when such a reminder is due. It requires the Twilio settings above, a callback number, and **calls from Vox** turned on in Call Vox.

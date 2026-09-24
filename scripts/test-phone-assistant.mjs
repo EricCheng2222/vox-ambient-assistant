@@ -128,4 +128,29 @@ assert.match(page, /Mark as call/u);
 assert.match(styles, /\.message-phone/u);
 assert.match(styles, /\.message-phone-badge/u);
 
+// Reminder phone calls: spoken script, Twilio language, and scheduler wiring.
+const { isReminderDelivery, reminderCallScript } = await import("../lib/reminder.ts");
+assert.equal(isReminderDelivery("call"), true);
+assert.equal(isReminderDelivery("sms"), false);
+assert.deepEqual(reminderCallScript({ title: "打電話給牙醫", notes: null }), {
+  language: "zh-TW",
+  text: "你好，這是 Vox 的提醒。打電話給牙醫。",
+});
+assert.deepEqual(reminderCallScript({ title: "Call the dentist", notes: "Ask about Friday" }), {
+  language: "en-GB",
+  text: "Hello, this is Vox with your reminder. Call the dentist. Ask about Friday.",
+});
+assert.equal(say("Tea <now>", "en-GB"), '<Say language="en-GB">Tea &lt;now&gt;</Say>');
+const workerEntry = await readFile(new URL("../cloudflare/worker-entry.mjs", import.meta.url), "utf8");
+const deployPrep = await readFile(new URL("../scripts/prepare-cloudflare-deploy.mjs", import.meta.url), "utf8");
+const dispatchRoute = await readFile(
+  new URL("../app/api/reminders/call-dispatch/route.ts", import.meta.url),
+  "utf8",
+);
+assert.match(workerEntry, /async scheduled\(/u);
+assert.match(workerEntry, /\/api\/reminders\/call-dispatch/u);
+assert.match(deployPrep, /crons: \["\* \* \* \* \*"\]/u);
+assert.match(dispatchRoute, /__voxSchedulerToken/u);
+assert.match(dispatchRoute, /status: 404/u);
+
 console.log("Conservative phone assistant checks passed.");

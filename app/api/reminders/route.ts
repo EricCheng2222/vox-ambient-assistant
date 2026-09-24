@@ -1,17 +1,32 @@
 import { requireUser } from "@/lib/auth";
-import type { ReminderStatus } from "@/lib/reminder";
+import { isReminderDelivery, type ReminderStatus } from "@/lib/reminder";
 import {
   createReminder,
   deleteReminder,
   listReminders,
+  updateReminderDelivery,
   updateReminderStatus,
 } from "@/lib/reminder-store";
+import {
+  getPhoneAssistantDestination,
+  PHONE_ASSISTANT_OWNER_ID,
+} from "@/lib/phone-assistant-store";
 import { getCurrentTimeContext } from "@/lib/time-context";
 import {
   API_BUDGET_MESSAGE,
   isProviderBudgetError,
   ProviderBudgetError,
 } from "@/lib/provider-error";
+
+const CALL_UNAVAILABLE_MESSAGE =
+  "Phone-call reminders need Call Vox set up with a callback number and calls from Vox turned on.";
+
+// Phone-call delivery is limited to the owner, whose own callback number is the
+// only number Vox ever dials.
+async function canDeliverByCall(user: { id: string; role: string }) {
+  if (user.role !== "master" || user.id !== PHONE_ASSISTANT_OWNER_ID) return false;
+  return Boolean(await getPhoneAssistantDestination(user.id).catch(() => null));
+}
 
 function readOutputText(payload: {
   output_text?: string;
@@ -64,7 +79,7 @@ export async function POST(request: Request) {
         model: "gpt-5.6-terra",
         input: text,
         instructions:
-          "Extract one reminder from the user's request. Resolve relative dates and times against the authoritative clock below. Use Asia/Taipei unless the user explicitly gives another time zone. Return a concise reminder title in the user's language, an optional short note, and an exact future ISO 8601 timestamp including its UTC offset. If the user gives a date without a time, use 09:00. If they give only a time and that time has already passed today, use tomorrow. Do not invent a reminder unrelated to the request.\n\n" +
+          "Extract one reminder from the user's request. Resolve relative dates and times against the authoritative clock below. Use Asia/Taipei unless the user explicitly gives another time zone. Return a concise reminder title in the user's language, an optional short note, an exact future ISO 8601 timestamp including its UTC offset, and a delivery method. Use delivery 'call' only when the user explicitly asks to be phoned or called for this reminder (for example 'call me', 'phone me', or 打電話提醒我); otherwise use 'app'. If the user gives a date without a time, use 09:00. If they give only a time and that time has already passed today, use tomorrow. Do not invent a reminder unrelated to the request.\n\n" +
           getCurrentTimeContext(),
         reasoning: { effort: "low" },
         max_output_tokens: 600,
@@ -81,8 +96,9 @@ export async function POST(request: Request) {
                 title: { type: "string" },
                 notes: { type: ["string", "null"] },
                 due_at: { type: "string", format: "date-time" },
+                delivery: { type: "string", enum: ["app", "call"] },
               },
-              required: ["title", "notes", "due_at"],
+              required: ["title", "notes", "due_at", "delivery"],
               additionalProperties: false,
             },
           },
@@ -98,6 +114,7 @@ export async function POST(request: Request) {
       title?: string;
       notes?: string | null;
       due_at?: string;
+      delivery?: string;
     };
     const title = parsed.title?.trim().slice(0, 180) ?? "";
     const dueAt = parsed.due_at?.trim() ?? "";
@@ -108,12 +125,21 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    const wantsCall = parsed.delivery === "call";
+    const callAvailable = wantsCall && (await canDeliverByCall(auth.user));
     const reminder = await createReminder(auth.user.id, {
       title,
       notes: parsed.notes?.trim().slice(0, 500) || null,
       dueAt: new Date(dueTime).toISOString(),
+      delivery: callAvailable ? "call" : "app",
     });
-    return Response.json({ reminder }, { status: 201 });
+    return Response.json(
+      {
+        reminder,
+        ...(wantsCall && !callAvailable ? { deliveryNotice: CALL_UNAVAILABLE_MESSAGE } : {}),
+      },
+      { status: 201 },
+    );
   } catch (error) {
     console.error("Reminder creation failed", error);
     return Response.json(
@@ -133,10 +159,29 @@ export async function PATCH(request: Request) {
   if ("response" in auth) return auth.response;
 
   const body = (await request.json().catch(() => ({}))) as {
-    id?: string;
+    id?: unknown;
     status?: ReminderStatus;
+    delivery?: unknown;
   };
-  const id = body.id?.trim() ?? "";
+  const id = typeof body.id === "string" ? body.id.trim() : "";
+
+  if (body.delivery !== undefined) {
+    if (!id || !isReminderDelivery(body.delivery)) {
+      return Response.json({ error: "A valid reminder update is required." }, { status: 400 });
+    }
+    if (body.delivery === "call" && !(await canDeliverByCall(auth.user))) {
+      return Response.json({ error: CALL_UNAVAILABLE_MESSAGE }, { status: 409 });
+    }
+    const reminder = await updateReminderDelivery(auth.user.id, id, body.delivery);
+    if (!reminder) {
+      return Response.json(
+        { error: "Only an upcoming reminder can change how it is delivered." },
+        { status: 404 },
+      );
+    }
+    return Response.json({ reminder });
+  }
+
   const status = body.status;
   if (!id || !status || !["pending", "completed", "dismissed"].includes(status)) {
     return Response.json({ error: "A valid reminder update is required." }, { status: 400 });

@@ -14,6 +14,10 @@ A physical iPhone is required to test microphone input and front/rear camera swi
 
 The shared backend URL is defined once in `VoxIOS/AppConfiguration.swift`. Authentication cookies use the persistent default WebKit data store, so a user remains signed in between launches. Camera and microphone permission is granted only to the configured Vox backend origin.
 
+## Reminder alerts
+
+Tap **Enable iPhone alerts** in Reminders and allow notifications. The app then schedules each upcoming reminder as a local iPhone notification, so it alerts you even when Vox is closed. Reminders created elsewhere, such as on the Mac, are scheduled the next time you open the app.
+
 ## Pairing with Vox Desktop
 
 Inside the app, tap the QR button in the header and scan the pairing code shown in Vox Desktop. (The Camera app would open the link in Safari instead, and Safari's storage is separate from the app's.) The app keeps the pairing in the iPhone Keychain, so it survives restarts. Vox Desktop supports one paired phone at a time, so pairing the app replaces any earlier pairing, such as one made in Safari.
