@@ -247,6 +247,9 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
         if let saved = SavedPlaces.match(place) {
             return [saved.coordinate]
         }
+        // A personal place ("home", 公司, 奶奶家, "mom's house") must be saved or
+        // picked on the map; searching it would match an unrelated business.
+        guard !SavedPlaces.isPersonal(place) else { return [] }
         // A store or landmark name: arm its nearest branches, searched on-device.
         guard let here = await currentLocation() else { return [] }
         let request = MKLocalSearch.Request()
@@ -305,6 +308,26 @@ enum SavedPlaces {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         return aliases[normalized] ?? normalized
+    }
+
+    private static let relatives = [
+        "奶奶", "阿嬤", "阿媽", "外婆", "爺爺", "阿公", "外公", "媽媽", "爸爸", "媽", "爸",
+        "阿姨", "叔叔", "舅舅", "姑姑", "伯伯", "嬸嬸", "哥哥", "姐姐", "姊姊", "弟弟", "妹妹",
+        "朋友", "男友", "女友", "男朋友", "女朋友", "老婆", "老公", "岳父", "岳母", "公公", "婆婆",
+        "親戚", "同學", "同事", "室友", "我",
+    ]
+
+    /// Places that belong to the user or someone they know rather than a
+    /// business, such as 家, 公司, 奶奶家, or "mom's house".
+    static func isPersonal(_ place: String) -> Bool {
+        let normalized = key(place)
+        if normalized == "home" || normalized == "work" { return true }
+        let compact = normalized.replacingOccurrences(of: " ", with: "")
+        if relatives.contains(where: { compact == "\($0)家" || compact == "\($0)的家" }) { return true }
+        return normalized.range(
+            of: #"(^|\s)(my|our|his|her|their)\s|'s\s+(house|home|place|apartment|flat|office|work)$|^(grandma|grandpa|mom|dad|mum|mother|father)('s)?\b"#,
+            options: .regularExpression
+        ) != nil
     }
 
     static func match(_ place: String) -> SavedPlace? {

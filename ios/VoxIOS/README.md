@@ -20,7 +20,7 @@ Tap **Enable iPhone alerts** in Reminders and allow notifications. The app then 
 
 ## Place reminders
 
-Reminders such as “when I get home” are armed here as iOS location notifications. Save places from **Reminders → Places on this iPhone**. They are stored only in this iPhone's Keychain. Vox asks for “While Using the App” location access, and iOS watches the places itself. Notifications include **Mark as done**.
+Reminders such as “when I get home” are armed here as iOS location notifications. Save places from **Reminders → Places on this iPhone**, either with the current location or with **Choose on map**, which offers Apple Maps search and a pin that shows the trigger area. They are stored only in this iPhone's Keychain. Vox asks for “While Using the App” location access, and iOS watches the places itself. Notifications include **Mark as done**.
 
 ## Pairing with Vox Desktop
 

@@ -762,7 +762,7 @@ function reminderLocationStatusLabel(reminder: Reminder, onIPhone: boolean) {
       return "Armed on iPhone";
     case "place_not_found":
       return onIPhone
-        ? `Couldn’t find “${reminder.place}” nearby. Pick it on the map or save it as a place above.`
+        ? `Couldn’t find “${reminder.place}”. Pick it on the map or save it as a place above.`
         : `The iPhone couldn’t find “${reminder.place}”. Save it as a place in the iPhone app.`;
     case "permission_needed":
       return "Allow location for Vox in iPhone Settings to arm this.";
@@ -7294,7 +7294,7 @@ export default function Home() {
                             </div>
                           )}
                           <form
-                            className="mt-2 flex gap-2"
+                            className="mt-2 space-y-2"
                             onSubmit={(event) => {
                               event.preventDefault();
                               void saveCurrentPlace();
@@ -7305,31 +7305,33 @@ export default function Home() {
                               onChange={(event) => setPlaceName(event.target.value)}
                               placeholder="Name this spot, e.g. Home"
                               maxLength={40}
-                              className="h-8 min-w-0 flex-1 rounded-full border border-white/10 bg-white/[0.04] px-3 text-xs text-white outline-none placeholder:text-white/30 focus:border-white/25"
+                              className="h-8 w-full rounded-full border border-white/10 bg-white/[0.04] px-3 text-xs text-white outline-none placeholder:text-white/30 focus:border-white/25"
                               aria-label="Place name"
                             />
-                            <Button
-                              type="submit"
-                              size="sm"
-                              variant="outline"
-                              disabled={!placeName.trim() || placeSaving}
-                              className="h-8 shrink-0 rounded-full border-white/10 bg-white/[0.04] text-xs text-white hover:bg-white/10"
-                            >
-                              {placeSaving ? "Saving…" : "Save current location"}
-                            </Button>
+                            <div className="flex flex-wrap gap-2">
+                              {mapPickerAvailable && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={placeSaving}
+                                  onClick={() => void choosePlaceOnMap()}
+                                  className="h-8 rounded-full border-white/10 bg-white/[0.04] text-xs text-white hover:bg-white/10"
+                                >
+                                  <MapPin /> Choose on map
+                                </Button>
+                              )}
+                              <Button
+                                type="submit"
+                                size="sm"
+                                variant="outline"
+                                disabled={!placeName.trim() || placeSaving}
+                                className="h-8 rounded-full border-white/10 bg-white/[0.04] text-xs text-white hover:bg-white/10"
+                              >
+                                {placeSaving ? "Saving…" : "Use current location"}
+                              </Button>
+                            </div>
                           </form>
-                          {mapPickerAvailable && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              disabled={placeSaving}
-                              onClick={() => void choosePlaceOnMap()}
-                              className="mt-2 h-8 rounded-full border-white/10 bg-white/[0.04] text-xs text-white hover:bg-white/10"
-                            >
-                              <MapPin /> Choose on map
-                            </Button>
-                          )}
                         </div>
                       )}
                       {phoneAssistantStatus?.configured && !reminderCallsAvailable && (

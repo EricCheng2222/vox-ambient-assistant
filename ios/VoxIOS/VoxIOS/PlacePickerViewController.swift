@@ -21,6 +21,9 @@ final class PlacePickerViewController: UIViewController, MKMapViewDelegate, UISe
     private var areaCircle: MKCircle?
     private var nameWasSuggested = false
     private var search: MKLocalSearch?
+    private var bottomCard: UIView?
+    private var pinOffset: NSLayoutConstraint?
+    private var resultsHeight: NSLayoutConstraint?
 
     /// Taipei, used only when there is no saved spot or current location.
     private static let fallbackCenter = CLLocationCoordinate2D(latitude: 25.0330, longitude: 121.5654)
@@ -85,6 +88,7 @@ final class PlacePickerViewController: UIViewController, MKMapViewDelegate, UISe
         view.addSubview(resultsTable)
 
         let card = makeBottomCard()
+        bottomCard = card
         view.addSubview(card)
 
         let recenter = UIButton(configuration: .filled())
@@ -111,12 +115,9 @@ final class PlacePickerViewController: UIViewController, MKMapViewDelegate, UISe
             resultsTable.topAnchor.constraint(equalTo: searchBar.bottomAnchor, constant: 4),
             resultsTable.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
             resultsTable.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            resultsTable.heightAnchor.constraint(lessThanOrEqualToConstant: 320),
-            resultsTable.heightAnchor.constraint(equalToConstant: 320).withPriority(.defaultLow),
 
             // The pin's point marks the map center.
             pin.centerXAnchor.constraint(equalTo: mapView.centerXAnchor),
-            pin.bottomAnchor.constraint(equalTo: mapView.centerYAnchor, constant: 4),
 
             card.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
             card.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
@@ -128,6 +129,12 @@ final class PlacePickerViewController: UIViewController, MKMapViewDelegate, UISe
             recenter.heightAnchor.constraint(equalToConstant: 44),
         ])
 
+        let offset = pin.bottomAnchor.constraint(equalTo: mapView.centerYAnchor, constant: 4)
+        let height = resultsTable.heightAnchor.constraint(equalToConstant: 0)
+        NSLayoutConstraint.activate([offset, height])
+        pinOffset = offset
+        resultsHeight = height
+
         let center = start ?? Self.fallbackCenter
         mapView.setRegion(
             MKCoordinateRegion(center: center, latitudinalMeters: 900, longitudinalMeters: 900),
@@ -135,6 +142,20 @@ final class PlacePickerViewController: UIViewController, MKMapViewDelegate, UISe
         )
         updateArea()
         updateSaveButton()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // Keep Apple Maps' legal attribution and compass above the name card.
+        guard let bottomCard else { return }
+        let covered = max(0, mapView.frame.maxY - bottomCard.frame.minY + 8)
+        guard mapView.layoutMargins.bottom != covered else { return }
+        let center = mapView.centerCoordinate
+        mapView.layoutMargins = UIEdgeInsets(top: 0, left: 8, bottom: covered, right: 8)
+        // The map centers regions inside its margins, so raise the pin to that
+        // center and keep the same spot under it.
+        pinOffset?.constant = 4 - covered / 2
+        mapView.setCenter(center, animated: false)
     }
 
     private func makeBottomCard() -> UIView {
@@ -242,6 +263,7 @@ final class PlacePickerViewController: UIViewController, MKMapViewDelegate, UISe
             guard let self else { return }
             self.results = Array((response?.mapItems ?? []).prefix(8))
             self.resultsTable.reloadData()
+            self.resultsHeight?.constant = min(CGFloat(self.results.count) * 60, 320)
             self.resultsTable.isHidden = self.results.isEmpty
         }
     }
@@ -257,6 +279,8 @@ final class PlacePickerViewController: UIViewController, MKMapViewDelegate, UISe
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         results.count
     }
+
+    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat { 60 }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
@@ -288,9 +312,3 @@ final class PlacePickerViewController: UIViewController, MKMapViewDelegate, UISe
     }
 }
 
-private extension NSLayoutConstraint {
-    func withPriority(_ priority: UILayoutPriority) -> NSLayoutConstraint {
-        self.priority = priority
-        return self
-    }
-}
