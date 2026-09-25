@@ -128,6 +128,15 @@ The interface labels the scopes explicitly:
 - **Device · This Mac** — API keys, Codex workspace, installed-app access, Computer Use, macOS permissions, and smart-home credentials. Account data can never enable or widen these local capabilities.
 - **Route · Web only / Paired Mac** — a phone-web choice that determines whether local-capability requests remain unavailable or are sent through its encrypted pairing. Pairing alone never changes this choice.
 
+## Place-based reminders
+
+Ask for a reminder tied to a place, such as “remind me to take out the trash when I get home,” “離開公司時提醒我帶傘,” or “remind me to buy milk when I’m at 全聯.” You can ask from any device. The **Vox iPhone app** arms the reminder, and iOS alerts you when you arrive or leave, even while Vox is closed.
+
+- **Your places stay on your iPhone.** Save spots such as Home or Work from **Reminders → Places on this iPhone**. Coordinates are kept only in the iPhone Keychain. Store and landmark names are found nearby with Apple Maps on the phone. Vox's servers store only the place name and whether to alert on arrival or departure, and the iPhone reports back only whether a reminder could be armed.
+- **Permission:** location notifications need only “While Using the App” access. iOS watches the places itself, and Vox does not track your location in the background.
+- **Limits:** iOS watches at most 20 places per app. A store name arms up to three nearby branches within 30 km. A place reminder alerts on each arrival or departure until you mark it done, and you can do that directly from the notification. Phone-call delivery and postponing apply only to time-based reminders.
+- **Arming:** place reminders created on another device are armed the next time you open the iPhone app.
+
 ## Long tasks on the Mac
 
 Computer Use and local Codex tasks can take a while; Computer Use may run for up to ten minutes. The conversation does not wait for them. Keep talking about anything else, and Vox reports the result at the next natural pause, without talking over you or over its own reply. If a task runs for more than about 25 seconds, Vox mentions once that it is still working. Ask “is it done yet?” at any time. A status line under the voice controls shows what the Mac is working on.

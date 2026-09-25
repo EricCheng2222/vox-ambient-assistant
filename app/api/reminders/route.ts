@@ -1,6 +1,8 @@
 import { requireUser } from "@/lib/auth";
 import {
   isReminderDelivery,
+  isReminderLocationStatus,
+  isReminderPlaceEvent,
   isReminderPostpone,
   postponedDueAt,
   type ReminderStatus,
@@ -11,6 +13,7 @@ import {
   listReminders,
   postponeReminder,
   updateReminderDelivery,
+  updateReminderLocationStatus,
   updateReminderStatus,
 } from "@/lib/reminder-store";
 import {
@@ -85,7 +88,7 @@ export async function POST(request: Request) {
         model: "gpt-5.6-terra",
         input: text,
         instructions:
-          "Extract one reminder from the user's request. Resolve relative dates and times against the authoritative clock below. Use Asia/Taipei unless the user explicitly gives another time zone. Return a concise reminder title in the user's language, an optional short note, an exact future ISO 8601 timestamp including its UTC offset, and a delivery method. Use delivery 'call' only when the user explicitly asks to be phoned or called for this reminder (for example 'call me', 'phone me', or 打電話提醒我); otherwise use 'app'. If the user gives a date without a time, use 09:00. If they give only a time and that time has already passed today, use tomorrow. Do not invent a reminder unrelated to the request.\n\n" +
+          "Extract one reminder from the user's request. Decide whether it is triggered by a time or by a place. Use trigger 'location' only when the user ties it to arriving at or leaving a place (for example 'when I get home', 'when I leave the office', 'when I'm at 全聯', 到家的時候, 離開公司時); then set place to the place as the user named it, in their language, without extra words (for example '家', 'home', '公司', '全聯'), set place_event to 'arrive' or 'leave', and set due_at to null. Otherwise use trigger 'time' with place and place_event null. Resolve relative dates and times against the authoritative clock below. Use Asia/Taipei unless the user explicitly gives another time zone. Return a concise reminder title in the user's language, an optional short note, an exact future ISO 8601 timestamp including its UTC offset, and a delivery method. Use delivery 'call' only when the user explicitly asks to be phoned or called for this reminder (for example 'call me', 'phone me', or 打電話提醒我); otherwise use 'app'. If the user gives a date without a time, use 09:00. If they give only a time and that time has already passed today, use tomorrow. Do not invent a reminder unrelated to the request.\n\n" +
           getCurrentTimeContext(),
         reasoning: { effort: "low" },
         max_output_tokens: 600,
@@ -101,10 +104,13 @@ export async function POST(request: Request) {
               properties: {
                 title: { type: "string" },
                 notes: { type: ["string", "null"] },
-                due_at: { type: "string", format: "date-time" },
+                trigger: { type: "string", enum: ["time", "location"] },
+                due_at: { type: ["string", "null"] },
+                place: { type: ["string", "null"] },
+                place_event: { type: ["string", "null"], enum: ["arrive", "leave", null] },
                 delivery: { type: "string", enum: ["app", "call"] },
               },
-              required: ["title", "notes", "due_at", "delivery"],
+              required: ["title", "notes", "trigger", "due_at", "place", "place_event", "delivery"],
               additionalProperties: false,
             },
           },
@@ -119,10 +125,28 @@ export async function POST(request: Request) {
     const parsed = JSON.parse(readOutputText(payload)) as {
       title?: string;
       notes?: string | null;
-      due_at?: string;
+      trigger?: string;
+      due_at?: string | null;
+      place?: string | null;
+      place_event?: string | null;
       delivery?: string;
     };
     const title = parsed.title?.trim().slice(0, 180) ?? "";
+    if (parsed.trigger === "location") {
+      const place = parsed.place?.replace(/\s+/g, " ").trim().slice(0, 80) ?? "";
+      if (!title || !place || !isReminderPlaceEvent(parsed.place_event)) {
+        return Response.json(
+          { error: "Please say which place the reminder is for." },
+          { status: 400 },
+        );
+      }
+      const reminder = await createReminder(auth.user.id, {
+        title,
+        notes: parsed.notes?.trim().slice(0, 500) || null,
+        location: { place, event: parsed.place_event },
+      });
+      return Response.json({ reminder }, { status: 201 });
+    }
     const dueAt = parsed.due_at?.trim() ?? "";
     const dueTime = Date.parse(dueAt);
     if (!title || !Number.isFinite(dueTime) || dueTime <= Date.now()) {
@@ -169,8 +193,20 @@ export async function PATCH(request: Request) {
     status?: ReminderStatus;
     delivery?: unknown;
     postpone?: unknown;
+    locationStatus?: unknown;
   };
   const id = typeof body.id === "string" ? body.id.trim() : "";
+
+  if (body.locationStatus !== undefined) {
+    // Reported by the iPhone app; carries no location data, only whether the
+    // reminder could be armed there.
+    if (!id || !isReminderLocationStatus(body.locationStatus)) {
+      return Response.json({ error: "A valid reminder update is required." }, { status: 400 });
+    }
+    const reminder = await updateReminderLocationStatus(auth.user.id, id, body.locationStatus);
+    if (!reminder) return Response.json({ error: "Reminder not found." }, { status: 404 });
+    return Response.json({ reminder });
+  }
 
   if (body.postpone !== undefined) {
     if (!id || !isReminderPostpone(body.postpone)) {

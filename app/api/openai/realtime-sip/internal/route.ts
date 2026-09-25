@@ -13,6 +13,7 @@ import {
   phoneRealtimeConversationInstructions,
 } from "@/lib/realtime-sip";
 import { createReminder, listReminders } from "@/lib/reminder-store";
+import { reminderPlaceLabel } from "@/lib/reminder";
 import {
   enqueueRemoteCommand,
   getAvailableRemoteDevice,
@@ -225,7 +226,13 @@ async function executePhoneTool(ownerId: string, name: unknown, rawArguments: un
   if (name === "list_reminders") {
     const reminders = (await listReminders(ownerId, 40))
       .filter((reminder) => reminder.status === "pending" && Date.parse(reminder.dueAt) > Date.now())
-      .slice(0, 5);
+      .slice(0, 5)
+      // Location reminders have no time; describe them by place instead.
+      .map((reminder) =>
+        reminder.triggerType === "location"
+          ? { title: reminder.title, when: reminderPlaceLabel(reminder, "taiwan_mandarin") }
+          : { title: reminder.title, dueAt: reminder.dueAt, notes: reminder.notes },
+      );
     return Response.json({
       output: JSON.stringify({ ok: true, reminders }),
     });

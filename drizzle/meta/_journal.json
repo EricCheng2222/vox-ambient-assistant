@@ -127,6 +127,13 @@
       "when": 1790271629996,
       "tag": "0017_reminder_phone_calls",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1790347232962,
+      "tag": "0018_location_reminders",
+      "breakpoints": true
     }
   ]
 }

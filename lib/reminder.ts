@@ -2,6 +2,19 @@ export type ReminderStatus = "pending" | "completed" | "dismissed";
 
 export type ReminderDelivery = "app" | "call";
 
+export type ReminderTriggerType = "time" | "location";
+export type ReminderPlaceEvent = "arrive" | "leave";
+// Reported by the iPhone app after it tries to arm a location reminder.
+export type ReminderLocationStatus =
+  | "armed"
+  | "place_not_found"
+  | "permission_needed"
+  | "limit_reached";
+
+// Location reminders have no due time. They carry this far-future placeholder
+// so every time-based path (due alerts, calls, overdue, postpone) skips them.
+export const LOCATION_REMINDER_DUE_AT = "9999-12-31T00:00:00.000Z";
+
 // calling: a call is being placed; called: Twilio accepted it; failed: Twilio
 // rejected it (retried); unavailable: calls from Vox were off when it came due;
 // missed: the reminder was too old to call by the time it was reached.
@@ -23,6 +36,10 @@ export type Reminder = {
   delivery: ReminderDelivery;
   callStatus: ReminderCallStatus | null;
   calledAt: string | null;
+  triggerType: ReminderTriggerType;
+  place: string | null;
+  placeEvent: ReminderPlaceEvent | null;
+  locationStatus: ReminderLocationStatus | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -63,13 +80,49 @@ export function isReminderPostpone(value: unknown): value is ReminderPostpone {
   return value === "10m" || value === "1h" || value === "tomorrow";
 }
 
-export function isReminderOverdue(reminder: Pick<Reminder, "status" | "dueAt">, now = Date.now()) {
-  return reminder.status === "pending" && Date.parse(reminder.dueAt) <= now;
+export function isLocationReminder(reminder: Pick<Reminder, "triggerType">) {
+  return reminder.triggerType === "location";
 }
 
-// Matches the server list: finished reminders disappear once their time passes.
-export function isReminderVisible(reminder: Pick<Reminder, "status" | "dueAt">, now = Date.now()) {
-  return reminder.status === "pending" || Date.parse(reminder.dueAt) > now;
+export function isReminderOverdue(
+  reminder: Pick<Reminder, "status" | "dueAt" | "triggerType">,
+  now = Date.now(),
+) {
+  return !isLocationReminder(reminder) && reminder.status === "pending" && Date.parse(reminder.dueAt) <= now;
+}
+
+// Matches the server list: finished time reminders disappear once their time
+// passes; finished location reminders disappear right away.
+export function isReminderVisible(
+  reminder: Pick<Reminder, "status" | "dueAt" | "triggerType">,
+  now = Date.now(),
+) {
+  if (reminder.status === "pending") return true;
+  return !isLocationReminder(reminder) && Date.parse(reminder.dueAt) > now;
+}
+
+export function isReminderPlaceEvent(value: unknown): value is ReminderPlaceEvent {
+  return value === "arrive" || value === "leave";
+}
+
+export function isReminderLocationStatus(value: unknown): value is ReminderLocationStatus {
+  return (
+    value === "armed" ||
+    value === "place_not_found" ||
+    value === "permission_needed" ||
+    value === "limit_reached"
+  );
+}
+
+export function reminderPlaceLabel(
+  reminder: Pick<Reminder, "place" | "placeEvent">,
+  language: "taiwan_mandarin" | "english" = "english",
+) {
+  const place = reminder.place ?? "";
+  if (language === "taiwan_mandarin") {
+    return reminder.placeEvent === "leave" ? `離開「${place}」時` : `抵達「${place}」時`;
+  }
+  return reminder.placeEvent === "leave" ? `When you leave ${place}` : `When you arrive at ${place}`;
 }
 
 export function isReminderDelivery(value: unknown): value is ReminderDelivery {

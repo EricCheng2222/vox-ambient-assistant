@@ -137,6 +137,20 @@ const {
   postponedDueAt,
   reminderCallScript,
 } = await import("../lib/reminder.ts");
+// Place-based reminders: no due time, labelled by place, hidden once finished.
+{
+  const { LOCATION_REMINDER_DUE_AT, isLocationReminder, reminderPlaceLabel, isReminderLocationStatus } =
+    await import("../lib/reminder.ts");
+  const place = { status: "pending", dueAt: LOCATION_REMINDER_DUE_AT, triggerType: "location" };
+  assert.equal(isLocationReminder(place), true);
+  assert.equal(isReminderOverdue(place, Date.now()), false);
+  assert.equal(isReminderVisible(place, Date.now()), true);
+  assert.equal(isReminderVisible({ ...place, status: "completed" }, Date.now()), false);
+  assert.equal(reminderPlaceLabel({ place: "家", placeEvent: "arrive" }, "taiwan_mandarin"), "抵達「家」時");
+  assert.equal(reminderPlaceLabel({ place: "the office", placeEvent: "leave" }), "When you leave the office");
+  assert.equal(isReminderLocationStatus("armed"), true);
+  assert.equal(isReminderLocationStatus("somewhere"), false);
+}
 // Reminder list lifecycle: finished reminders leave once due; open ones stay.
 const clock = Date.parse("2026-09-25T10:00:00.000Z");
 const past = "2026-09-25T09:00:00.000Z";

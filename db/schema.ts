@@ -58,6 +58,12 @@ export const reminders = sqliteTable(
     callStatus: text("call_status"),
     callAttempts: integer("call_attempts").notNull().default(0),
     calledAt: text("called_at"),
+    // Location reminders fire on the iPhone. The server keeps only the place
+    // name and whether to fire on arrival or departure, never coordinates.
+    triggerType: text("trigger_type").notNull().default("time"),
+    place: text("place"),
+    placeEvent: text("place_event"),
+    locationStatus: text("location_status"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },

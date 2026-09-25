@@ -2,7 +2,14 @@ import { and, asc, eq, gt, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { reminders } from "@/db/schema";
-import type { Reminder, ReminderDelivery, ReminderStatus } from "@/lib/reminder";
+import {
+  LOCATION_REMINDER_DUE_AT,
+  type Reminder,
+  type ReminderDelivery,
+  type ReminderLocationStatus,
+  type ReminderPlaceEvent,
+  type ReminderStatus,
+} from "@/lib/reminder";
 
 const publicReminder = {
   id: reminders.id,
@@ -15,6 +22,10 @@ const publicReminder = {
   delivery: reminders.delivery,
   callStatus: reminders.callStatus,
   calledAt: reminders.calledAt,
+  triggerType: reminders.triggerType,
+  place: reminders.place,
+  placeEvent: reminders.placeEvent,
+  locationStatus: reminders.locationStatus,
   createdAt: reminders.createdAt,
   updatedAt: reminders.updatedAt,
 };
@@ -32,7 +43,10 @@ export async function listReminders(
     .where(
       and(
         eq(reminders.ownerId, ownerId),
-        or(eq(reminders.status, "pending"), gt(reminders.dueAt, new Date().toISOString())),
+        or(
+          eq(reminders.status, "pending"),
+          and(eq(reminders.triggerType, "time"), gt(reminders.dueAt, new Date().toISOString())),
+        ),
       ),
     )
     .orderBy(asc(reminders.dueAt))
@@ -44,8 +58,9 @@ export async function createReminder(
   input: {
     title: string;
     notes?: string | null;
-    dueAt: string;
+    dueAt?: string;
     delivery?: ReminderDelivery;
+    location?: { place: string; event: ReminderPlaceEvent };
   },
 ) {
   const now = new Date().toISOString();
@@ -56,11 +71,15 @@ export async function createReminder(
       ownerId,
       title: input.title,
       notes: input.notes ?? null,
-      dueAt: input.dueAt,
+      dueAt: input.location ? LOCATION_REMINDER_DUE_AT : (input.dueAt ?? LOCATION_REMINDER_DUE_AT),
       status: "pending",
       source: "conversation",
       notifiedAt: null,
-      delivery: input.delivery ?? "app",
+      // Phone calls need a due time; location reminders alert on the iPhone.
+      delivery: input.location ? "app" : (input.delivery ?? "app"),
+      triggerType: input.location ? "location" : "time",
+      place: input.location?.place ?? null,
+      placeEvent: input.location?.event ?? null,
       createdAt: now,
       updatedAt: now,
     })
@@ -105,6 +124,7 @@ export async function updateReminderDelivery(
         eq(reminders.ownerId, ownerId),
         eq(reminders.id, id),
         eq(reminders.status, "pending"),
+        eq(reminders.triggerType, "time"),
         gt(reminders.dueAt, now),
       ),
     )
@@ -129,6 +149,26 @@ export async function postponeReminder(ownerId: string, id: string, dueAt: strin
         eq(reminders.ownerId, ownerId),
         eq(reminders.id, id),
         eq(reminders.status, "pending"),
+        eq(reminders.triggerType, "time"),
+      ),
+    )
+    .returning(publicReminder);
+  return (reminder ?? null) as Reminder | null;
+}
+
+export async function updateReminderLocationStatus(
+  ownerId: string,
+  id: string,
+  locationStatus: ReminderLocationStatus,
+) {
+  const [reminder] = await getDb()
+    .update(reminders)
+    .set({ locationStatus, updatedAt: new Date().toISOString() })
+    .where(
+      and(
+        eq(reminders.ownerId, ownerId),
+        eq(reminders.id, id),
+        eq(reminders.triggerType, "location"),
       ),
     )
     .returning(publicReminder);

@@ -18,6 +18,10 @@ The shared backend URL is defined once in `VoxIOS/AppConfiguration.swift`. Authe
 
 Tap **Enable iPhone alerts** in Reminders and allow notifications. The app then schedules each upcoming reminder as a local iPhone notification, so it alerts you even when Vox is closed. Reminders created elsewhere, such as on the Mac, are scheduled the next time you open the app.
 
+## Place reminders
+
+Reminders such as “when I get home” are armed here as iOS location notifications. Save places from **Reminders → Places on this iPhone**. They are stored only in this iPhone's Keychain. Vox asks for “While Using the App” location access, and iOS watches the places itself. Notifications include **Mark as done**.
+
 ## Pairing with Vox Desktop
 
 Inside the app, tap the QR button in the header and scan the pairing code shown in Vox Desktop. (The Camera app would open the link in Safari instead, and Safari's storage is separate from the app's.) The app keeps the pairing in the iPhone Keychain, so it survives restarts. Vox Desktop supports one paired phone at a time, so pairing the app replaces any earlier pairing, such as one made in Safari.

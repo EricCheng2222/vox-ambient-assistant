@@ -4,7 +4,7 @@ import UserNotifications
 @main
 struct VoxIOSApp: App {
     init() {
-        UNUserNotificationCenter.current().delegate = ReminderNotificationPresenter.shared
+        ReminderNotificationPresenter.shared.register()
     }
 
     var body: some Scene {

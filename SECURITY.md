@@ -35,6 +35,12 @@ Security fixes currently target the latest commit on `main` and the latest deskt
 - The relay cannot bypass the Mac's installed-app resolution, blocked-action policy, Codex sandbox, or native confirmation for remote Codex tasks. Revoking a pairing removes its relay queue and deletes the Mac's local key.
 - A database or relay-only compromise cannot decrypt or forge a paired command. A full hosted-origin compromise while the phone web app is open is a broader supply-chain threat: same-origin JavaScript can use session-held pairing authority. The local enable switch, command expiry, installed-app checks, blocked-action policy, and native confirmations remain the final boundaries. High-risk actions are intentionally unsupported rather than delegated to the relay.
 
+## Place-based reminders
+
+- Location never leaves the iPhone. Saved places are stored in the iOS Keychain (this device only), nearby searches run through MapKit on the device, and iOS monitors the geofences. The backend stores only the place name from the user's request, the arrival or departure choice, and a status (armed, place not found, permission needed, or limit reached).
+- The app requests only “While Using the App” location access. It does not collect background location.
+- The notification's **Mark as done** action uses the app's existing signed-in session to update that one reminder.
+
 ## Telephone assistant
 
 - Telephone access is separate from phone-to-Mac pairing and is restricted to the master/owner Vox account. Invited users cannot configure it, and inbound phrase matching accepts only the owner's record. Incoming Twilio requests and OpenAI project webhooks must pass their provider signature checks. The per-call Durable Object owns one OpenAI sideband and deduplicates the accept decision.

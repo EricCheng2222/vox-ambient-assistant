@@ -71,6 +71,11 @@ final class ReminderNotificationBridge: NSObject, WKScriptMessageHandlerWithRepl
               getPermission: () => handler.postMessage({ type: "getPermission" }),
               requestPermission: () => handler.postMessage({ type: "requestPermission" }),
               sync: (reminders) => handler.postMessage({ type: "sync", reminders }),
+              syncLocations: (reminders) => handler.postMessage({ type: "syncLocations", reminders }),
+              locationPermission: () => handler.postMessage({ type: "locationPermission" }),
+              places: () => handler.postMessage({ type: "places" }),
+              savePlace: (name) => handler.postMessage({ type: "savePlace", name: String(name) }),
+              deletePlace: (name) => handler.postMessage({ type: "deletePlace", name: String(name) }),
             }),
           });
         })();
@@ -106,6 +111,25 @@ final class ReminderNotificationBridge: NSObject, WKScriptMessageHandlerWithRepl
             let reminders = (body["reminders"] as? [[String: Any]] ?? []).compactMap(ScheduledReminder.init)
             Self.schedule(reminders)
             replyHandler(reminders.count, nil)
+        case "syncLocations":
+            let reminders = (body["reminders"] as? [[String: Any]] ?? [])
+                .prefix(40)
+                .compactMap(LocationReminderScheduler.LocationReminder.init)
+            Task { @MainActor in
+                replyHandler(await LocationReminderScheduler.shared.schedule(Array(reminders)), nil)
+            }
+        case "locationPermission":
+            Task { @MainActor in replyHandler(LocationReminderScheduler.shared.permission, nil) }
+        case "places":
+            Task { @MainActor in replyHandler(LocationReminderScheduler.shared.placeNames(), nil) }
+        case "savePlace":
+            let name = body["name"] as? String ?? ""
+            Task { @MainActor in
+                replyHandler(await LocationReminderScheduler.shared.saveCurrentLocation(as: name), nil)
+            }
+        case "deletePlace":
+            let name = body["name"] as? String ?? ""
+            Task { @MainActor in replyHandler(LocationReminderScheduler.shared.deletePlace(named: name), nil) }
         default:
             replyHandler(nil, "Unsupported request.")
         }
@@ -128,6 +152,8 @@ final class ReminderNotificationBridge: NSObject, WKScriptMessageHandlerWithRepl
                 content.title = "Vox reminder"
                 content.body = reminder.notes.map { "\(reminder.title)\n\($0)" } ?? reminder.title
                 content.sound = .default
+                content.categoryIdentifier = ReminderNotificationPresenter.categoryIdentifier
+                content.userInfo = ["reminderId": reminder.id]
                 let components = Calendar.current.dateComponents(
                     [.year, .month, .day, .hour, .minute, .second],
                     from: reminder.dueAt
@@ -182,9 +208,59 @@ private struct ScheduledReminder {
     }
 }
 
-/// Shows Vox reminder banners even while the app is in the foreground.
+/// Shows Vox reminder banners even while the app is in the foreground, and
+/// handles the "Mark as done" action from the lock screen.
 final class ReminderNotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
     static let shared = ReminderNotificationPresenter()
+    static let categoryIdentifier = "VOX_REMINDER"
+    private static let doneAction = "VOX_REMINDER_DONE"
+
+    func register() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.setNotificationCategories([
+            UNNotificationCategory(
+                identifier: Self.categoryIdentifier,
+                actions: [UNNotificationAction(identifier: Self.doneAction, title: "Mark as done", options: [])],
+                intentIdentifiers: [],
+                options: []
+            ),
+        ])
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        guard response.actionIdentifier == Self.doneAction,
+              let reminderId = response.notification.request.content.userInfo["reminderId"] as? String,
+              reminderId.range(of: #"^[A-Za-z0-9-]{8,64}$"#, options: .regularExpression) != nil else {
+            completionHandler()
+            return
+        }
+        Task { @MainActor in
+            await LocationReminderScheduler.shared.cancel(reminderId: reminderId)
+            await Self.completeReminder(reminderId)
+            completionHandler()
+        }
+    }
+
+    /// Marks the reminder done using the signed-in session the web app stored.
+    @MainActor
+    private static func completeReminder(_ reminderId: String) async {
+        guard let url = URL(string: "/api/reminders", relativeTo: AppConfiguration.voxURL) else { return }
+        let cookies = await WKWebsiteDataStore.default().httpCookieStore.allCookies()
+            .filter { AppConfiguration.trustedHost.hasSuffix($0.domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))) }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        for (field, value) in HTTPCookie.requestHeaderFields(with: cookies) {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["id": reminderId, "status": "completed"])
+        _ = try? await URLSession.shared.data(for: request)
+    }
 
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,

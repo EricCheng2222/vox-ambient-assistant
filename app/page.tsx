@@ -38,6 +38,8 @@ import {
   SwitchCamera,
   Table2,
   Trash2,
+  MapPin,
+  X,
   UserPlus,
   ScanQrCode,
   Volume2,
@@ -96,8 +98,11 @@ import {
 import { formatFileSize, type AgentFile } from "@/lib/agent-file";
 import {
   formatReminderTime,
+  isLocationReminder,
+  isReminderLocationStatus,
   isReminderOverdue,
   isReminderVisible,
+  reminderPlaceLabel,
   reminderPostponeOptions,
   type Reminder,
   type ReminderPostpone,
@@ -434,6 +439,13 @@ declare global {
       sync: (
         reminders: Array<Pick<Reminder, "id" | "title" | "notes" | "dueAt">>,
       ) => Promise<number>;
+      // Added with place-based reminders; older iPhone builds lack these.
+      syncLocations?: (
+        reminders: Array<Pick<Reminder, "id" | "title" | "notes" | "place" | "placeEvent">>,
+      ) => Promise<Array<{ id: string; status: string }>>;
+      places?: () => Promise<string[]>;
+      savePlace?: (name: string) => Promise<{ ok: boolean; error?: string; places?: string[] }>;
+      deletePlace?: (name: string) => Promise<string[]>;
     };
     readonly voxLocalCodex?: {
       available: boolean;
@@ -721,8 +733,37 @@ function browserAlertPermission(): AlertPermission {
 function nativeReminderPayload(reminders: Reminder[]) {
   const now = Date.now();
   return reminders
-    .filter((reminder) => reminder.status === "pending" && Date.parse(reminder.dueAt) > now)
+    .filter(
+      (reminder) =>
+        reminder.status === "pending" &&
+        !isLocationReminder(reminder) &&
+        Date.parse(reminder.dueAt) > now,
+    )
     .map(({ id, title, notes, dueAt }) => ({ id, title, notes, dueAt }));
+}
+
+// Place-based reminders for the iOS app to arm as geofenced notifications.
+function nativeLocationPayload(reminders: Reminder[]) {
+  return reminders
+    .filter((reminder) => reminder.status === "pending" && isLocationReminder(reminder) && reminder.place)
+    .map(({ id, title, notes, place, placeEvent }) => ({ id, title, notes, place, placeEvent }));
+}
+
+function reminderLocationStatusLabel(reminder: Reminder, onIPhone: boolean) {
+  switch (reminder.locationStatus) {
+    case "armed":
+      return "Armed on iPhone";
+    case "place_not_found":
+      return onIPhone
+        ? `Couldn’t find “${reminder.place}” nearby. Save it as a place below.`
+        : `The iPhone couldn’t find “${reminder.place}”. Save it as a place in the iPhone app.`;
+    case "permission_needed":
+      return "Allow location for Vox in iPhone Settings to arm this.";
+    case "limit_reached":
+      return "Not armed: iPhone limits how many places can be watched.";
+    default:
+      return "Arms when you open the Vox iPhone app.";
+  }
 }
 
 function reminderCallLabel(reminder: Reminder, phoneLabel: string | null) {
@@ -1097,6 +1138,9 @@ export default function Home() {
   const macReportSpeakingUntilRef = useRef(0);
   const [busyReminderIds, setBusyReminderIds] = useState<string[]>([]);
   const remindersRef = useRef<Reminder[]>([]);
+  const [savedPlaces, setSavedPlaces] = useState<string[] | null>(null);
+  const [placeName, setPlaceName] = useState("");
+  const [placeSaving, setPlaceSaving] = useState(false);
   const [phoneAssistantCallbackNumber, setPhoneAssistantCallbackNumber] = useState("");
   const [phoneAssistantPassphrase, setPhoneAssistantPassphrase] = useState("");
   const [phoneAssistantBusy, setPhoneAssistantBusy] = useState(false);
@@ -1366,7 +1410,22 @@ export default function Home() {
     // notifications that are still scheduled.
     if (!nativeReminders?.available || remindersLoading || remindersError) return;
     void nativeReminders.sync(nativeReminderPayload(reminders)).catch(() => undefined);
+    void syncLocationReminders();
+    // syncLocationReminders reads the latest reminders through a ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reminders, remindersError, remindersLoading]);
+
+  useEffect(() => {
+    if (!window.voxNativeReminders?.syncLocations) return;
+    void window.voxNativeReminders.places?.().then(setSavedPlaces).catch(() => undefined);
+    // Re-arm place reminders that fired while Vox was in the background.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void syncLocationReminders();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.voxTheme = theme;
@@ -3414,8 +3473,14 @@ export default function Home() {
     ]);
     setRemindersOpen(true);
     toast.success(
-      payload.reminder.delivery === "call" ? "Reminder scheduled · Vox will call you" : "Reminder scheduled",
-      { description: formatReminderTime(payload.reminder.dueAt) },
+      isLocationReminder(payload.reminder)
+        ? "Place reminder set"
+        : payload.reminder.delivery === "call" ? "Reminder scheduled · Vox will call you" : "Reminder scheduled",
+      {
+        description: isLocationReminder(payload.reminder)
+          ? `${reminderPlaceLabel(payload.reminder)} · alerts on your iPhone`
+          : formatReminderTime(payload.reminder.dueAt),
+      },
     );
     return payload.reminder;
   }
@@ -3456,6 +3521,57 @@ export default function Home() {
 
   function reminderToastId(id: string) {
     return `vox-reminder-${id}`;
+  }
+
+  // Asks the iPhone to arm place reminders, then records only whether each one
+  // could be armed. No location data leaves the phone.
+  async function syncLocationReminders() {
+    const syncLocations = window.voxNativeReminders?.syncLocations;
+    if (!syncLocations) return;
+    const current = remindersRef.current;
+    let statuses: Array<{ id: string; status: string }>;
+    try {
+      statuses = await syncLocations(nativeLocationPayload(current));
+    } catch {
+      return;
+    }
+    for (const { id, status } of statuses) {
+      const reminder = remindersRef.current.find((candidate) => candidate.id === id);
+      if (!reminder || !isReminderLocationStatus(status) || reminder.locationStatus === status) continue;
+      void patchReminder(id, { locationStatus: status }).catch(() => undefined);
+    }
+  }
+
+  async function saveCurrentPlace() {
+    const name = placeName.trim();
+    const savePlace = window.voxNativeReminders?.savePlace;
+    if (!name || !savePlace || placeSaving) return;
+    setPlaceSaving(true);
+    try {
+      const result = await savePlace(name);
+      if (!result.ok) throw new Error(result.error ?? "The place could not be saved.");
+      setSavedPlaces(result.places ?? null);
+      setPlaceName("");
+      toast.success(`Saved “${name}”`, { description: "Place reminders for it will use this spot." });
+      void syncLocationReminders();
+    } catch (error) {
+      toast.error("Could not save this place", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setPlaceSaving(false);
+    }
+  }
+
+  async function forgetPlace(name: string) {
+    const deletePlace = window.voxNativeReminders?.deletePlace;
+    if (!deletePlace) return;
+    try {
+      setSavedPlaces(await deletePlace(name));
+      void syncLocationReminders();
+    } catch {
+      toast.error("Could not remove that place");
+    }
   }
 
   function setReminderStatus(reminder: Reminder, status: Reminder["status"]) {
@@ -4377,7 +4493,9 @@ export default function Home() {
           if (!isCurrentTurn()) return;
           sendTurnResponse(
             "final_answer",
-            `${turnLanguageInstruction}\n\nBriefly confirm that the reminder titled ${JSON.stringify(reminder.title)} is scheduled for ${formatReminderTime(reminder.dueAt)}. Mention that browser notifications work while Vox is open. Do not mention model routing or storage internals.`,
+            isLocationReminder(reminder)
+              ? `${turnLanguageInstruction}\n\nBriefly confirm the reminder titled ${JSON.stringify(reminder.title)} for ${JSON.stringify(reminderPlaceLabel(reminder, turnLanguage))}. Mention that it will alert on the user's iPhone through the Vox iPhone app. Do not mention model routing or storage internals.`
+              : `${turnLanguageInstruction}\n\nBriefly confirm that the reminder titled ${JSON.stringify(reminder.title)} is scheduled for ${formatReminderTime(reminder.dueAt)}. Mention that browser notifications work while Vox is open. Do not mention model routing or storage internals.`,
           );
         } catch (error) {
           if (!isCurrentTurn()) return;
@@ -7099,6 +7217,62 @@ export default function Home() {
                           <Bell /> {nativeRemindersAvailable ? "Enable iPhone alerts" : "Enable browser alerts"}
                         </Button>
                       ) : null}
+                      {savedPlaces !== null && (
+                        <div className="mt-4 border-t border-white/8 pt-3">
+                          <p className="flex items-center gap-1.5 text-xs font-medium text-white/70">
+                            <MapPin className="size-3.5" aria-hidden="true" /> Places on this iPhone
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-white/40">
+                            Ask “remind me when I get home”. Save places here; store names such as
+                            全聯 are found nearby automatically. Locations stay on this iPhone.
+                          </p>
+                          {savedPlaces.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {savedPlaces.map((name) => (
+                                <span
+                                  key={name}
+                                  className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] py-0.5 pl-2.5 pr-1 text-xs text-white/75"
+                                >
+                                  {name}
+                                  <button
+                                    type="button"
+                                    className="grid size-5 place-items-center rounded-full text-white/40 hover:bg-white/10 hover:text-white"
+                                    aria-label={`Forget ${name}`}
+                                    onClick={() => void forgetPlace(name)}
+                                  >
+                                    <X className="size-3" aria-hidden="true" />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <form
+                            className="mt-2 flex gap-2"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              void saveCurrentPlace();
+                            }}
+                          >
+                            <input
+                              value={placeName}
+                              onChange={(event) => setPlaceName(event.target.value)}
+                              placeholder="Name this spot, e.g. Home"
+                              maxLength={40}
+                              className="h-8 min-w-0 flex-1 rounded-full border border-white/10 bg-white/[0.04] px-3 text-xs text-white outline-none placeholder:text-white/30 focus:border-white/25"
+                              aria-label="Place name"
+                            />
+                            <Button
+                              type="submit"
+                              size="sm"
+                              variant="outline"
+                              disabled={!placeName.trim() || placeSaving}
+                              className="h-8 shrink-0 rounded-full border-white/10 bg-white/[0.04] text-xs text-white hover:bg-white/10"
+                            >
+                              {placeSaving ? "Saving…" : "Save current location"}
+                            </Button>
+                          </form>
+                        </div>
+                      )}
                       {phoneAssistantStatus?.configured && !reminderCallsAvailable && (
                         <p className="mt-3 text-xs leading-5 text-white/40">
                           Phone-call reminders need a callback number and “calls from
@@ -7158,16 +7332,36 @@ export default function Home() {
                                 <p className="text-sm font-semibold leading-5 text-white/82">
                                   {reminder.title}
                                 </p>
-                                <p
-                                  className={`mt-1.5 text-xs ${
-                                    isReminderOverdue(reminder) ? "text-[#ffaaa4]/85" : "text-[#c8bcff]/70"
-                                  }`}
-                                >
-                                  {isReminderOverdue(reminder) && (
-                                    <span className="font-semibold">Overdue · </span>
-                                  )}
-                                  {formatReminderTime(reminder.dueAt)}
-                                </p>
+                                {isLocationReminder(reminder) ? (
+                                  <>
+                                    <p className="mt-1.5 flex items-center gap-1.5 text-xs text-[#c8bcff]/70">
+                                      <MapPin className="size-3" aria-hidden="true" />
+                                      {reminderPlaceLabel(reminder)}
+                                    </p>
+                                    {reminder.status === "pending" && (
+                                      <p
+                                        className={`mt-1 text-xs ${
+                                          reminder.locationStatus === "armed"
+                                            ? "text-[#f4ff74]/70"
+                                            : "text-white/40"
+                                        }`}
+                                      >
+                                        {reminderLocationStatusLabel(reminder, savedPlaces !== null)}
+                                      </p>
+                                    )}
+                                  </>
+                                ) : (
+                                  <p
+                                    className={`mt-1.5 text-xs ${
+                                      isReminderOverdue(reminder) ? "text-[#ffaaa4]/85" : "text-[#c8bcff]/70"
+                                    }`}
+                                  >
+                                    {isReminderOverdue(reminder) && (
+                                      <span className="font-semibold">Overdue · </span>
+                                    )}
+                                    {formatReminderTime(reminder.dueAt)}
+                                  </p>
+                                )}
                                 {reminder.delivery === "call" && (
                                   <p className="mt-1 flex items-center gap-1.5 text-xs text-[#f4ff74]/70">
                                     <PhoneCall className="size-3" aria-hidden="true" />
@@ -7183,6 +7377,7 @@ export default function Home() {
                               <div className="flex shrink-0 items-center gap-1">
                                 {phoneAssistantStatus?.configured &&
                                   reminder.status === "pending" &&
+                                  !isLocationReminder(reminder) &&
                                   Date.parse(reminder.dueAt) > Date.now() && (
                                   <Button
                                     type="button"
@@ -7220,7 +7415,7 @@ export default function Home() {
                                     <PhoneCall />
                                   </Button>
                                 )}
-                                {reminder.status === "pending" && (
+                                {reminder.status === "pending" && !isLocationReminder(reminder) && (
                                   <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
                                       <Button
