@@ -140,12 +140,21 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
+      const wantsCall = parsed.delivery === "call";
+      const callAvailable = wantsCall && (await canDeliverByCall(auth.user));
       const reminder = await createReminder(auth.user.id, {
         title,
         notes: parsed.notes?.trim().slice(0, 500) || null,
         location: { place, event: parsed.place_event },
+        delivery: callAvailable ? "call" : "app",
       });
-      return Response.json({ reminder }, { status: 201 });
+      return Response.json(
+        {
+          reminder,
+          ...(wantsCall && !callAvailable ? { deliveryNotice: CALL_UNAVAILABLE_MESSAGE } : {}),
+        },
+        { status: 201 },
+      );
     }
     const dueAt = parsed.due_at?.trim() ?? "";
     const dueTime = Date.parse(dueAt);
@@ -229,7 +238,7 @@ export async function PATCH(request: Request) {
     const reminder = await updateReminderDelivery(auth.user.id, id, body.delivery);
     if (!reminder) {
       return Response.json(
-        { error: "Only an upcoming reminder can change how it is delivered." },
+        { error: "Only an open reminder that hasn’t gone off yet can change how it is delivered." },
         { status: 404 },
       );
     }

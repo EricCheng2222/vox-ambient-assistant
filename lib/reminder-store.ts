@@ -75,8 +75,8 @@ export async function createReminder(
       status: "pending",
       source: "conversation",
       notifiedAt: null,
-      // Phone calls need a due time; location reminders alert on the iPhone.
-      delivery: input.location ? "app" : (input.delivery ?? "app"),
+      // A location reminder can call too: the iPhone reports the arrival or departure.
+      delivery: input.delivery ?? "app",
       triggerType: input.location ? "location" : "time",
       place: input.location?.place ?? null,
       placeEvent: input.location?.event ?? null,
@@ -115,7 +115,8 @@ export async function updateReminderDelivery(
   delivery: ReminderDelivery,
 ) {
   const now = new Date().toISOString();
-  // Only a pending, still-future reminder can change how it will be delivered.
+  // Only a pending reminder that hasn't fired yet can change how it will be
+  // delivered: a time reminder still in the future, or any open place reminder.
   const [reminder] = await getDb()
     .update(reminders)
     .set({ delivery, callStatus: null, callAttempts: 0, calledAt: null, updatedAt: now })
@@ -124,8 +125,10 @@ export async function updateReminderDelivery(
         eq(reminders.ownerId, ownerId),
         eq(reminders.id, id),
         eq(reminders.status, "pending"),
-        eq(reminders.triggerType, "time"),
-        gt(reminders.dueAt, now),
+        or(
+          and(eq(reminders.triggerType, "time"), gt(reminders.dueAt, now)),
+          eq(reminders.triggerType, "location"),
+        ),
       ),
     )
     .returning(publicReminder);
@@ -256,5 +259,59 @@ export async function recordReminderCall(id: string, placed: boolean) {
       calledAt: placed ? stamp : undefined,
       updatedAt: stamp,
     })
+    .where(and(eq(reminders.id, id), eq(reminders.callStatus, "calling")));
+}
+
+// Pending place reminders set to call, for the iPhone to watch on its own.
+export async function listLocationCallReminders(ownerId: string) {
+  return getDb()
+    .select({ id: reminders.id })
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.ownerId, ownerId),
+        eq(reminders.status, "pending"),
+        eq(reminders.triggerType, "location"),
+        eq(reminders.delivery, "call"),
+      ),
+    );
+}
+
+// Claims a place reminder's call when the iPhone reports the arrival or
+// departure. Each reminder is called at most once per arming, with retries
+// only after a failed attempt.
+export async function claimLocationReminderCall(id: string, now = new Date()) {
+  const stamp = now.toISOString();
+  const [reminder] = await getDb()
+    .update(reminders)
+    .set({
+      callStatus: "calling",
+      callAttempts: sql`${reminders.callAttempts} + 1`,
+      updatedAt: stamp,
+    })
+    .where(
+      and(
+        eq(reminders.id, id),
+        eq(reminders.status, "pending"),
+        eq(reminders.triggerType, "location"),
+        eq(reminders.delivery, "call"),
+        or(
+          isNull(reminders.callStatus),
+          and(
+            eq(reminders.callStatus, "failed"),
+            lt(reminders.callAttempts, MAX_REMINDER_CALL_ATTEMPTS),
+          ),
+        ),
+      ),
+    )
+    .returning({ ...publicReminder, ownerId: reminders.ownerId });
+  return reminder ?? null;
+}
+
+export async function markLocationReminderCallUnavailable(id: string) {
+  const stamp = new Date().toISOString();
+  await getDb()
+    .update(reminders)
+    .set({ callStatus: "unavailable", updatedAt: stamp })
     .where(and(eq(reminders.id, id), eq(reminders.callStatus, "calling")));
 }

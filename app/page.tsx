@@ -450,7 +450,9 @@ declare global {
       ) => Promise<number>;
       // Added with place-based reminders; older iPhone builds lack these.
       syncLocations?: (
-        reminders: Array<Pick<Reminder, "id" | "title" | "notes" | "place" | "placeEvent">>,
+        reminders: Array<
+          Pick<Reminder, "id" | "title" | "notes" | "place" | "placeEvent"> & { callToken?: string }
+        >,
       ) => Promise<Array<{ id: string; status: string }>>;
       places?: () => Promise<string[]>;
       savePlace?: (name: string) => Promise<{ ok: boolean; error?: string; places?: string[] }>;
@@ -758,17 +760,39 @@ function nativeReminderPayload(reminders: Reminder[]) {
     .map(({ id, title, notes, dueAt }) => ({ id, title, notes, dueAt }));
 }
 
-// Place-based reminders for the iOS app to arm as geofenced notifications.
-function nativeLocationPayload(reminders: Reminder[]) {
+// Place-based reminders for the iOS app to arm as geofenced notifications. A
+// reminder set to call carries a token so the iPhone can ask for the call
+// itself when you arrive or leave, even with Vox in the background.
+function nativeLocationPayload(reminders: Reminder[], callTokens: Record<string, string>) {
   return reminders
     .filter((reminder) => reminder.status === "pending" && isLocationReminder(reminder) && reminder.place)
-    .map(({ id, title, notes, place, placeEvent }) => ({ id, title, notes, place, placeEvent }));
+    .map(({ id, title, notes, place, placeEvent, delivery }) => ({
+      id,
+      title,
+      notes,
+      place,
+      placeEvent,
+      ...(delivery === "call" && callTokens[id] ? { callToken: callTokens[id] } : {}),
+    }));
+}
+
+async function fetchLocationCallTokens(reminders: Reminder[]) {
+  const needsTokens = reminders.some(
+    (reminder) => reminder.status === "pending" && isLocationReminder(reminder) && reminder.delivery === "call",
+  );
+  if (!needsTokens) return {};
+  const response = await fetch("/api/reminders/location-calls", { cache: "no-store" });
+  if (!response.ok) return {};
+  const payload = (await response.json().catch(() => ({}))) as { tokens?: Record<string, string> };
+  return payload.tokens ?? {};
 }
 
 function reminderLocationStatusLabel(reminder: Reminder, onIPhone: boolean) {
   switch (reminder.locationStatus) {
     case "armed":
       return "Armed on iPhone";
+    case "call_needs_always":
+      return "Armed on iPhone. For a call, set Vox’s location access to Always in iPhone Settings.";
     case "place_not_found":
       return onIPhone
         ? `Couldn’t find “${reminder.place}”. Pick it on the map or save it as a place above.`
@@ -796,8 +820,11 @@ function reminderCallLabel(reminder: Reminder, phoneLabel: string | null) {
       return "Call not placed — calls from Vox were off";
     case "missed":
       return "Call not placed — it was already too late";
-    default:
-      return phoneLabel ? `Vox will call ${phoneLabel}` : "Vox will call you";
+    default: {
+      const who = phoneLabel ? `Vox will call ${phoneLabel}` : "Vox will call you";
+      if (!isLocationReminder(reminder)) return who;
+      return `${who} ${reminder.placeEvent === "leave" ? "when you leave" : "when you arrive"}`;
+    }
   }
 }
 
@@ -3751,7 +3778,8 @@ export default function Home() {
     const current = remindersRef.current;
     let statuses: Array<{ id: string; status: string }>;
     try {
-      statuses = await syncLocations(nativeLocationPayload(current));
+      const callTokens = await fetchLocationCallTokens(current).catch(() => ({}));
+      statuses = await syncLocations(nativeLocationPayload(current, callTokens));
     } catch {
       return;
     }
@@ -7684,7 +7712,8 @@ export default function Home() {
                                     {reminder.status === "pending" && (
                                       <p
                                         className={`mt-1 text-xs ${
-                                          reminder.locationStatus === "armed"
+                                          reminder.locationStatus === "armed" ||
+                                          reminder.locationStatus === "call_needs_always"
                                             ? "text-[#f4ff74]/70"
                                             : "text-white/40"
                                         }`}
@@ -7734,8 +7763,9 @@ export default function Home() {
                               <div className="flex shrink-0 items-center gap-1">
                                 {phoneAssistantStatus?.configured &&
                                   reminder.status === "pending" &&
-                                  !isLocationReminder(reminder) &&
-                                  Date.parse(reminder.dueAt) > Date.now() && (
+                                  (isLocationReminder(reminder)
+                                    ? reminder.callStatus !== "called"
+                                    : Date.parse(reminder.dueAt) > Date.now()) && (
                                   <Button
                                     type="button"
                                     size="icon-sm"
@@ -7753,7 +7783,9 @@ export default function Home() {
                                     }
                                     title={
                                       reminder.delivery === "call"
-                                        ? "Vox will phone you when this is due"
+                                        ? isLocationReminder(reminder)
+                                          ? `Vox will phone you ${reminder.placeEvent === "leave" ? "when you leave" : "when you arrive at"} ${reminder.place}`
+                                          : "Vox will phone you when this is due"
                                         : reminderCallsAvailable
                                           ? "Have Vox phone you when this is due"
                                           : "Turn on calls from Vox in Call Vox first"

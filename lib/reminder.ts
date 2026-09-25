@@ -10,7 +10,10 @@ export type ReminderLocationStatus =
   | "place_not_found"
   | "permission_needed"
   | "notifications_off"
-  | "limit_reached";
+  | "limit_reached"
+  // Armed as a notification, but the iPhone can't report the crossing for a
+  // phone call without "Always" location access.
+  | "call_needs_always";
 
 // Location reminders have no due time. They carry this far-future placeholder
 // so every time-based path (due alerts, calls, overdue, postpone) skips them.
@@ -112,7 +115,8 @@ export function isReminderLocationStatus(value: unknown): value is ReminderLocat
     value === "place_not_found" ||
     value === "permission_needed" ||
     value === "notifications_off" ||
-    value === "limit_reached"
+    value === "limit_reached" ||
+    value === "call_needs_always"
   );
 }
 

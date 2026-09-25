@@ -21,6 +21,9 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
     private static let searchRadius: CLLocationDistance = 30_000
     private static let matchesPerSearch = 3
 
+    private static let askedAlwaysKey = "vox.location.askedAlways"
+    private static let callRequestAttempts = 3
+
     private let manager = CLLocationManager()
     private var authorizationWaiters: [(CLAuthorizationStatus) -> Void] = []
     private var locationWaiters: [(CLLocation?) -> Void] = []
@@ -50,6 +53,32 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
             }
         }
         return permission
+    }
+
+    /// Place reminders that phone you need "Always": iOS wakes Vox in the
+    /// background at the place so it can ask the server for the call. iOS
+    /// shows this upgrade prompt only once, so it's requested at most once.
+    private func requestAlwaysPermission() async -> Bool {
+        if manager.authorizationStatus == .authorizedAlways { return true }
+        guard manager.authorizationStatus == .authorizedWhenInUse,
+              !UserDefaults.standard.bool(forKey: Self.askedAlwaysKey) else { return false }
+        UserDefaults.standard.set(true, forKey: Self.askedAlwaysKey)
+        let status: CLAuthorizationStatus = await withCheckedContinuation { continuation in
+            var finished = false
+            let finish: (CLAuthorizationStatus) -> Void = { status in
+                guard !finished else { return }
+                finished = true
+                continuation.resume(returning: status)
+            }
+            authorizationWaiters.append(finish)
+            manager.requestAlwaysAuthorization()
+            // Keeping "While Using" may not report a change; don't wait forever.
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(30))
+                finish(self.manager.authorizationStatus)
+            }
+        }
+        return status == .authorizedAlways
     }
 
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -161,6 +190,8 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
         let notes: String?
         let place: String
         let leaving: Bool
+        /// Present when the reminder should phone you; authorizes that one call.
+        let callToken: String?
 
         init?(_ object: [String: Any]) {
             guard let id = object["id"] as? String,
@@ -177,6 +208,10 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
             self.notes = notes?.isEmpty == false ? String(notes!.prefix(300)) : nil
             self.place = String(place.prefix(80))
             self.leaving = (object["placeEvent"] as? String) == "leave"
+            let token = object["callToken"] as? String
+            self.callToken = token.flatMap {
+                $0.range(of: #"^[A-Za-z0-9_-]{16,128}$"#, options: .regularExpression) != nil ? $0 : nil
+            }
         }
     }
 
@@ -188,6 +223,7 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
         notificationCenter.removePendingNotificationRequests(
             withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix(Self.identifierPrefix) }
         )
+        stopWatching { _ in true }
         guard !reminders.isEmpty else { return [] }
 
         guard await requestPermission() == "granted" else {
@@ -197,6 +233,12 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
         let alerts = await notificationCenter.notificationSettings().authorizationStatus
         guard [.authorized, .provisional, .ephemeral].contains(alerts) else {
             return reminders.map { ["id": $0.id, "status": "notifications_off"] }
+        }
+
+        let wantsCalls = reminders.contains { $0.callToken != nil }
+        var canWatch = false
+        if wantsCalls && CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) {
+            canWatch = await requestAlwaysPermission()
         }
 
         var remaining = Self.maximumRegions
@@ -219,12 +261,29 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
                 let region = CLCircularRegion(center: center, radius: Self.regionRadius, identifier: identifier)
                 region.notifyOnEntry = !reminder.leaving
                 region.notifyOnExit = reminder.leaving
-                let content = UNMutableNotificationContent()
-                content.title = reminder.leaving ? "Leaving \(reminder.place)" : "At \(reminder.place)"
-                content.body = reminder.notes.map { "\(reminder.title)\n\($0)" } ?? reminder.title
-                content.sound = .default
-                content.categoryIdentifier = ReminderNotificationPresenter.categoryIdentifier
-                content.userInfo = ["reminderId": reminder.id]
+                if let token = reminder.callToken, canWatch {
+                    // Vox watches this place itself so it can ask for the call,
+                    // and shows the notification when the crossing happens.
+                    WatchedPlaces.set(identifier, WatchedPlace(
+                        reminderId: reminder.id,
+                        callToken: token,
+                        title: reminder.title,
+                        notes: reminder.notes,
+                        place: reminder.place,
+                        leaving: reminder.leaving
+                    ))
+                    manager.startMonitoring(for: region)
+                    armed += 1
+                    remaining -= 1
+                    continue
+                }
+                let content = Self.notificationContent(
+                    reminderId: reminder.id,
+                    title: reminder.title,
+                    notes: reminder.notes,
+                    place: reminder.place,
+                    leaving: reminder.leaving
+                )
                 do {
                     try await notificationCenter.add(UNNotificationRequest(
                         identifier: identifier,
@@ -238,7 +297,10 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
                 }
             }
             // Report "armed" only when iOS actually accepted a geofence.
-            statuses.append(["id": reminder.id, "status": armed > 0 ? "armed" : "notifications_off"])
+            let status = armed == 0
+                ? "notifications_off"
+                : (reminder.callToken != nil && !canWatch ? "call_needs_always" : "armed")
+            statuses.append(["id": reminder.id, "status": status])
         }
         return statuses
     }
@@ -269,6 +331,7 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
     }
 
     func cancel(reminderId: String) async {
+        stopWatching { $0.reminderId == reminderId }
         let center = UNUserNotificationCenter.current()
         let prefix = "\(Self.identifierPrefix)\(reminderId)-"
         let pending = await center.pendingNotificationRequests()
@@ -278,6 +341,127 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
         center.removeDeliveredNotifications(
             withIdentifiers: (await center.deliveredNotifications()).map(\.request.identifier).filter { $0.hasPrefix(prefix) }
         )
+    }
+
+    private static func notificationContent(
+        reminderId: String,
+        title: String,
+        notes: String?,
+        place: String,
+        leaving: Bool
+    ) -> UNMutableNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = leaving ? "Leaving \(place)" : "At \(place)"
+        content.body = notes.map { "\(title)\n\($0)" } ?? title
+        content.sound = .default
+        content.categoryIdentifier = ReminderNotificationPresenter.categoryIdentifier
+        content.userInfo = ["reminderId": reminderId]
+        return content
+    }
+
+    // MARK: Watched places (reminders that phone you)
+
+    private func stopWatching(where shouldStop: (WatchedPlace) -> Bool) {
+        let watched = WatchedPlaces.load()
+        for region in manager.monitoredRegions where region.identifier.hasPrefix(Self.identifierPrefix) {
+            // A region without a record is left over from an older arming.
+            guard let entry = watched[region.identifier] else {
+                manager.stopMonitoring(for: region)
+                continue
+            }
+            if shouldStop(entry) { manager.stopMonitoring(for: region) }
+        }
+        WatchedPlaces.save(watched.filter { !shouldStop($0.value) })
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
+        let identifier = region.identifier
+        Task { @MainActor in await self.handleCrossing(identifier, exited: false) }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
+        let identifier = region.identifier
+        Task { @MainActor in await self.handleCrossing(identifier, exited: true) }
+    }
+
+    nonisolated func locationManager(
+        _ manager: CLLocationManager,
+        monitoringDidFailFor region: CLRegion?,
+        withError error: Error
+    ) {}
+
+    /// iOS woke Vox (often in the background) because you arrived at or left a
+    /// watched place: show the reminder and ask the server to phone you.
+    private func handleCrossing(_ identifier: String, exited: Bool) async {
+        guard let entry = WatchedPlaces.load()[identifier], entry.leaving == exited else { return }
+        stopWatching { $0.reminderId == entry.reminderId }
+
+        let background = UIApplication.shared.beginBackgroundTask(withName: "Vox place reminder call")
+        defer { UIApplication.shared.endBackgroundTask(background) }
+
+        try? await UNUserNotificationCenter.current().add(UNNotificationRequest(
+            identifier: "\(Self.identifierPrefix)\(entry.reminderId)-now",
+            content: Self.notificationContent(
+                reminderId: entry.reminderId,
+                title: entry.title,
+                notes: entry.notes,
+                place: entry.place,
+                leaving: entry.leaving
+            ),
+            trigger: nil
+        ))
+        await requestCall(reminderId: entry.reminderId, token: entry.callToken)
+    }
+
+    private func requestCall(reminderId: String, token: String) async {
+        var request = URLRequest(url: AppConfiguration.voxURL.appendingPathComponent("api/reminders/location-calls"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["id": reminderId, "token": token])
+        request.timeoutInterval = 15
+        // Leaving home often means dropping off Wi‑Fi, so retry briefly.
+        for attempt in 1...Self.callRequestAttempts {
+            if let (_, response) = try? await URLSession.shared.data(for: request),
+               let status = (response as? HTTPURLResponse)?.statusCode,
+               status < 500 {
+                return
+            }
+            if attempt < Self.callRequestAttempts { try? await Task.sleep(for: .seconds(4)) }
+        }
+    }
+}
+
+/// A place Vox watches itself because its reminder should phone you. Kept on
+/// this iPhone so the call can be requested when iOS relaunches Vox in the
+/// background, before any web page has loaded.
+struct WatchedPlace: Codable {
+    let reminderId: String
+    let callToken: String
+    let title: String
+    let notes: String?
+    let place: String
+    let leaving: Bool
+}
+
+enum WatchedPlaces {
+    private static let key = "vox.location.watchedPlaces"
+
+    static func load() -> [String: WatchedPlace] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let places = try? JSONDecoder().decode([String: WatchedPlace].self, from: data) else {
+            return [:]
+        }
+        return places
+    }
+
+    static func save(_ places: [String: WatchedPlace]) {
+        UserDefaults.standard.set(try? JSONEncoder().encode(places), forKey: key)
+    }
+
+    static func set(_ identifier: String, _ place: WatchedPlace) {
+        var places = load()
+        places[identifier] = place
+        save(places)
     }
 }
 
