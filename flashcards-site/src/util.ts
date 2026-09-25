@@ -1,6 +1,9 @@
 export type Env = {
   DB: D1Database;
   VOX_URL: string;
+  // Service binding to the Vox Worker when both run on one Cloudflare account
+  // (Workers there cannot reach each other through workers.dev URLs).
+  VOX?: Fetcher;
 };
 
 export function now() {

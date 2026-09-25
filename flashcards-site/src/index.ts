@@ -198,8 +198,13 @@ async function route(request: Request, env: Env) {
 
   // ---- Sign in with Vox ----
   if (path === "/auth/login") {
-    const login = await beginVoxLogin(env, origin, url.searchParams.get("return_to") ?? "/");
-    return redirect(login.location, { "Set-Cookie": login.cookie });
+    try {
+      const login = await beginVoxLogin(env, origin, url.searchParams.get("return_to") ?? "/");
+      return redirect(login.location, { "Set-Cookie": login.cookie });
+    } catch (failure) {
+      console.error("Starting Sign in with Vox failed", failure);
+      return html(messagePage("Vox sign-in is unavailable", "Please try again in a moment.", { href: "/auth/login", label: "Try again" }), 503);
+    }
   }
   if (path === "/auth/callback") {
     const error = url.searchParams.get("error");

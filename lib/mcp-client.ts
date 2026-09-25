@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { and, eq, gt, lte } from "drizzle-orm";
 
 import { getDb } from "@/db";
@@ -63,9 +64,21 @@ async function decrypt(ciphertext: string, iv: string) {
   return new TextDecoder().decode(plaintext);
 }
 
+/**
+ * Server-to-server requests to the flash-card site go through its service
+ * binding when deployed on the same Cloudflare account; otherwise over HTTPS.
+ */
+function serverFetch(url: string, init?: RequestInit) {
+  const binding = (env as { FLASHCARDS?: Fetcher }).FLASHCARDS;
+  if (binding && new URL(url).host === new URL(flashcardsServerUrl()).host) {
+    return binding.fetch(new Request(url, init));
+  }
+  return fetch(url, init);
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T | null> {
   try {
-    const response = await fetch(url, init);
+    const response = await serverFetch(url, init);
     if (!response.ok) return null;
     return (await response.json()) as T;
   } catch {
@@ -249,7 +262,7 @@ export async function disconnect(ownerId: string, serverUrl: string) {
 /** True unless the server rejects the token (for example after the user revoked Vox there). */
 export async function isTokenAccepted(serverUrl: string, token: string) {
   try {
-    const response = await fetch(serverUrl, {
+    const response = await serverFetch(serverUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ jsonrpc: "2.0", id: "vox-check", method: "ping" }),

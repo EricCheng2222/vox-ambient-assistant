@@ -47,6 +47,11 @@ config.durable_objects = {
     },
   ],
 };
+// Direct link to the Vox Flash Cards Worker: Workers on one account cannot
+// fetch each other's workers.dev URLs, so server-to-server calls use this.
+config.services = [
+  { binding: "FLASHCARDS", service: process.env.FLASHCARDS_WORKER_NAME?.trim() || "vox-flashcards" },
+];
 // Every minute: place phone calls for reminders that asked to be delivered by call.
 config.triggers = { crons: ["* * * * *"] };
 config.migrations = [

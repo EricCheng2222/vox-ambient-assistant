@@ -5,11 +5,17 @@ import { type Env, now, randomSecret, sha256 } from "./util.ts";
 // for this site and never shares the user's Vox data.
 const LOGIN_TTL_MS = 10 * 60_000;
 
+/** Calls Vox directly through the service binding when available. */
+function voxFetch(env: Env, url: string, init?: RequestInit) {
+  if (env.VOX && new URL(url).host === new URL(env.VOX_URL).host) return env.VOX.fetch(new Request(url, init));
+  return fetch(url, init);
+}
+
 type VoxClient = { clientId: string; redirectUri: string; issuer: string };
 
 async function voxMetadata(env: Env) {
   const issuer = env.VOX_URL.replace(/\/+$/u, "");
-  const response = await fetch(`${issuer}/.well-known/oauth-authorization-server`);
+  const response = await voxFetch(env, `${issuer}/.well-known/oauth-authorization-server`);
   if (!response.ok) throw new Error("Vox sign-in is unavailable.");
   const metadata = (await response.json()) as {
     authorization_endpoint: string;
@@ -27,7 +33,7 @@ async function voxClient(env: Env, origin: string, metadata: Awaited<ReturnType<
     .bind(metadata.issuer)
     .first<VoxClient>();
   if (existing && existing.redirectUri === redirectUri) return existing;
-  const response = await fetch(metadata.registration_endpoint, {
+  const response = await voxFetch(env, metadata.registration_endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ client_name: "Vox Flash Cards", redirect_uris: [redirectUri], scope: "identity" }),
@@ -107,7 +113,7 @@ export async function finishVoxLogin(env: Env, request: Request, origin: string,
   if (!login) throw new Error("This sign-in link expired. Please try again.");
   const metadata = await voxMetadata(env);
   const client = await voxClient(env, origin, metadata);
-  const tokenResponse = await fetch(metadata.token_endpoint, {
+  const tokenResponse = await voxFetch(env, metadata.token_endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -120,7 +126,7 @@ export async function finishVoxLogin(env: Env, request: Request, origin: string,
   });
   const tokens = (await tokenResponse.json().catch(() => ({}))) as { access_token?: string };
   if (!tokenResponse.ok || !tokens.access_token) throw new Error("Vox did not confirm the sign-in.");
-  const infoResponse = await fetch(metadata.userinfo_endpoint, {
+  const infoResponse = await voxFetch(env, metadata.userinfo_endpoint, {
     headers: { Authorization: `Bearer ${tokens.access_token}` },
   });
   const info = (await infoResponse.json().catch(() => ({}))) as { sub?: string; name?: string };

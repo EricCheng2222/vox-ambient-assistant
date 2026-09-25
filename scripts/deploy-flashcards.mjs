@@ -14,6 +14,8 @@ const output = resolve("flashcards-site/wrangler.deploy.json");
 const config = JSON.parse(readFileSync(source, "utf8").replace(/^\s*\/\/.*$/gmu, ""));
 config.d1_databases[0].database_id = databaseId;
 if (process.env.FLASHCARDS_VOX_URL?.trim()) config.vars.VOX_URL = process.env.FLASHCARDS_VOX_URL.trim();
+// Direct link to the Vox Worker on the same Cloudflare account.
+config.services = [{ binding: "VOX", service: process.env.CLOUDFLARE_WORKER_NAME?.trim() || "vox-assistant" }];
 delete config.$schema;
 writeFileSync(output, `${JSON.stringify(config, null, 2)}\n`);
 
