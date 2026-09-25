@@ -1685,6 +1685,26 @@ export default function Home() {
 
   useEffect(() => {
     if (authState !== "authenticated" || connectionMode !== "cloud") return;
+    // Reminders made on another device (for example the iPhone) appear here
+    // when Vox comes to the front and every 15 seconds while it is visible.
+    // Skip while a local change is saving so it isn't briefly overwritten.
+    const refreshReminders = () => {
+      if (document.visibilityState === "visible" && reminderBusyRef.current.size === 0) {
+        void loadReminders();
+      }
+    };
+    window.addEventListener("focus", refreshReminders);
+    document.addEventListener("visibilitychange", refreshReminders);
+    const timer = window.setInterval(refreshReminders, 15_000);
+    return () => {
+      window.removeEventListener("focus", refreshReminders);
+      document.removeEventListener("visibilitychange", refreshReminders);
+      window.clearInterval(timer);
+    };
+  }, [authState, connectionMode]);
+
+  useEffect(() => {
+    if (authState !== "authenticated" || connectionMode !== "cloud") return;
     void checkDueReminders();
     const timer = window.setInterval(() => void checkDueReminders(), 15_000);
     return () => window.clearInterval(timer);
@@ -2144,7 +2164,9 @@ export default function Home() {
     try {
       const status = await operation();
       setRemotePairingStatus((current) => current ? { ...current, ...status } : current);
-      toast.success(armed ? "Remote control allowed until Vox quits" : "Remote control paused");
+      toast.success(armed ? "Remote control allowed" : "Remote control paused", {
+        description: armed ? "It stays on after Vox restarts until you pause it." : undefined,
+      });
     } catch (error) {
       setRemotePairingError(error instanceof Error ? error.message : "Could not change remote-control access.");
     } finally {
@@ -6478,7 +6500,7 @@ export default function Home() {
                           : "h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"}
                       >
                         <ShieldCheck />
-                        {remotePairingStatus.armed ? "Pause remote control now" : "Allow remote control until Vox quits"}
+                        {remotePairingStatus.armed ? "Pause remote control" : "Allow remote control"}
                       </Button>
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
@@ -7420,7 +7442,10 @@ export default function Home() {
                 open={remindersOpen}
                 onOpenChange={(open) => {
                   setRemindersOpen(open);
-                  if (open) readAlertPermission();
+                  if (open) {
+                    readAlertPermission();
+                    void loadReminders();
+                  }
                 }}
               >
                 <SheetTrigger asChild>

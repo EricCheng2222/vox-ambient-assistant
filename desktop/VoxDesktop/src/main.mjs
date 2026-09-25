@@ -90,9 +90,18 @@ let remoteRelayInFlight = false;
 let lastRemoteHeartbeatAt = 0;
 let lastRemoteDesktopAppId = "";
 let lastRemoteDesktopAppAt = 0;
-// Deliberately memory-only: relaunching Vox always returns remote control to a
-// safe, disarmed state even when the phone remains paired.
+// The user's choice is remembered in settings (remoteControlEnabled) so it
+// survives relaunches and updates. It is restored only while the phone pairing
+// is still active, and revoking or re-pairing the phone turns it off.
 let remoteControlArmed = false;
+
+async function setRemoteControlEnabled(enabled) {
+  remoteControlArmed = enabled;
+  const settings = await readSettings();
+  if (Boolean(settings.remoteControlEnabled) !== enabled) {
+    await saveSettings({ ...settings, remoteControlEnabled: enabled });
+  }
+}
 
 function remoteControlArmStatus() {
   return { armed: remoteControlArmed };
@@ -924,7 +933,7 @@ async function processRemoteRelay() {
           processedRemoteCommandIds: [...processed.slice(-99), envelope.id],
         });
         if (!remoteControlArmStatus().armed) {
-          throw new Error("Remote control is paused on this Mac. Open Vox Desktop and allow it until Vox quits.");
+          throw new Error("Remote control is paused on this Mac. Open Vox Desktop and allow remote control.");
         }
         // Acknowledge before running: this refuses a command that expired in
         // the queue and extends a started one so a long task can finish.
@@ -1119,13 +1128,13 @@ function registerIpcHandlers() {
     if (!pairing || pairing.status !== "active") {
       throw new Error("Pair and activate a phone before enabling remote control.");
     }
-    remoteControlArmed = true;
+    await setRemoteControlEnabled(true);
     return remoteControlArmStatus();
   });
 
-  ipcMain.handle("vox-remote:disarm", (event) => {
+  ipcMain.handle("vox-remote:disarm", async (event) => {
     requireTrustedVoxSender(event);
-    remoteControlArmed = false;
+    await setRemoteControlEnabled(false);
     return remoteControlArmStatus();
   });
 
@@ -1164,7 +1173,10 @@ function registerIpcHandlers() {
         encryptedSecret: safeStorage.encryptString(secret).toString("base64"),
       },
       processedRemoteCommandIds: [],
+      // A new phone starts paused; the user enables control for it explicitly.
+      remoteControlEnabled: false,
     });
+    remoteControlArmed = false;
     lastRemoteHeartbeatAt = 0;
     void processRemoteRelay();
     return {
@@ -1192,6 +1204,7 @@ function registerIpcHandlers() {
     const remaining = { ...settings };
     delete remaining.remoteMacPairing;
     delete remaining.processedRemoteCommandIds;
+    delete remaining.remoteControlEnabled;
     await saveSettings(remaining);
     remoteControlArmed = false;
     lastRemoteHeartbeatAt = 0;
@@ -1648,7 +1661,14 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  activeConnectionMode = connectionMode((await readSettings()).connectionMode);
+  const startupSettings = await readSettings();
+  activeConnectionMode = connectionMode(startupSettings.connectionMode);
+  // Restore remote control if the user left it on and the phone is still paired.
+  remoteControlArmed = Boolean(
+    startupSettings.remoteControlEnabled &&
+      activeConnectionMode === "cloud" &&
+      unlockedRemotePairing(startupSettings)?.status === "active",
+  );
   localVoxServer = await startLocalVoxServer(localWebRoot(), {
     cloudOrigin: productionUrl,
     desktopSessionHeader,
@@ -1675,6 +1695,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  // Stop acting on commands now; the saved choice is restored at next launch.
   remoteControlArmed = false;
   if (remoteRelayTimer) clearInterval(remoteRelayTimer);
   remoteRelayTimer = null;

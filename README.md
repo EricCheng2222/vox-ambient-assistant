@@ -199,7 +199,7 @@ Cloud memory is separate from this short-term context window. Vox stores concise
 | macOS says the developer cannot be verified | Use **Privacy & Security → Open Anyway** only for a build you made from this repository. |
 | Codex or Computer Use is unavailable | Confirm that local Codex is installed and signed in, then check its local app permissions. |
 | The phone shows Mac offline | Keep Vox Desktop running in Cloud mode, confirm both devices use the same Vox account, and wait a few seconds for the encrypted relay heartbeat. |
-| A paired phone does not control the Mac | In Vox Desktop, open **Phone control** and enable remote control until Vox quits. Then, on the phone, open **Route** and explicitly choose **Paired Mac**. Pairing alone grants no control. |
+| A paired phone does not control the Mac | In Vox Desktop, open **Phone control** and allow remote control. It stays on after Vox restarts or updates until you pause it. Then, on the phone, open **Route** and explicitly choose **Paired Mac**. Pairing alone grants no control. |
 | The app says a provider budget is exhausted | Add provider credit or wait for the provider limit to reset. Personal mode uses your own provider accounts. |
 
 ## Development

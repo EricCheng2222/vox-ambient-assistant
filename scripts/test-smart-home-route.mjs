@@ -69,10 +69,10 @@ assert.equal(
 );
 assert.equal(
   smartHomeFailureMessage(
-    "Remote control is paused on this Mac. Open Vox Desktop and allow it until Vox quits.",
+    "Remote control is paused on this Mac. Open Vox Desktop and allow remote control.",
     "taiwan_mandarin",
   ),
-  "Mac 上的遠端控制目前暫停中。請在 Vox Desktop 的「Phone control」選擇允許直到 Vox 結束，再試一次。",
+  "Mac 上的遠端控制目前暫停中。請在 Vox Desktop 的「Phone control」開啟遠端控制，再試一次。",
 );
 assert.match(
   smartHomeFailureMessage("The Mac did not answer before the command expired.", "english"),
