@@ -1190,6 +1190,9 @@ export default function Home() {
   // reply's calls have all finished, Vox asks the model to carry on.
   const completedMcpCallsRef = useRef(new Set<string>());
   const studyAwaitingCallsRef = useRef<{ ids: string[]; wrapUp: boolean } | null>(null);
+  // The study opening waits until Realtime has loaded the flash-card tools;
+  // requiring a tool call before then is rejected.
+  const studyOpeningRef = useRef<{ event: string; timer: number } | null>(null);
   const studyContinuationsRef = useRef(0);
   const [busyReminderIds, setBusyReminderIds] = useState<string[]>([]);
   const remindersRef = useRef<Reminder[]>([]);
@@ -2600,7 +2603,6 @@ export default function Home() {
               {
                 type: "mcp",
                 server_label: "flashcards",
-                server_description: "The user's Vox Flash Cards: decks, cards, and review scheduling.",
                 server_url: access.serverUrl,
                 authorization: access.token,
                 require_approval: "never",
@@ -2614,8 +2616,15 @@ export default function Home() {
       setStudying(true);
       refreshRealtimeContext();
       lastAssistantAtRef.current = Date.now();
-      channel.send(
-        JSON.stringify({
+      if (studyOpeningRef.current) window.clearTimeout(studyOpeningRef.current.timer);
+      studyOpeningRef.current = {
+        timer: window.setTimeout(() => {
+          if (!studyOpeningRef.current) return;
+          studyOpeningRef.current = null;
+          toast.error("Couldn’t reach your flash cards", { description: "Try again in a moment." });
+          stopStudy(false);
+        }, 20_000),
+        event: JSON.stringify({
           type: "response.create",
           response: {
             metadata: { vox_kind: "study_open" },
@@ -2628,7 +2637,7 @@ export default function Home() {
             ].join("\n\n"),
           },
         }),
-      );
+      };
     } catch (error) {
       toast.error("Couldn’t start studying", {
         description: error instanceof Error ? error.message : undefined,
@@ -2638,6 +2647,10 @@ export default function Home() {
 
   function stopStudy(wrapUp: boolean) {
     pendingStudyRef.current = null;
+    if (studyOpeningRef.current) {
+      window.clearTimeout(studyOpeningRef.current.timer);
+      studyOpeningRef.current = null;
+    }
     if (!studyModeRef.current) return;
     studyModeRef.current = null;
     setStudying(false);
@@ -5344,7 +5357,21 @@ export default function Home() {
         continueStudyAfterTools();
         break;
       }
+      case "mcp_list_tools.completed": {
+        const opening = studyOpeningRef.current;
+        if (opening && studyModeRef.current && channelRef.current?.readyState === "open") {
+          window.clearTimeout(opening.timer);
+          studyOpeningRef.current = null;
+          lastAssistantAtRef.current = Date.now();
+          channelRef.current.send(opening.event);
+        }
+        break;
+      }
       case "mcp_list_tools.failed": {
+        if (studyOpeningRef.current) {
+          window.clearTimeout(studyOpeningRef.current.timer);
+          studyOpeningRef.current = null;
+        }
         if (studyModeRef.current) {
           toast.error("Couldn’t reach your flash cards", { description: "Try again in a moment." });
           stopStudy(false);
