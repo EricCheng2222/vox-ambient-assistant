@@ -22,6 +22,8 @@ const cloudApiMethods = new Map([
   ["/api/device-commands", new Set(["GET", "POST", "PATCH"])],
   ["/api/device-pairing", new Set(["GET", "POST", "DELETE"])],
   ["/api/files", new Set(["GET", "POST", "DELETE"])],
+  ["/api/connections/flashcards", new Set(["GET", "POST", "DELETE"])],
+  ["/api/flashcards/study-token", new Set(["POST"])],
   ["/api/invites", new Set(["GET", "POST"])],
   ["/api/jev-presence", new Set(["POST"])],
   ["/api/jev-route", new Set(["POST"])],

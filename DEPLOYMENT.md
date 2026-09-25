@@ -99,6 +99,18 @@ Or, after the resources and secrets are configured, run `npm run deploy:cloudfla
 
 After the first deployment, attach a custom domain in Cloudflare Workers & Pages. HTTPS is required for browser microphone access and for the secure Vox session cookie.
 
+## Vox Flash Cards (optional)
+
+Flash cards run on their own Worker, with its own D1 database, in `flashcards-site/`. Vox connects to it as an MCP client, and its users sign in with their Vox account.
+
+```bash
+npx wrangler d1 create vox-flashcards   # once; copy the database id
+export FLASHCARDS_D1_DATABASE_ID=<that id>
+npm run flashcards:deploy               # applies migrations and deploys
+```
+
+The site's `VOX_URL` (in `flashcards-site/wrangler.jsonc`, or `FLASHCARDS_VOX_URL` at deploy time) must point to your Vox deployment. Vox uses `https://vox-flashcards.<your-subdomain>.workers.dev/mcp` by default. Set `FLASHCARDS_MCP_URL` on the Vox Worker if the site lives elsewhere. No secrets are needed: every token is random and stored hashed, and Vox encrypts its connection tokens with `VOX_CONTACT_SECRET`.
+
 ## Reminder delivery
 
 Reminder schedules are persisted in D1 and can be delivered three ways:

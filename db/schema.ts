@@ -248,3 +248,71 @@ export const phoneCallSessions = sqliteTable(
     ),
   ],
 );
+
+// Vox as a sign-in provider ("Sign in with Vox") for sites the user approves,
+// such as Vox Flash Cards. Clients register dynamically and use PKCE.
+export const oauthClients = sqliteTable("oauth_clients", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  redirectUris: text("redirect_uris").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const oauthCodes = sqliteTable("oauth_codes", {
+  codeHash: text("code_hash").primaryKey(),
+  clientId: text("client_id").notNull(),
+  ownerId: text("owner_id").notNull(),
+  redirectUri: text("redirect_uri").notNull(),
+  codeChallenge: text("code_challenge").notNull(),
+  expiresAt: text("expires_at").notNull(),
+});
+
+// Short-lived identity tokens; they only unlock /api/oauth/userinfo.
+export const oauthTokens = sqliteTable(
+  "oauth_tokens",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    clientId: text("client_id").notNull(),
+    expiresAt: text("expires_at").notNull(),
+  },
+  (table) => [index("idx_oauth_tokens_expires").on(table.expiresAt)],
+);
+
+// Vox as an MCP client: its registration with each MCP authorization server,
+// in-flight connection attempts, and each user's encrypted connection tokens.
+export const mcpClientRegistrations = sqliteTable("mcp_client_registrations", {
+  issuer: text("issuer").primaryKey(),
+  clientId: text("client_id").notNull(),
+  redirectUri: text("redirect_uri").notNull(),
+  authorizationEndpoint: text("authorization_endpoint").notNull(),
+  tokenEndpoint: text("token_endpoint").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const mcpAuthStates = sqliteTable("mcp_auth_states", {
+  stateHash: text("state_hash").primaryKey(),
+  ownerId: text("owner_id").notNull(),
+  serverUrl: text("server_url").notNull(),
+  issuer: text("issuer").notNull(),
+  codeVerifier: text("code_verifier").notNull(),
+  expiresAt: text("expires_at").notNull(),
+});
+
+export const mcpConnections = sqliteTable(
+  "mcp_connections",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    serverUrl: text("server_url").notNull(),
+    issuer: text("issuer").notNull(),
+    accessCiphertext: text("access_ciphertext").notNull(),
+    accessIv: text("access_iv").notNull(),
+    accessExpiresAt: text("access_expires_at").notNull(),
+    refreshCiphertext: text("refresh_ciphertext"),
+    refreshIv: text("refresh_iv"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [uniqueIndex("idx_mcp_connections_owner_server").on(table.ownerId, table.serverUrl)],
+);

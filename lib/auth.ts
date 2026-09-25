@@ -255,6 +255,15 @@ export async function getAuthorizedUser(
   }
 }
 
+/** The display name of an existing account, or null when it no longer exists. */
+export async function getUserDisplayName(userId: string): Promise<string | null> {
+  const config = authConfig();
+  if (!config) return process.env.NODE_ENV !== "production" && userId === LOCAL_USER.id ? LOCAL_USER.displayName : null;
+  const configured = config.users.find((candidate) => candidate.id === userId);
+  if (configured) return configured.displayName;
+  return (await activationUserById(userId))?.displayName ?? null;
+}
+
 export async function isRequestAuthorized(request: Request) {
   return Boolean(await getAuthorizedUser(request));
 }

@@ -1,0 +1,21 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "vox-flashcards",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vox-flashcards",
+      // Replaced with the real id by `npm run flashcards:deploy`.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    // The Vox deployment whose accounts sign in here.
+    "VOX_URL": "https://vox-assistant.ericcheng306.workers.dev"
+  },
+  "observability": { "enabled": true }
+}

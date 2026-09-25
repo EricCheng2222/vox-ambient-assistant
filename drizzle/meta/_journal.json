@@ -134,6 +134,13 @@
       "when": 1790347232962,
       "tag": "0018_location_reminders",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1790355778443,
+      "tag": "0019_vox_oauth_mcp_client",
+      "breakpoints": true
     }
   ]
 }

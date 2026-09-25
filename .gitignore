@@ -41,6 +41,8 @@ next-env.d.ts
 *.tsbuildinfo
 /dist/
 /.wrangler/
+/flashcards-site/.wrangler/
+/flashcards-site/wrangler.deploy.json
 # Checkout-local execution profile and tool state; never publish them.
 /.sites-runtime/
 /.agents/

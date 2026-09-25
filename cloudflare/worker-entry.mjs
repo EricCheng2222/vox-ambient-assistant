@@ -61,9 +61,25 @@ async function dispatchReminderCalls(env, context) {
   if (!response.ok) console.error("Reminder call dispatch returned", response.status);
 }
 
+// "Sign in with Vox" discovery lives at a fixed /.well-known path (RFC 8414);
+// serve it from an API route.
+function wellKnownRewrite(request) {
+  const url = new URL(request.url);
+  if (!url.pathname.startsWith("/.well-known/")) return request;
+  let target = null;
+  if (
+    url.pathname.startsWith("/.well-known/oauth-authorization-server") ||
+    url.pathname.startsWith("/.well-known/openid-configuration")
+  ) {
+    target = "/api/oauth/authorization-server";
+  }
+  if (!target) return request;
+  return new Request(new URL(target, url.origin), { method: request.method, headers: request.headers });
+}
+
 const worker = {
   async fetch(request, env, context) {
-    return securedResponse(await runApplication(request, env, context));
+    return securedResponse(await runApplication(wellKnownRewrite(request), env, context));
   },
   async scheduled(_event, env, context) {
     context.waitUntil(dispatchReminderCalls(env, context));

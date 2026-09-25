@@ -35,6 +35,19 @@ Security fixes currently target the latest commit on `main` and the latest deskt
 - The relay cannot bypass the Mac's installed-app resolution, blocked-action policy, Codex sandbox, or native confirmation for remote Codex tasks. Revoking a pairing removes its relay queue and deletes the Mac's local key.
 - A database or relay-only compromise cannot decrypt or forge a paired command. A full hosted-origin compromise while the phone web app is open is a broader supply-chain threat: same-origin JavaScript can use session-held pairing authority. The local enable switch, command expiry, installed-app checks, blocked-action policy, and native confirmations remain the final boundaries. High-risk actions are intentionally unsupported rather than delegated to the relay.
 
+## Sign in with Vox and flash cards
+
+- **Vox as a sign-in provider.** Vox offers OAuth 2.1 (dynamic registration, PKCE S256, exact redirect URIs) solely to confirm identity. A site the user approves receives a ten-minute token that unlocks only `/api/oauth/userinfo`. That endpoint returns a per-site account id (an HMAC of the site and user, so different sites cannot correlate users) and the display name. No Vox data is exposed. The approval page submits with a same-origin request and rejects other origins.
+- **Vox Flash Cards** is an independent Worker with its own database. It stores decks and cards keyed by that per-site id.
+  - It is the OAuth authorization server for its MCP endpoint. Codes are single-use (five minutes), access tokens last one hour, and refresh tokens last 60 days and rotate on use. All are stored as SHA-256 hashes.
+  - Its editor uses a SameSite=Lax session cookie and requires same-origin requests for changes.
+  - Its “Sign in with Vox” flow binds each login to the starting browser with a short-lived cookie, which prevents login CSRF.
+- **Vox as an MCP client.** Vox connects to the flash-card server with the same OAuth flow as any MCP app.
+  - The connection completes only in a browser signed in to the Vox account that started it: the callback page submits with a same-origin request, and Vox checks that the state belongs to that account.
+  - Tokens are stored AES-GCM encrypted and refreshed server-side.
+  - Before each study session Vox checks the token. If the user disconnected Vox on the flash-card site, the connection is removed and Vox asks to connect again.
+  - The live voice session receives only the current short-lived access token, which OpenAI Realtime uses to call the flash-card server.
+
 ## Place-based reminders
 
 - Location never leaves the iPhone. Saved places are stored in the iOS Keychain (this device only), nearby searches run through MapKit on the device, and iOS monitors the geofences. The backend stores only the place name from the user's request, the arrival or departure choice, and a status (armed, place not found, location or notification permission needed, or limit reached).

@@ -27,12 +27,16 @@
     "test:smart-home-route": "node --experimental-strip-types scripts/test-smart-home-route.mjs",
     "test:remote-control": "node --experimental-strip-types scripts/test-remote-control.mjs",
     "test:phone-assistant": "node --experimental-strip-types scripts/test-phone-assistant.mjs",
+    "test:flashcards": "node --experimental-strip-types scripts/test-flashcards.mjs",
     "test:conversation-context": "node --experimental-strip-types scripts/test-conversation-context.mjs",
     "db:generate": "drizzle-kit generate",
     "deploy:prepare": "node scripts/prepare-cloudflare-deploy.mjs",
     "deploy:migrate": "wrangler d1 migrations apply DB --remote --config dist/server/wrangler.deploy.json",
     "deploy:worker": "wrangler deploy --config dist/server/wrangler.deploy.json",
-    "deploy:cloudflare": "npm run build && npm run deploy:prepare && npm run deploy:migrate && npm run deploy:worker"
+    "deploy:cloudflare": "npm run build && npm run deploy:prepare && npm run deploy:migrate && npm run deploy:worker",
+    "flashcards:dev": "wrangler dev --config flashcards-site/wrangler.jsonc --local --persist-to .wrangler/flashcards",
+    "flashcards:deploy": "node scripts/deploy-flashcards.mjs",
+    "flashcards:typecheck": "tsc -p flashcards-site"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

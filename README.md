@@ -128,6 +128,23 @@ The interface labels the scopes explicitly:
 - **Device · This Mac** — API keys, Codex workspace, installed-app access, Computer Use, macOS permissions, and smart-home credentials. Account data can never enable or widen these local capabilities.
 - **Route · Web only / Paired Mac** — a phone-web choice that determines whether local-capability requests remain unavailable or are sent through its encrypted pairing. Pairing alone never changes this choice.
 
+## Flash cards
+
+Your flash cards live on **Vox Flash Cards**, a separate site with its own MCP server, and Vox connects to it as an MCP client. Say “let’s review my flash cards,” “quiz me on my Japanese deck,” or 考我單字卡, and Vox studies with you like a friend:
+
+- one card at a time, waiting for your answer;
+- accepts answers that mean the same thing, gives a hint when you’re stuck, and tells you the answer when you miss;
+- moves straight to the next card.
+
+Say “that’s enough” or 先到這裡 to stop, and Vox sums up how you did. Scheduling is spaced repetition: missed cards return later in the same session, and cards you know well come back less often.
+
+- **Manage cards** on the Vox Flash Cards site (`flashcards-site/`, deployed as its own Worker). **Sign in with Vox** uses your existing Vox account; the site has no passwords of its own. You can also add or fix cards by voice while studying.
+- **Connect Vox once** from **Flash cards** in the Vox header. You sign in on the flash-card site and allow Vox. Vox then stores the connection tokens encrypted, refreshes them automatically, and hands a current access token to its live voice session, which calls the site's MCP tools through OpenAI Realtime. Disconnecting on either side takes effect immediately.
+- **Other MCP apps:** add `https://<flash-card site>/mcp` as a custom connector in Claude, ChatGPT, or another MCP client. It signs you in with your Vox account the same way. Manage connected apps on the flash-card site.
+- **What the site learns from Vox:** only your display name and an account id made for that site. Vox shares no other data.
+
+Flash cards require Vox Cloud. Personal mode does not use the Vox backend.
+
 ## Place-based reminders
 
 Ask for a reminder tied to a place, such as “remind me to take out the trash when I get home,” “離開公司時提醒我帶傘,” or “remind me to buy milk when I’m at 全聯.” You can ask from any device. The **Vox iPhone app** arms the reminder, and iOS alerts you when you arrive or leave, even while Vox is closed.

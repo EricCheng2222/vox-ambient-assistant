@@ -168,6 +168,14 @@ import {
   type VisualTheme,
 } from "@/lib/visual-theme";
 import { playHudCue, type HudCue } from "@/lib/hud-sounds";
+import { FlashcardsConnection, openFlashcardsConnection } from "@/components/flashcards-connection";
+import {
+  isFlashcardStudyRequest,
+  isStudyStopRequest,
+  STUDY_PERSONA_INSTRUCTIONS,
+  studyOpeningInstructions,
+  studyWrapUpInstructions,
+} from "@/lib/flashcard-study";
 import {
   fallbackVisionNeed,
   visualTurnInstruction,
@@ -386,6 +394,7 @@ type RealtimeEvent = {
   response?: {
     id?: string;
     metadata?: Record<string, string>;
+    output?: Array<{ id?: string; type?: string }>;
   };
 };
 
@@ -1145,6 +1154,16 @@ export default function Home() {
   // Set while Vox speaks a task update, so a turn reply waits instead of
   // colliding with it (Realtime allows one active response).
   const macReportSpeakingUntilRef = useRef(0);
+  // Flash-card study mode: Vox's voice session is connected to the user's
+  // flash-card MCP server and every turn goes to the study tutor.
+  const studyModeRef = useRef<{ deck: string | null } | null>(null);
+  const pendingStudyRef = useRef<{ request: string; deck: string | null } | null>(null);
+  const [studying, setStudying] = useState(false);
+  // Realtime does not continue after an MCP call on its own: once a study
+  // reply's calls have all finished, Vox asks the model to carry on.
+  const completedMcpCallsRef = useRef(new Set<string>());
+  const studyAwaitingCallsRef = useRef<{ ids: string[]; wrapUp: boolean } | null>(null);
+  const studyContinuationsRef = useRef(0);
   const [busyReminderIds, setBusyReminderIds] = useState<string[]>([]);
   const remindersRef = useRef<Reminder[]>([]);
   const [savedPlaces, setSavedPlaces] = useState<string[] | null>(null);
@@ -2369,7 +2388,11 @@ export default function Home() {
   }
 
   function voiceInstructions(): string {
-    return [buildVoiceInstructions(memoriesRef.current, themeRef.current), macTaskInstruction()]
+    return [
+      buildVoiceInstructions(memoriesRef.current, themeRef.current),
+      macTaskInstruction(),
+      studyModeRef.current ? STUDY_PERSONA_INSTRUCTIONS : "",
+    ]
       .filter(Boolean)
       .join("\n\n");
   }
@@ -2462,6 +2485,170 @@ export default function Home() {
             text: error instanceof Error ? error.message : "The Mac could not complete the task.",
           });
         });
+    }
+  }
+
+  function startStudy(request: string, deck: string | null) {
+    if (connectionMode !== "cloud") {
+      toast.error("Flash cards need Vox Cloud");
+      return;
+    }
+    if (channelRef.current?.readyState === "open") {
+      void beginStudy(request, deck);
+      return;
+    }
+    // Start the voice session first; the study begins once it is connected.
+    pendingStudyRef.current = { request, deck };
+    void connect();
+  }
+
+  async function beginStudy(request: string, deck: string | null) {
+    pendingStudyRef.current = null;
+    const channel = channelRef.current;
+    if (channel?.readyState !== "open") return;
+    try {
+      const response = await fetch("/api/flashcards/study-token", { method: "POST" });
+      const access = (await response.json().catch(() => ({}))) as {
+        token?: string;
+        serverUrl?: string;
+        error?: string;
+        needsConnection?: boolean;
+      };
+      if (access.needsConnection) {
+        const zh = selectResponseLanguage(request, messagesRef.current) === "taiwan_mandarin";
+        toast.info("Connect Vox Flash Cards to study", {
+          description: "Your cards live on Vox Flash Cards. Connect it once and Vox can quiz you.",
+          duration: 15_000,
+          action: { label: "Connect", onClick: () => void openFlashcardsConnection() },
+        });
+        channel.send(
+          JSON.stringify({
+            type: "response.create",
+            response: {
+              metadata: { vox_kind: "study_unavailable" },
+              instructions: `Say exactly: ${JSON.stringify(
+                zh
+                  ? "要先把 Vox 連到你的 Vox Flash Cards 才能一起複習。我放了一個連結按鈕在畫面上。"
+                  : "I need to be connected to your Vox Flash Cards first. I've put a connect button on the screen.",
+              )}`,
+            },
+          }),
+        );
+        return;
+      }
+      if (!response.ok || !access.token || !access.serverUrl) {
+        throw new Error(access.error ?? "Flash cards are unavailable right now.");
+      }
+      if (channelRef.current !== channel || channel.readyState !== "open") return;
+      // OpenAI Realtime calls the flash-card MCP server directly with this
+      // short-lived token, minted from the signed-in Vox session.
+      channel.send(
+        JSON.stringify({
+          type: "session.update",
+          session: {
+            type: "realtime",
+            tools: [
+              {
+                type: "mcp",
+                server_label: "flashcards",
+                server_description: "The user's Vox Flash Cards: decks, cards, and review scheduling.",
+                server_url: access.serverUrl,
+                authorization: access.token,
+                require_approval: "never",
+              },
+            ],
+          },
+        }),
+      );
+      studyModeRef.current = { deck };
+      studyContinuationsRef.current = 0;
+      setStudying(true);
+      refreshRealtimeContext();
+      lastAssistantAtRef.current = Date.now();
+      channel.send(
+        JSON.stringify({
+          type: "response.create",
+          response: {
+            metadata: { vox_kind: "study_open" },
+            // Fetch the first card before speaking instead of just announcing it.
+            tool_choice: "required",
+            instructions: [
+              voiceInstructions(),
+              responseLanguageInstruction(selectResponseLanguage(request, messagesRef.current)),
+              studyOpeningInstructions(request, deck),
+            ].join("\n\n"),
+          },
+        }),
+      );
+    } catch (error) {
+      toast.error("Couldn’t start studying", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  }
+
+  function stopStudy(wrapUp: boolean) {
+    pendingStudyRef.current = null;
+    if (!studyModeRef.current) return;
+    studyModeRef.current = null;
+    setStudying(false);
+    const channel = channelRef.current;
+    if (channel?.readyState !== "open") return;
+    if (!wrapUp) {
+      detachStudyTools();
+      return;
+    }
+    // Keep the tools for the wrap-up (it reads study_stats); they are removed
+    // when that reply finishes.
+    studyContinuationsRef.current = 0;
+    lastAssistantAtRef.current = Date.now();
+    channel.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          metadata: { vox_kind: "study_wrapup" },
+          instructions: [
+            buildVoiceInstructions(memoriesRef.current, themeRef.current),
+            responseLanguageInstruction(selectResponseLanguage("", messagesRef.current)),
+            studyWrapUpInstructions(),
+          ].join("\n\n"),
+        },
+      }),
+    );
+  }
+
+  function continueStudyAfterTools() {
+    const awaiting = studyAwaitingCallsRef.current;
+    if (!awaiting || !awaiting.ids.every((id) => completedMcpCallsRef.current.has(id))) return;
+    studyAwaitingCallsRef.current = null;
+    const channel = channelRef.current;
+    if (channel?.readyState !== "open" || studyContinuationsRef.current >= 6) {
+      if (awaiting.wrapUp) detachStudyTools();
+      return;
+    }
+    if (!awaiting.wrapUp && !studyModeRef.current) return;
+    studyContinuationsRef.current += 1;
+    channel.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          metadata: { vox_kind: awaiting.wrapUp ? "study_wrapup" : "study_continue" },
+          instructions: [
+            awaiting.wrapUp ? buildVoiceInstructions(memoriesRef.current, themeRef.current) : voiceInstructions(),
+            responseLanguageInstruction(selectResponseLanguage("", messagesRef.current)),
+            awaiting.wrapUp ? studyWrapUpInstructions() : "",
+            "Continue from where you left off; the tool results are now in the conversation.",
+          ].filter(Boolean).join("\n\n"),
+        },
+      }),
+    );
+  }
+
+  function detachStudyTools() {
+    const channel = channelRef.current;
+    if (channel?.readyState === "open" && !studyModeRef.current) {
+      channel.send(JSON.stringify({ type: "session.update", session: { type: "realtime", tools: [] } }));
+      refreshRealtimeContext();
     }
   }
 
@@ -3884,6 +4071,7 @@ export default function Home() {
 
     if (
       mutedRef.current ||
+      studyModeRef.current !== null ||
       connectionStateRef.current !== "listening" ||
       activeRouteTurnRef.current !== null ||
       pendingUtteranceRef.current !== null ||
@@ -4018,6 +4206,33 @@ export default function Home() {
       messagesRef.current,
     );
     const turnLanguageInstruction = responseLanguageInstruction(turnLanguage);
+
+    if (studyModeRef.current) {
+      pendingUtteranceRef.current = null;
+      setThinkingCue("");
+      studyContinuationsRef.current = 0;
+      if (isStudyStopRequest(completeText)) {
+        stopStudy(true);
+      } else {
+        sendTurnResponse(
+          "study_turn",
+          [
+            voiceInstructions(),
+            turnLanguageInstruction,
+            "Continue the flash-card session: respond to what the user just said, grading and moving to the next card when they answered one.",
+          ].join("\n\n"),
+        );
+      }
+      setConnectionState("thinking");
+      return;
+    }
+    if (connectionMode === "cloud" && isFlashcardStudyRequest(completeText)) {
+      pendingUtteranceRef.current = null;
+      setThinkingCue("");
+      startStudy(completeText, null);
+      setConnectionState("thinking");
+      return;
+    }
     const pendingTimings = pending?.timings ?? [];
     const completeTimings = [...pendingTimings, ...(timing ? [timing] : [])];
     const budgetFailureText = () =>
@@ -5070,6 +5285,22 @@ export default function Home() {
         assistantDraftRef.current = "";
         break;
       }
+      case "response.mcp_call.completed":
+      case "response.mcp_call.failed": {
+        if (event.item_id) {
+          completedMcpCallsRef.current.add(event.item_id);
+          if (completedMcpCallsRef.current.size > 200) completedMcpCallsRef.current.clear();
+        }
+        continueStudyAfterTools();
+        break;
+      }
+      case "mcp_list_tools.failed": {
+        if (studyModeRef.current) {
+          toast.error("Couldn’t reach your flash cards", { description: "Try again in a moment." });
+          stopStudy(false);
+        }
+        break;
+      }
       case "response.done": {
         if (event.response?.id) {
           const key = responseDisplayKeysRef.current.get(event.response.id);
@@ -5087,6 +5318,18 @@ export default function Home() {
           event.response?.metadata?.vox_kind === "task_progress"
         ) {
           macReportSpeakingUntilRef.current = 0;
+        }
+        const studyKind = event.response?.metadata?.vox_kind ?? "";
+        if (studyKind.startsWith("study_")) {
+          const calls = (event.response?.output ?? [])
+            .filter((item) => item.type === "mcp_call" && item.id)
+            .map((item) => item.id as string);
+          if (calls.length) {
+            studyAwaitingCallsRef.current = { ids: calls, wrapUp: studyKind === "study_wrapup" };
+            continueStudyAfterTools();
+          } else if (studyKind === "study_wrapup") {
+            detachStudyTools();
+          }
         }
         if (event.response?.metadata?.vox_kind === "front_voice") {
           const responseId = event.response.metadata.vox_response_id;
@@ -5262,6 +5505,8 @@ export default function Home() {
         playThemeCue("online");
         refreshRealtimeContext();
         seedConversationCarryover(channel);
+        const pendingStudy = pendingStudyRef.current;
+        if (pendingStudy) void beginStudy(pendingStudy.request, pendingStudy.deck);
       };
 
       const offer = await peer.createOffer();
@@ -5300,6 +5545,11 @@ export default function Home() {
 
   function disconnect(resetState = true) {
     macReportSpeakingUntilRef.current = 0;
+    studyModeRef.current = null;
+    pendingStudyRef.current = null;
+    studyAwaitingCallsRef.current = null;
+    completedMcpCallsRef.current.clear();
+    setStudying(false);
     if (resetState && channelRef.current?.readyState === "open") playThemeCue("offline");
     displayAnswersRef.current.clear();
     responseDisplayKeysRef.current.clear();
@@ -5754,6 +6004,13 @@ export default function Home() {
           </div>
         </div>
         <div className="vox-header-actions flex items-center gap-2">
+          {connectionMode === "cloud" && authState === "authenticated" && (
+            <FlashcardsConnection
+              studying={studying}
+              onStudy={() => startStudy("Let's go through my flash cards.", null)}
+              onStopStudy={() => stopStudy(true)}
+            />
+          )}
           {connectionMode === "cloud" && <Sheet
             open={invitesOpen}
             onOpenChange={(open) => {
