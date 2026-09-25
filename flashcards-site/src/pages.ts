@@ -1,37 +1,97 @@
 import { escapeHtml } from "./util.ts";
 
+// Visual language: index cards on a desk. Cards are white paper with faint
+// blue rules and one red rule at the top; the card face is hand-lettered
+// (LXGW WenKai TC). Everything else stays quiet so the cards carry the page.
+
+const fonts = `<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&display=swap">`;
+
 const baseStyles = `
-  :root { color-scheme: dark; --bg: #0b0c14; --panel: #12131d; --line: rgb(255 255 255 / 10%); --muted: rgb(255 255 255 / 58%); --accent: #f4ff74; }
+  :root {
+    color-scheme: light;
+    --desk: #e3e8ee;
+    --desk-deep: #d3dae3;
+    --paper: #ffffff;
+    --rule: #cfe0f2;
+    --margin: #db4b3f;
+    --ink: #1e2b45;
+    --ink-soft: #55617a;
+    --ink-faint: #8a94a8;
+    --action: #2f55b5;
+    --action-ink: #ffffff;
+    --heading: #1e2b45;
+    --chip: rgb(255 255 255 / 62%);
+    --again: #c8453a;
+    --hard: #b7791f;
+    --good: #2f7d4f;
+    --easy: #2f55b5;
+    --shadow: 0 1px 1px rgb(30 43 69 / 8%), 0 8px 24px -12px rgb(30 43 69 / 28%);
+    --hand: "LXGW WenKai TC", "Kaiti TC", "STKaiti", "DFKai-SB", serif;
+    --ui: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --desk: #172233;
+      --desk-deep: #121b29;
+      --paper: #eef0ec;
+      --rule: #c9d6e3;
+      --ink: #1e2b45;
+      --ink-soft: #b9c3d4;
+      --ink-faint: #8391a8;
+      --action: #8fb0ff;
+      --action-ink: #0f1a33;
+      --heading: #f1f3f7;
+      --chip: rgb(255 255 255 / 9%);
+      --shadow: 0 1px 1px rgb(0 0 0 / 30%), 0 12px 28px -12px rgb(0 0 0 / 60%);
+    }
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; padding: 24px 16px 48px; font: 15px/1.5 "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif; color: #f3f3f7; background: var(--bg); }
-  a { color: var(--accent); }
-  h1 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
-  h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
-  p { margin: 0 0 12px; color: var(--muted); }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: 0.08em; }
-  .dot { width: 28px; height: 28px; border-radius: 9px; background: var(--accent); }
-  .panel { padding: 20px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); }
-  input, textarea { width: 100%; padding: 10px 12px; border: 1px solid rgb(255 255 255 / 14%); border-radius: 12px; font: inherit; color: inherit; background: rgb(255 255 255 / 5%); }
-  input:focus, textarea:focus, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  button, .button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 16px; border: 0; border-radius: 999px; font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
-  .primary { color: #10111b; background: var(--accent); }
-  .secondary { color: #f3f3f7; background: rgb(255 255 255 / 8%); }
-  .ghost { padding: 6px 10px; color: var(--muted); background: transparent; font-weight: 500; }
-  .danger { color: #ffaaa4; }
-  button:disabled { opacity: 0.5; cursor: default; }
-  .muted { color: var(--muted); font-size: 13px; }
-  .error { color: #ffaaa4; }
+  html { background: var(--desk); }
+  body { margin: 0; min-height: 100vh; font: 16px/1.55 var(--ui); color: var(--ink-soft); background: var(--desk); -webkit-font-smoothing: antialiased; }
+  a { color: var(--action); }
+  button, input, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 3px solid var(--action); outline-offset: 2px; }
   [hidden] { display: none !important; }
+
+  .wrap { width: min(100% - 32px, 1080px); margin: 0 auto; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0; }
+  .wordmark { display: flex; align-items: center; gap: 10px; color: var(--ink-soft); font-weight: 600; text-decoration: none; }
+  .wordmark-mark { position: relative; width: 26px; height: 19px; border-radius: 3px; background: var(--paper); box-shadow: var(--shadow); }
+  .wordmark-mark::before { content: ""; position: absolute; inset: 5px 0 auto; height: 2px; background: var(--margin); }
+  .wordmark-mark::after { content: ""; position: absolute; left: 3px; right: 3px; top: 10px; height: 5px; background: repeating-linear-gradient(to bottom, var(--rule) 0 1px, transparent 1px 4px); }
+
+  /* The index card */
+  .card { position: relative; background: var(--paper); border-radius: 6px; box-shadow: var(--shadow); color: var(--ink);
+    background-image: linear-gradient(var(--margin), var(--margin)), repeating-linear-gradient(to bottom, transparent 0 31px, var(--rule) 31px 32px);
+    background-size: 100% 2px, 100% 100%; background-position: 0 44px, 0 46px; background-repeat: no-repeat, repeat-y; }
+  .hand { font-family: var(--hand); color: var(--ink); }
+
+  .button { display: inline-flex; white-space: nowrap; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 20px; border: 0; border-radius: 10px; font-weight: 600; text-decoration: none; cursor: pointer; }
+  .button-primary { color: var(--action-ink); background: var(--action); }
+  .button-quiet { color: var(--ink-soft); background: transparent; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ink-soft) 35%, transparent); }
+  .button:disabled { opacity: 0.45; cursor: default; }
+  .link-button { padding: 4px 6px; border: 0; background: none; color: var(--ink-soft); cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; }
+  .link-button.danger { color: var(--again); }
+  .field { width: 100%; padding: 10px 12px; border: 1.5px solid color-mix(in srgb, var(--ink-faint) 45%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--paper) 85%, transparent); color: var(--ink); }
+  .error { color: var(--again); min-height: 1.5em; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 `;
 
-function shell(title: string, body: string, script = "") {
+function shell(title: string, body: string, script = "", extraStyles = "") {
   return `<!doctype html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#e3e8ee" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#172233" media="(prefers-color-scheme: dark)">
 <title>${escapeHtml(title)}</title>
-<style>${baseStyles}</style>
+${fonts}
+<style>${baseStyles}${extraStyles}</style>
 </head>
 <body>
 ${body}
@@ -40,15 +100,28 @@ ${script ? `<script>${script}</script>` : ""}
 </html>`;
 }
 
+const smallPageStyles = `
+  .solo { width: min(100% - 32px, 460px); margin: 10vh auto 0; }
+  .solo .card { padding: 58px 28px 28px; }
+  .solo h1 { margin: 0 0 12px; font-family: var(--hand); font-size: 30px; font-weight: 700; line-height: 1.15; color: var(--ink); }
+  .solo p, .solo li { color: #4a5670; line-height: 32px; margin: 0; }
+  .solo ul { margin: 0; padding-left: 20px; }
+  .solo .actions { display: grid; gap: 10px; margin-top: 24px; }
+`;
+
 export function messagePage(title: string, message: string, link?: { href: string; label: string }) {
   return shell(
     title,
-    `<main class="panel" style="max-width:440px;margin:10vh auto">
-  <div class="brand" style="margin-bottom:18px"><span class="dot" aria-hidden="true"></span>VOX FLASH CARDS</div>
-  <h1 style="margin-bottom:8px">${escapeHtml(title)}</h1>
-  <p>${escapeHtml(message)}</p>
-  ${link ? `<a class="button primary" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>` : ""}
+    `<main class="solo">
+  <a class="wordmark" href="/" style="margin-bottom:18px"><span class="wordmark-mark" aria-hidden="true"></span>Vox Flash Cards</a>
+  <div class="card">
+    <h1>${escapeHtml(title)}</h1>
+    <p>${escapeHtml(message)}</p>
+    ${link ? `<div class="actions"><a class="button button-primary" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a></div>` : ""}
+  </div>
 </main>`,
+    "",
+    smallPageStyles,
   );
 }
 
@@ -58,22 +131,23 @@ export function consentPage(input: { clientName: string; userName: string; retur
   const data = JSON.stringify({ query: input.query }).replace(/</g, "\\u003c");
   return shell(
     `Allow ${input.clientName}?`,
-    `<main class="panel" style="max-width:440px;margin:8vh auto">
-  <div class="brand" style="margin-bottom:18px"><span class="dot" aria-hidden="true"></span>VOX FLASH CARDS</div>
-  <h1 style="margin-bottom:8px">Allow ${name}?</h1>
-  <p>Signed in as <strong>${escapeHtml(input.userName)}</strong> with your Vox account.</p>
-  <p>${name} will be able to:</p>
-  <ul class="muted" style="margin:0 0 14px;padding-left:18px">
-    <li>See your decks and cards</li>
-    <li>Add, edit, and delete cards and decks</li>
-    <li>Quiz you and record your review progress</li>
-  </ul>
-  <p class="muted">You can disconnect it anytime on this site. You’ll return to ${escapeHtml(input.returnHost)}.</p>
-  <div style="display:grid;gap:10px;margin-top:16px">
-    <button class="primary" id="allow" type="button">Allow</button>
-    <button class="secondary" id="deny" type="button">Cancel</button>
+    `<main class="solo">
+  <a class="wordmark" href="/" style="margin-bottom:18px"><span class="wordmark-mark" aria-hidden="true"></span>Vox Flash Cards</a>
+  <div class="card">
+    <h1>Allow ${name} to use your cards?</h1>
+    <p>You’re signed in as ${escapeHtml(input.userName)}. ${name} will be able to:</p>
+    <ul>
+      <li>see your decks and cards</li>
+      <li>add, edit, and delete cards and decks</li>
+      <li>quiz you and record how each review went</li>
+    </ul>
+    <p style="margin-top:8px">You can disconnect it anytime on this site. Next you’ll return to ${escapeHtml(input.returnHost)}.</p>
+    <div class="actions">
+      <button class="button button-primary" id="allow" type="button">Allow</button>
+      <button class="button button-quiet" id="deny" type="button">Cancel</button>
+    </div>
+    <p class="error" id="error" role="alert"></p>
   </div>
-  <p class="error" id="error" role="alert" style="margin-top:10px"></p>
 </main>
 <script type="application/json" id="request">${data}</script>`,
     `(() => {
@@ -87,7 +161,7 @@ export function consentPage(input: { clientName: string; userName: string; retur
         body: JSON.stringify({ approve }),
       });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.redirect) throw new Error(result.error || "Could not finish connecting.");
+      if (!response.ok || !result.redirect) throw new Error(result.error || "Connecting didn’t finish. Try again from the app.");
       window.location.replace(result.redirect);
     } catch (failure) {
       document.getElementById("error").textContent = failure.message;
@@ -97,78 +171,212 @@ export function consentPage(input: { clientName: string; userName: string; retur
   document.getElementById("allow").addEventListener("click", () => decide(true));
   document.getElementById("deny").addEventListener("click", () => decide(false));
 })();`,
+    smallPageStyles,
   );
 }
 
-/** The flash-card editor. Signed-out visitors see "Sign in with Vox". */
+const appStyles = `
+  /* Landing */
+  .landing { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 440px); gap: clamp(32px, 6vw, 88px); align-items: center; min-height: calc(100vh - 90px); padding-bottom: 48px; }
+  .landing h1 { margin: 0 0 16px; font-family: var(--hand); font-size: clamp(38px, 6vw, 64px); font-weight: 700; line-height: 1.08; color: var(--heading); letter-spacing: -0.01em; }
+  .landing p { max-width: 34em; margin: 0 0 28px; font-size: 18px; }
+  .demo { perspective: 1400px; }
+  .demo-hint { margin-top: 14px; font-size: 14px; color: var(--ink-faint); text-align: center; }
+
+  /* Flip card */
+  .flip { position: relative; display: block; width: 100%; aspect-ratio: 5 / 3; padding: 0; border: 0; background: none; cursor: pointer; transform-style: preserve-3d; transition: transform 520ms cubic-bezier(.2,.7,.2,1); text-align: left; }
+  .flip.is-flipped { transform: rotateY(180deg); }
+  .face { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 56px 28px 22px; backface-visibility: hidden; -webkit-backface-visibility: hidden; overflow: hidden; }
+  .face-back { transform: rotateY(180deg); }
+  .face-text { margin: auto 0; font-family: var(--hand); font-size: clamp(22px, 3.2vw, 30px); line-height: 32px; color: var(--ink); overflow-wrap: anywhere; white-space: pre-wrap; }
+  .face-note { font-family: var(--hand); font-size: 17px; line-height: 32px; color: #5b6784; white-space: pre-wrap; }
+  .face-corner { position: absolute; top: 14px; left: 28px; right: 28px; display: flex; justify-content: space-between; font-size: 13px; color: #8a94a8; }
+
+  /* Today */
+  .today { display: grid; grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: clamp(28px, 5vw, 64px); align-items: start; padding: 12px 0 56px; }
+  .today h1 { margin: 0 0 6px; font-size: 28px; font-weight: 700; color: var(--heading); letter-spacing: -0.01em; }
+  .study-stage { perspective: 1400px; }
+  .grades { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 16px; }
+  .grade { display: grid; gap: 2px; min-height: 58px; padding: 8px 6px; border: 0; border-radius: 10px; background: var(--paper); box-shadow: var(--shadow); cursor: pointer; color: var(--ink); font-weight: 600; }
+  .grade small { font-weight: 500; font-size: 12px; color: #6b7690; }
+  .grade[data-rating="again"] { box-shadow: inset 0 -3px 0 var(--again), var(--shadow); }
+  .grade[data-rating="hard"] { box-shadow: inset 0 -3px 0 var(--hard), var(--shadow); }
+  .grade[data-rating="good"] { box-shadow: inset 0 -3px 0 var(--good), var(--shadow); }
+  .grade[data-rating="easy"] { box-shadow: inset 0 -3px 0 var(--easy), var(--shadow); }
+  .reveal-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
+  .keys { font-size: 13px; color: var(--ink-faint); }
+  @media (hover: none) { .keys { visibility: hidden; } }
+  .empty-card .face-text { font-size: 24px; }
+  .summary { display: grid; gap: 22px; padding-top: 4px; }
+  .due-number { font-family: var(--hand); font-size: 72px; line-height: 1; color: var(--heading); }
+  .summary p { margin: 0; }
+  .scope { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { padding: 6px 12px; border: 0; border-radius: 999px; background: var(--chip); color: var(--ink-soft); cursor: pointer; font-size: 14px; }
+  .chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+  @media (prefers-color-scheme: dark) { .chip[aria-pressed="true"] { background: var(--paper); color: var(--ink); } }
+  .vox-note { padding-left: 14px; border-left: 3px solid var(--margin); }
+
+  /* Deck shelf */
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
+  .section-head h2 { margin: 0; font-size: 20px; color: var(--heading); }
+  .shelf { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 26px 20px; padding-bottom: 12px; }
+  @media (max-width: 480px) { .shelf { grid-template-columns: 1fr 1fr; gap: 20px 14px; } .pile-name { font-size: 18px; } .pile .card { padding: 46px 12px 12px; } }
+  .pile { position: relative; display: block; width: 100%; padding: 0; border: 0; background: none; cursor: pointer; text-align: left; }
+  .pile .card { display: flex; flex-direction: column; justify-content: flex-end; min-height: 124px; padding: 50px 16px 14px; }
+  .pile-name { font-family: var(--hand); font-size: 21px; line-height: 1.25; color: var(--ink); overflow-wrap: anywhere; }
+  .pile-meta { margin-top: 6px; font-size: 13px; color: #6b7690; }
+  .pile-meta b { color: var(--again); font-weight: 600; }
+  .pile-under { position: absolute; left: 0; right: 0; height: 100%; border-radius: 6px; background: var(--paper); box-shadow: var(--shadow); }
+  .pile[aria-pressed="true"] .card { outline: 3px solid var(--action); outline-offset: 3px; }
+  .new-deck .card { background-image: none; border: 2px dashed color-mix(in srgb, var(--ink-faint) 60%, transparent); background-color: transparent; box-shadow: none; justify-content: center; min-height: 124px; }
+  .new-deck input { border: 0; border-bottom: 1.5px solid color-mix(in srgb, var(--ink-faint) 55%, transparent); border-radius: 0; background: transparent; padding: 6px 0; font-family: var(--hand); font-size: 19px; color: var(--ink-soft); width: 100%; }
+  @media (prefers-color-scheme: dark) { .new-deck input { color: #f1f3f7; } }
+
+  /* Deck view */
+  .deck-view { padding: 36px 0 24px; }
+  .deck-view h2 { margin: 0; font-family: var(--hand); font-size: 34px; color: var(--heading); }
+  .deck-view .section-head { flex-wrap: wrap; align-items: center; }
+  .deck-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+  .deck-tools .field { width: 220px; max-width: 100%; }
+  .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 18px; margin-top: 22px; }
+  .mini { display: flex; flex-direction: column; min-height: 178px; padding: 52px 18px 12px; }
+  .mini-front { font-family: var(--hand); font-size: 19px; line-height: 32px; color: var(--ink); overflow-wrap: anywhere; white-space: pre-wrap; }
+  .mini-back { font-family: var(--hand); font-size: 17px; line-height: 32px; color: #56627e; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .mini-tools { display: flex; justify-content: flex-end; gap: 4px; margin-top: auto; padding-top: 8px; font-size: 14px; }
+  .mini-tools .link-button { color: #6b7690; }
+  .mini-due { position: absolute; top: 12px; left: 18px; font-size: 12px; color: #8a94a8; }
+  .composer textarea, .mini textarea { width: 100%; resize: vertical; min-height: 64px; border: 0; background: transparent; font-family: var(--hand); font-size: 19px; line-height: 32px; color: var(--ink); padding: 0; }
+  .composer textarea::placeholder, .mini textarea::placeholder { color: #9aa3b5; }
+  .composer .divider { height: 1px; margin: 4px 0 6px; background: color-mix(in srgb, var(--margin) 45%, transparent); }
+  .composer-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: auto; padding-top: 10px; }
+  .muted-line { color: var(--ink-faint); font-size: 14px; }
+
+  /* Apps */
+  .apps { margin: 24px 0 64px; }
+  .apps summary { cursor: pointer; font-weight: 600; color: var(--ink-soft); list-style: none; }
+  .apps summary::-webkit-details-marker { display: none; }
+  .apps summary::before { content: "+"; display: inline-block; width: 1.2em; color: var(--ink-faint); }
+  .apps[open] summary::before { content: "–"; }
+  .apps-body { max-width: 640px; margin-top: 12px; }
+  .url-row { display: flex; gap: 8px; margin: 12px 0 18px; }
+  .url-row code { flex: 1; min-width: 0; padding: 11px 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 8px; background: var(--chip); color: var(--ink-soft); font-size: 14px; }
+  .app-list { margin: 0; padding: 0; list-style: none; }
+  .app-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--ink-faint) 25%, transparent); }
+
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 16px; border-radius: 10px; background: var(--ink); color: #fff; font-size: 14px; box-shadow: var(--shadow); }
+  @media (prefers-color-scheme: dark) { .toast { background: var(--paper); color: var(--ink); } }
+
+  @media (max-width: 820px) {
+    .landing, .today { grid-template-columns: 1fr; }
+    .landing { min-height: 0; padding-top: 12px; }
+    .summary { order: -1; grid-template-columns: auto 1fr; align-items: end; gap: 12px 20px; }
+    .due-number { font-size: 56px; }
+    .summary .scope, .summary .vox-note, .summary .study-all { grid-column: 1 / -1; }
+  }
+  @media (max-width: 480px) {
+    .face { padding: 52px 20px 18px; }
+    .grades { gap: 6px; }
+  }
+`;
+
+/** The study desk. Signed-out visitors see what it is and "Sign in with Vox". */
 export function appPage(mcpUrl: string) {
   const data = JSON.stringify({ mcpUrl }).replace(/</g, "\\u003c");
   return shell(
     "Vox Flash Cards",
-    `<div style="max-width:720px;margin:0 auto">
-  <header style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:24px">
-    <div class="brand"><span class="dot" aria-hidden="true"></span>VOX FLASH CARDS</div>
-    <div id="account" hidden style="display:flex;align-items:center;gap:8px">
-      <span class="muted" id="who"></span>
-      <button class="ghost" id="signout" type="button">Sign out</button>
+    `<div class="wrap">
+  <header class="topbar">
+    <a class="wordmark" href="/"><span class="wordmark-mark" aria-hidden="true"></span>Vox Flash Cards</a>
+    <div id="account" hidden style="display:flex;align-items:center;gap:6px">
+      <span id="who"></span>
+      <button class="link-button" id="signout" type="button">Sign out</button>
     </div>
   </header>
 
-  <main id="signed-out" hidden class="panel" style="max-width:460px;margin:8vh auto 0">
-    <h1 style="margin-bottom:8px">Your flash cards, with a study buddy</h1>
-    <p>Make decks here, then ask Vox “let’s review my flash cards” and it will quiz you like a friend. Claude, ChatGPT, and other MCP apps can use your cards too.</p>
-    <a class="button primary" href="/auth/login">Sign in with Vox</a>
+  <main id="signed-out" hidden class="landing">
+    <div>
+      <h1>Flash cards you can study out loud.</h1>
+      <p>Keep your decks here. Then tell Vox “考我單字卡” and it quizzes you like a friend: one card at a time, a hint when you’re stuck, and nothing marked right unless it was.</p>
+      <a class="button button-primary" href="/auth/login">Sign in with Vox</a>
+    </div>
+    <div class="demo">
+      <button class="flip" id="demo-card" type="button" aria-label="Sample card. Tap to flip.">
+        <div class="face face-front card"><span class="face-corner"><span>生物化學</span><span>Front</span></span><div class="face-text">糖解作用在細胞的哪裡進行？</div></div>
+        <div class="face face-back card"><span class="face-corner"><span>生物化學</span><span>Back</span></span><div class="face-text">細胞質（cytosol）</div><div class="face-note">不需要氧氣；1 葡萄糖 → 2 丙酮酸，淨得 2 ATP 與 2 NADH</div></div>
+      </button>
+      <p class="demo-hint">Tap the card to flip it</p>
+    </div>
   </main>
 
-  <main id="app" hidden style="display:grid;gap:18px">
-    <section class="panel">
-      <h2>Decks</h2>
-      <div id="decks" style="display:flex;flex-wrap:wrap;gap:8px"></div>
-      <form id="new-deck" style="display:flex;gap:8px;margin-top:12px">
-        <input name="name" placeholder="New deck, e.g. Japanese" maxlength="80" aria-label="New deck name" required>
-        <button class="secondary" type="submit">Add deck</button>
-      </form>
-    </section>
-
-    <section class="panel" id="deck-panel" hidden>
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px">
-        <h1 id="deck-title" style="font-size:20px"></h1>
-        <div style="display:flex;gap:4px">
-          <button class="ghost" id="rename-deck" type="button">Rename</button>
-          <button class="ghost danger" id="delete-deck" type="button">Delete deck</button>
+  <div id="app" hidden>
+    <section class="today" aria-labelledby="today-title">
+      <div>
+        <div class="study-stage">
+          <button class="flip" id="study-card" type="button" aria-live="polite">
+            <div class="face face-front card"><span class="face-corner"><span id="card-deck"></span><span id="card-side-front">Question</span></span><div class="face-text" id="card-front"></div></div>
+            <div class="face face-back card"><span class="face-corner"><span id="card-deck-back"></span><span>Answer</span></span><div class="face-text" id="card-back"></div><div class="face-note" id="card-note"></div></div>
+          </button>
+        </div>
+        <div class="reveal-row" id="reveal-row">
+          <span class="keys">Tap the card or press Space to see the answer</span>
+          <button class="button button-quiet" id="reveal" type="button">Show answer</button>
+        </div>
+        <div class="grades" id="grades" hidden role="group" aria-label="How well did you know it?">
+          <button class="grade" data-rating="again" type="button">Again<small>1 · forgot</small></button>
+          <button class="grade" data-rating="hard" type="button">Hard<small>2 · struggled</small></button>
+          <button class="grade" data-rating="good" type="button">Good<small>3 · knew it</small></button>
+          <button class="grade" data-rating="easy" type="button">Easy<small>4 · instantly</small></button>
         </div>
       </div>
-      <form id="new-card" style="display:grid;gap:8px">
-        <input name="front" placeholder="Front — question or word" maxlength="500" aria-label="Card front" required>
-        <input name="back" placeholder="Back — answer" maxlength="1000" aria-label="Card back" required>
-        <input name="notes" placeholder="Note or memory hook (optional)" maxlength="1000" aria-label="Card note">
-        <div><button class="primary" type="submit">Add card</button></div>
-      </form>
-      <input id="search" placeholder="Search this deck" aria-label="Search cards" style="margin-top:16px">
-      <ul id="cards" style="list-style:none;margin:12px 0 0;padding:0;display:grid;gap:8px"></ul>
+      <aside class="summary">
+        <div>
+          <h1 id="today-title">Today</h1>
+          <div class="due-number" id="due-number">0</div>
+          <p id="due-text">cards to review</p>
+        </div>
+        <div class="scope" id="scope" role="group" aria-label="Which deck to study"></div>
+        <p class="vox-note">Or study by voice: connect this site in Vox once, then say “let’s review my flash cards.”</p>
+      </aside>
     </section>
 
-    <section class="panel">
-      <h2>Study with Vox</h2>
-      <p>In Vox, open <strong>Flash cards</strong> and connect this site once. Then say “let’s review my flash cards” or 考我單字卡.</p>
-      <h2 style="margin-top:18px">Use from other apps (MCP)</h2>
-      <p>Add this server as a custom MCP connector in Claude, ChatGPT, or another MCP app. It will ask you to sign in with your Vox account and approve access.</p>
-      <div style="display:flex;gap:8px;align-items:center">
-        <code id="mcp-url" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:8px 10px;border-radius:10px;background:rgb(0 0 0 / 30%)"></code>
-        <button class="secondary" id="copy" type="button">Copy</button>
-      </div>
-      <h2 style="margin-top:18px">Connected apps</h2>
-      <ul id="apps" style="list-style:none;margin:0;padding:0;display:grid;gap:6px"></ul>
+    <section aria-labelledby="decks-title">
+      <div class="section-head"><h2 id="decks-title">Decks</h2><span class="muted-line" id="deck-count"></span></div>
+      <div class="shelf" id="shelf"></div>
     </section>
+
+    <section class="deck-view" id="deck-view" hidden aria-labelledby="deck-title">
+      <div class="section-head">
+        <h2 id="deck-title"></h2>
+        <div class="deck-tools">
+          <input class="field" id="search" type="search" placeholder="Search this deck" aria-label="Search this deck">
+          <button class="link-button" id="rename-deck" type="button">Rename</button>
+          <button class="link-button danger" id="delete-deck" type="button">Delete deck</button>
+        </div>
+      </div>
+      <div class="cards-grid" id="cards"></div>
+    </section>
+
+    <details class="apps">
+      <summary>Use your cards in Claude, ChatGPT, or other MCP apps</summary>
+      <div class="apps-body">
+        <p>Add this address as a custom connector. The app will ask you to sign in with your Vox account and approve access.</p>
+        <div class="url-row"><code id="mcp-url"></code><button class="button button-quiet" id="copy" type="button">Copy</button></div>
+        <p style="margin:0 0 6px;font-weight:600">Connected apps</p>
+        <ul class="app-list" id="apps"></ul>
+      </div>
+    </details>
     <p class="error" id="error" role="alert"></p>
-  </main>
+  </div>
 </div>
+<div class="toast" id="toast" role="status" hidden></div>
 <script type="application/json" id="config">${data}</script>`,
     `(() => {
   const { mcpUrl } = JSON.parse(document.getElementById("config").textContent);
   const $ = (id) => document.getElementById(id);
   let decks = [];
-  let deckId = null;
+  let openDeckId = null;
+  let studyDeckId = null;
+  let current = null;
   let cards = [];
   let confirmId = null;
 
@@ -176,12 +384,21 @@ export function appPage(mcpUrl: string) {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(props)) {
       if (key === "text") node.textContent = value;
+      else if (key === "className") node.className = value;
       else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
       else node.setAttribute(key, value);
     }
     for (const child of children) node.append(child);
     return node;
   };
+
+  let toastTimer = 0;
+  function toast(message) {
+    $("toast").textContent = message;
+    $("toast").hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { $("toast").hidden = true; }, 2600);
+  }
 
   async function tool(name, args = {}) {
     const response = await fetch("/api/tool", {
@@ -190,153 +407,275 @@ export function appPage(mcpUrl: string) {
       body: JSON.stringify({ tool: name, arguments: args }),
     });
     const payload = await response.json().catch(() => ({}));
-    if (response.status === 401) { location.reload(); throw new Error("Signed out."); }
-    if (!response.ok) throw new Error(payload.error || "Something went wrong.");
+    if (response.status === 401) { location.reload(); throw new Error("You were signed out."); }
+    if (!response.ok) throw new Error(payload.error || "That didn’t save. Try again.");
     return payload.result;
   }
-
   function fail(error) { $("error").textContent = error.message || String(error); }
   function clearError() { $("error").textContent = ""; }
 
-  async function loadDecks(prefer) {
-    decks = (await tool("list_decks")).decks;
-    const wanted = prefer ?? deckId;
-    deckId = decks.some((deck) => deck.id === wanted) ? wanted : decks[0]?.id ?? null;
-    renderDecks();
-    await loadCards();
+  function relativeDue(iso) {
+    if (!iso) return "";
+    const minutes = Math.round((Date.parse(iso) - Date.now()) / 60000);
+    if (minutes < 1) return "now";
+    if (minutes < 60) return "in " + minutes + " min";
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return "in " + hours + " h";
+    const days = Math.round(hours / 24);
+    return days === 1 ? "tomorrow" : "in " + days + " days";
+  }
+  const deckName = (id) => decks.find((deck) => deck.id === id)?.name || "";
+
+  // ---- Studying ----
+  function setFlipped(flipped) {
+    $("study-card").classList.toggle("is-flipped", flipped);
+    $("grades").hidden = !flipped || !current;
+    $("reveal-row").hidden = flipped || !current;
   }
 
-  function renderDecks() {
-    $("decks").replaceChildren(...decks.map((deck) => el("button", {
-      type: "button",
-      class: deck.id === deckId ? "primary" : "secondary",
-      "aria-pressed": String(deck.id === deckId),
-      text: deck.name + " · " + deck.cardCount + (deck.dueCount ? " (" + deck.dueCount + " due)" : ""),
-      onclick: () => { deckId = deck.id; confirmId = null; renderDecks(); loadCards().catch(fail); },
+  async function loadNext() {
+    const result = await tool("next_card", studyDeckId ? { deck: studyDeckId } : {});
+    current = result.card || null;
+    setFlipped(false);
+    const due = current ? result.due_remaining : 0;
+    $("due-number").textContent = String(due);
+    $("due-text").textContent = due === 1 ? "card to review" : "cards to review";
+    const deckLabel = studyDeckId ? deckName(studyDeckId) : "All decks";
+    $("card-deck").textContent = deckLabel;
+    $("card-deck-back").textContent = deckLabel;
+    if (current) {
+      $("card-front").textContent = current.front;
+      $("card-back").textContent = current.back;
+      $("card-note").textContent = current.notes || "";
+      $("study-card").classList.remove("empty-card");
+      $("study-card").setAttribute("aria-label", "Question: " + current.front + ". Tap to see the answer.");
+    } else {
+      $("study-card").classList.add("empty-card");
+      $("card-front").textContent = decks.length
+        ? (result.next_due_at ? "You’re all caught up. Next review " + relativeDue(result.next_due_at) + "." : "This deck has no cards yet.")
+        : "Make your first deck below, then add a few cards.";
+      $("card-back").textContent = "";
+      $("card-note").textContent = "";
+      $("study-card").setAttribute("aria-label", $("card-front").textContent);
+      $("reveal-row").hidden = true;
+    }
+  }
+
+  async function grade(rating) {
+    if (!current) return;
+    const card = current;
+    current = null;
+    $("grades").hidden = true;
+    try { clearError(); await tool("grade_card", { card_id: card.card_id, rating }); await Promise.all([loadNext(), loadDecks()]); }
+    catch (error) { current = card; setFlipped(true); fail(error); }
+  }
+
+  $("study-card").addEventListener("click", () => { if (current) setFlipped(!$("study-card").classList.contains("is-flipped")); });
+  $("reveal").addEventListener("click", () => setFlipped(true));
+  for (const button of document.querySelectorAll(".grade")) button.addEventListener("click", () => grade(button.dataset.rating));
+  document.addEventListener("keydown", (event) => {
+    if (event.target.closest("input, textarea") || event.metaKey || event.ctrlKey || event.altKey || !current || $("app").hidden) return;
+    const flipped = $("study-card").classList.contains("is-flipped");
+    if (event.key === " " && !event.target.closest("button")) { event.preventDefault(); setFlipped(!flipped); }
+    if (flipped && ["1", "2", "3", "4"].includes(event.key)) grade(["again", "hard", "good", "easy"][Number(event.key) - 1]);
+  });
+
+  function renderScope() {
+    const options = [{ id: null, name: "All decks" }, ...decks.filter((deck) => deck.cardCount)];
+    $("scope").replaceChildren(...options.map((option) => el("button", {
+      className: "chip", type: "button", "aria-pressed": String(option.id === studyDeckId), text: option.name,
+      onclick: () => { studyDeckId = option.id; renderScope(); loadNext().catch(fail); },
     })));
-    if (!decks.length) $("decks").replaceChildren(el("p", { text: "No decks yet. Add one below." }));
-    const deck = decks.find((candidate) => candidate.id === deckId);
-    $("deck-panel").hidden = !deck;
-    if (deck) $("deck-title").textContent = deck.name;
-    $("delete-deck").textContent = confirmId === deckId ? "Tap again to delete all" : "Delete deck";
   }
 
+  // ---- Decks ----
+  async function loadDecks() {
+    decks = (await tool("list_decks")).decks;
+    if (studyDeckId && !decks.some((deck) => deck.id === studyDeckId)) studyDeckId = null;
+    if (openDeckId && !decks.some((deck) => deck.id === openDeckId)) openDeckId = null;
+    renderShelf();
+    renderScope();
+  }
+
+  function renderShelf() {
+    const piles = decks.map((deck) => {
+      const depth = Math.min(3, Math.ceil(deck.cardCount / 15));
+      const under = Array.from({ length: depth }, (_, index) => el("span", {
+        className: "pile-under", "aria-hidden": "true",
+        style: "top:" + (index + 1) * 4 + "px;transform:rotate(" + [-1.2, 1, -0.6][index] + "deg);z-index:" + -index,
+      }));
+      return el("button", {
+        className: "pile", type: "button", "aria-pressed": String(deck.id === openDeckId),
+        onclick: () => { openDeckId = deck.id === openDeckId ? null : deck.id; confirmId = null; renderShelf(); loadCards().catch(fail); },
+      }, [
+        ...under,
+        el("div", { className: "card" }, [
+          el("div", { className: "pile-name", text: deck.name }),
+          el("div", { className: "pile-meta" }, [
+            document.createTextNode(deck.cardCount + (deck.cardCount === 1 ? " card" : " cards")),
+            ...(deck.dueCount ? [document.createTextNode(", "), el("b", { text: deck.dueCount + " due" })] : []),
+          ]),
+        ]),
+      ]);
+    });
+    const input = el("input", { placeholder: "New deck name", "aria-label": "New deck name", maxlength: "80" });
+    const create = el("form", {
+      className: "pile new-deck",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        const name = input.value.trim();
+        if (!name) return;
+        try { clearError(); const { deck } = await tool("create_deck", { name }); openDeckId = deck.id; await loadDecks(); await loadCards(); toast("Created " + deck.name); }
+        catch (error) { fail(error); }
+      },
+    }, [el("div", { className: "card" }, [input, el("div", { className: "pile-meta", text: "Press Enter to create" })])]);
+    $("shelf").replaceChildren(...piles, create);
+    $("deck-count").textContent = decks.length ? decks.length + (decks.length === 1 ? " deck" : " decks") : "";
+  }
+
+  // ---- Deck view ----
   async function loadCards() {
-    if (!deckId) { cards = []; renderCards(); return; }
+    const deck = decks.find((candidate) => candidate.id === openDeckId);
+    $("deck-view").hidden = !deck;
+    if (!deck) return;
+    $("deck-title").textContent = deck.name;
+    $("delete-deck").textContent = confirmId === deck.id ? "Delete " + deck.cardCount + " cards for good?" : "Delete deck";
     const query = $("search").value.trim();
-    cards = (await tool("list_cards", { deck: deckId, limit: 200, ...(query ? { query } : {}) })).cards;
+    cards = (await tool("list_cards", { deck: deck.id, limit: 200, ...(query ? { query } : {}) })).cards;
     renderCards();
   }
 
+  function composer() {
+    const front = el("textarea", { placeholder: "Front: a question, a term, or a sentence with ____", "aria-label": "Front", maxlength: "500", rows: "2" });
+    const back = el("textarea", { placeholder: "Back: the answer", "aria-label": "Back", maxlength: "1000", rows: "2" });
+    const notes = el("textarea", { placeholder: "Memory hook (optional)", "aria-label": "Memory hook", maxlength: "1000", rows: "1" });
+    const form = el("form", {
+      className: "card mini composer",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        if (!front.value.trim() || !back.value.trim()) return;
+        try {
+          clearError();
+          await tool("add_cards", { deck: openDeckId, cards: [{ front: front.value, back: back.value, ...(notes.value.trim() ? { notes: notes.value } : {}) }] });
+          await loadDecks(); await loadCards(); if (!current) await loadNext();
+          $("cards").querySelector(".composer textarea")?.focus();
+          toast("Card added");
+        } catch (error) { fail(error); }
+      },
+    }, [front, el("div", { className: "divider", "aria-hidden": "true" }), back, notes,
+      el("div", { className: "composer-actions" }, [el("span", { className: "muted-line", text: "New card" }), el("button", { className: "button button-primary", type: "submit", text: "Add card" })])]);
+    return form;
+  }
+
   function renderCards() {
-    $("cards").replaceChildren(...cards.map((card) => {
-      const item = el("li", { class: "panel", style: "padding:12px 14px" });
+    const items = cards.map((card) => {
+      const item = el("article", { className: "card mini" });
       const view = () => {
-        item.replaceChildren(el("div", { style: "display:flex;gap:8px;align-items:flex-start" }, [
-          el("div", { style: "flex:1;min-width:0" }, [
-            el("div", { text: card.front, style: "font-weight:600" }),
-            el("div", { text: card.back, class: "muted", style: "font-size:15px" }),
-            ...(card.notes ? [el("div", { text: card.notes, class: "muted" })] : []),
+        item.replaceChildren(
+          el("span", { className: "mini-due", text: card.reps ? "Next review " + relativeDue(card.dueAt) : "New" }),
+          el("div", { className: "mini-front", text: card.front }),
+          el("div", { className: "mini-back", text: card.back }),
+          ...(card.notes ? [el("div", { className: "mini-back", style: "font-size:15px;color:#7a849b", text: card.notes })] : []),
+          el("div", { className: "mini-tools" }, [
+            el("button", { className: "link-button", type: "button", text: "Edit", onclick: edit }),
+            el("button", {
+              className: "link-button danger", type: "button", text: confirmId === card.id ? "Delete this card?" : "Delete",
+              onclick: async () => {
+                if (confirmId !== card.id) { confirmId = card.id; renderCards(); return; }
+                try { clearError(); await tool("delete_card", { card_id: card.id }); confirmId = null; await loadDecks(); await loadCards(); await loadNext(); toast("Card deleted"); }
+                catch (error) { fail(error); }
+              },
+            }),
           ]),
-          el("button", { class: "ghost", type: "button", text: "Edit", onclick: edit }),
-          el("button", {
-            class: "ghost danger", type: "button",
-            text: confirmId === card.id ? "Delete?" : "Delete",
-            onclick: async () => {
-              if (confirmId !== card.id) { confirmId = card.id; renderCards(); return; }
-              try { clearError(); await tool("delete_card", { card_id: card.id }); confirmId = null; await loadDecks(); } catch (error) { fail(error); }
-            },
-          }),
-        ]));
+        );
       };
       const edit = () => {
-        const front = el("input", { value: card.front, maxlength: "500", "aria-label": "Front" });
-        const back = el("input", { value: card.back, maxlength: "1000", "aria-label": "Back" });
-        const notes = el("input", { value: card.notes || "", maxlength: "1000", placeholder: "Note (optional)", "aria-label": "Note" });
-        item.replaceChildren(el("form", {
-          style: "display:grid;gap:8px",
+        const front = el("textarea", { "aria-label": "Front", maxlength: "500", rows: "2" }); front.value = card.front;
+        const back = el("textarea", { "aria-label": "Back", maxlength: "1000", rows: "2" }); back.value = card.back;
+        const notes = el("textarea", { "aria-label": "Memory hook", maxlength: "1000", rows: "1", placeholder: "Memory hook (optional)" }); notes.value = card.notes || "";
+        const form = el("form", {
+          style: "display:contents",
           onsubmit: async (event) => {
             event.preventDefault();
-            try { clearError(); await tool("edit_card", { card_id: card.id, front: front.value, back: back.value, notes: notes.value }); await loadCards(); } catch (error) { fail(error); }
+            try { clearError(); await tool("edit_card", { card_id: card.id, front: front.value, back: back.value, notes: notes.value }); await loadCards(); await loadNext(); toast("Card saved"); }
+            catch (error) { fail(error); }
           },
-        }, [front, back, notes, el("div", { style: "display:flex;gap:8px" }, [
-          el("button", { class: "primary", type: "submit", text: "Save" }),
-          el("button", { class: "ghost", type: "button", text: "Cancel", onclick: view }),
-        ])]));
+        }, [front, el("div", { className: "divider", "aria-hidden": "true", style: "height:1px;margin:4px 0 6px;background:rgb(219 75 63 / 45%)" }), back, notes,
+          el("div", { className: "composer-actions" }, [
+            el("button", { className: "link-button", type: "button", text: "Cancel", onclick: view }),
+            el("button", { className: "button button-primary", type: "submit", text: "Save card" }),
+          ])]);
+        item.classList.add("composer");
+        item.replaceChildren(form);
         front.focus();
       };
       view();
       return item;
-    }));
-    if (deckId && !cards.length) $("cards").replaceChildren(el("li", { class: "muted", text: "No cards here yet." }));
+    });
+    $("cards").replaceChildren(composer(), ...items);
   }
 
-  async function loadApps() {
-    const response = await fetch("/api/connections", { cache: "no-store" });
-    const payload = await response.json().catch(() => ({ apps: [] }));
-    $("apps").replaceChildren(...(payload.apps || []).map((app) => el("li", { style: "display:flex;align-items:center;justify-content:space-between;gap:8px" }, [
-      el("span", { text: app.name + (app.lastUsedAt ? " · used " + new Date(app.lastUsedAt).toLocaleDateString() : "") }),
-      el("button", {
-        class: "ghost danger", type: "button", text: "Disconnect",
-        onclick: async () => {
-          await fetch("/api/connections", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grantId: app.grantId }) });
-          loadApps();
-        },
-      }),
-    ])));
-    if (!(payload.apps || []).length) $("apps").replaceChildren(el("li", { class: "muted", text: "None yet." }));
-  }
-
-  $("new-deck").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const name = event.target.name.value.trim();
-    if (!name) return;
-    try { clearError(); const { deck } = await tool("create_deck", { name }); event.target.reset(); await loadDecks(deck.id); } catch (error) { fail(error); }
-  });
-  $("new-card").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.target;
-    try {
-      clearError();
-      await tool("add_cards", { deck: deckId, cards: [{ front: form.front.value, back: form.back.value, ...(form.notes.value.trim() ? { notes: form.notes.value } : {}) }] });
-      form.reset();
-      form.front.focus();
-      await loadDecks();
-    } catch (error) { fail(error); }
-  });
   $("rename-deck").addEventListener("click", () => {
-    const deck = decks.find((candidate) => candidate.id === deckId);
+    const deck = decks.find((candidate) => candidate.id === openDeckId);
     if (!deck) return;
-    const input = el("input", { value: deck.name, maxlength: "80", "aria-label": "Deck name" });
+    const input = el("input", { className: "field", value: deck.name, maxlength: "80", "aria-label": "Deck name", style: "font-family:var(--hand);font-size:24px;width:min(420px,100%)" });
     const form = el("form", {
-      style: "display:flex;gap:8px;flex:1",
+      style: "display:flex;gap:8px;flex-wrap:wrap",
       onsubmit: async (event) => {
         event.preventDefault();
-        try { clearError(); await tool("update_deck", { deck: deck.id, name: input.value }); await loadDecks(deck.id); } catch (error) { fail(error); }
+        try { clearError(); await tool("update_deck", { deck: deck.id, name: input.value }); await loadDecks(); await loadCards(); toast("Deck renamed"); }
+        catch (error) { fail(error); }
       },
-    }, [input, el("button", { class: "primary", type: "submit", text: "Save" })]);
+    }, [input, el("button", { className: "button button-primary", type: "submit", text: "Save name" })]);
     $("deck-title").replaceChildren(form);
     input.focus();
   });
   $("delete-deck").addEventListener("click", async () => {
-    if (confirmId !== deckId) { confirmId = deckId; renderDecks(); return; }
-    try { clearError(); await tool("delete_deck", { deck: deckId }); confirmId = null; deckId = null; await loadDecks(); } catch (error) { fail(error); }
+    if (confirmId !== openDeckId) { confirmId = openDeckId; loadCards().catch(fail); return; }
+    try { clearError(); const name = deckName(openDeckId); await tool("delete_deck", { deck: openDeckId }); confirmId = null; openDeckId = null; await loadDecks(); await loadCards(); await loadNext(); toast("Deleted " + name); }
+    catch (error) { fail(error); }
   });
   let searchTimer = 0;
   $("search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadCards().catch(fail), 250); });
-  $("copy").addEventListener("click", () => navigator.clipboard?.writeText(mcpUrl).then(() => { $("copy").textContent = "Copied"; }));
-  $("signout").addEventListener("click", async () => { await fetch("/auth/logout", { method: "POST" }); location.reload(); });
-  $("mcp-url").textContent = mcpUrl;
 
+  // ---- Apps ----
+  async function loadApps() {
+    const response = await fetch("/api/connections", { cache: "no-store" });
+    const payload = await response.json().catch(() => ({ apps: [] }));
+    const apps = payload.apps || [];
+    $("apps").replaceChildren(...(apps.length ? apps.map((app) => el("li", {}, [
+      el("span", { text: app.name + (app.lastUsedAt ? ", last used " + new Date(app.lastUsedAt).toLocaleDateString() : "") }),
+      el("button", {
+        className: "link-button danger", type: "button", text: "Disconnect",
+        onclick: async () => {
+          await fetch("/api/connections", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ grantId: app.grantId }) });
+          toast("Disconnected " + app.name);
+          loadApps();
+        },
+      }),
+    ])) : [el("li", { className: "muted-line", text: "No apps connected yet." })]));
+  }
+  $("mcp-url").textContent = mcpUrl;
+  $("copy").addEventListener("click", () => navigator.clipboard?.writeText(mcpUrl).then(() => toast("Address copied")));
+  $("signout").addEventListener("click", async () => { await fetch("/auth/logout", { method: "POST" }); location.reload(); });
+
+  // ---- Start ----
   (async () => {
     const response = await fetch("/api/me", { cache: "no-store" });
-    if (!response.ok) { $("signed-out").hidden = false; return; }
+    if (!response.ok) {
+      $("signed-out").hidden = false;
+      const demo = $("demo-card");
+      demo.addEventListener("click", () => demo.classList.toggle("is-flipped"));
+      return;
+    }
     const { user } = await response.json();
     $("who").textContent = user.name;
     $("account").hidden = false;
     $("app").hidden = false;
-    await Promise.all([loadDecks(), loadApps()]);
+    await loadDecks();
+    await Promise.all([loadNext(), loadCards(), loadApps()]);
   })().catch(fail);
 })();`,
+    appStyles,
   );
 }
