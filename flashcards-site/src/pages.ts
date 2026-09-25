@@ -53,10 +53,11 @@ const baseStyles = `
   body { margin: 0; min-height: 100vh; font: 16px/1.55 var(--ui); color: var(--ink-soft); background: var(--desk); -webkit-font-smoothing: antialiased; }
   a { color: var(--action); }
   button, input, textarea { font: inherit; color: inherit; }
+  button, a, .flip { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   :focus-visible { outline: 3px solid var(--action); outline-offset: 2px; }
   [hidden] { display: none !important; }
 
-  .wrap { width: min(100% - 32px, 1080px); margin: 0 auto; }
+  .wrap { width: min(100% - 32px, 1080px); margin: 0 auto; padding-bottom: env(safe-area-inset-bottom); }
   .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0; }
   .wordmark { display: flex; align-items: center; gap: 10px; color: var(--ink-soft); font-weight: 600; text-decoration: none; }
   .wordmark-mark { position: relative; width: 26px; height: 19px; border-radius: 3px; background: var(--paper); box-shadow: var(--shadow); }
@@ -86,7 +87,7 @@ function shell(title: string, body: string, script = "", extraStyles = "") {
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#e3e8ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#172233" media="(prefers-color-scheme: dark)">
 <title>${escapeHtml(title)}</title>
@@ -186,35 +187,43 @@ const appStyles = `
   /* Flip card */
   .flip { position: relative; display: block; width: 100%; aspect-ratio: 5 / 3; padding: 0; border: 0; background: none; cursor: pointer; transform-style: preserve-3d; transition: transform 520ms cubic-bezier(.2,.7,.2,1); text-align: left; }
   .flip.is-flipped { transform: rotateY(180deg); }
-  .face { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 56px 28px 22px; backface-visibility: hidden; -webkit-backface-visibility: hidden; overflow: hidden; }
+  .face { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 56px 28px 22px; backface-visibility: hidden; -webkit-backface-visibility: hidden; overflow-y: auto; overscroll-behavior: contain; }
   .face-back { transform: rotateY(180deg); }
   .face-text { margin: auto 0; font-family: var(--hand); font-size: clamp(22px, 3.2vw, 30px); line-height: 32px; color: var(--ink); overflow-wrap: anywhere; white-space: pre-wrap; }
+  .study-stage .face-text.is-long { font-size: clamp(19px, 2.4vw, 23px); }
   .face-note { font-family: var(--hand); font-size: 17px; line-height: 32px; color: #5b6784; white-space: pre-wrap; }
   .face-corner { position: absolute; top: 14px; left: 28px; right: 28px; display: flex; justify-content: space-between; font-size: 13px; color: #8a94a8; }
 
-  /* Today */
-  .today { display: grid; grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: clamp(28px, 5vw, 64px); align-items: start; padding: 12px 0 56px; }
-  .today h1 { margin: 0 0 6px; font-size: 28px; font-weight: 700; color: var(--heading); letter-spacing: -0.01em; }
-  .study-stage { perspective: 1400px; }
-  .grades { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 16px; }
-  .grade { display: grid; gap: 2px; min-height: 58px; padding: 8px 6px; border: 0; border-radius: 10px; background: var(--paper); box-shadow: var(--shadow); cursor: pointer; color: var(--ink); font-weight: 600; }
+  /* Today: the card is the centerpiece */
+  .today { display: flex; flex-direction: column; align-items: center; width: min(100%, 720px); margin: 0 auto; padding: 4px 0 72px; }
+  .today-head { display: grid; justify-items: center; gap: 12px; margin-bottom: 22px; text-align: center; max-width: 100%; }
+  .today h1 { margin: 0; display: flex; align-items: baseline; gap: 10px; font-size: 17px; font-weight: 500; color: var(--ink-soft); }
+  .due-number { font-family: var(--hand); font-size: 44px; line-height: 1; font-weight: 700; color: var(--heading); }
+  .study-stage { position: relative; width: 100%; perspective: 1600px; }
+  /* The rest of today's pile peeks out behind the card. */
+  .study-stage::before, .study-stage::after { content: ""; position: absolute; inset: 0; border-radius: 6px; background: var(--paper); box-shadow: var(--shadow); opacity: 0; transition: opacity 200ms; }
+  .study-stage::before { transform: translate(6px, 8px) rotate(1.4deg); }
+  .study-stage::after { transform: translate(-5px, 5px) rotate(-1deg); }
+  .study-stage.has-more::before, .study-stage.has-more::after { opacity: 1; }
+  .study-stage .flip { z-index: 1; }
+  .study-stage .face-text { font-size: clamp(24px, 3.4vw, 32px); }
+  .grades { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; width: 100%; margin-top: 26px; }
+  .grade { display: grid; gap: 2px; min-height: 60px; padding: 8px 6px; border: 0; border-radius: 10px; background: var(--paper); box-shadow: var(--shadow); cursor: pointer; color: var(--ink); font-weight: 600; }
   .grade small { font-weight: 500; font-size: 12px; color: #6b7690; }
   .grade[data-rating="again"] { box-shadow: inset 0 -3px 0 var(--again), var(--shadow); }
   .grade[data-rating="hard"] { box-shadow: inset 0 -3px 0 var(--hard), var(--shadow); }
   .grade[data-rating="good"] { box-shadow: inset 0 -3px 0 var(--good), var(--shadow); }
   .grade[data-rating="easy"] { box-shadow: inset 0 -3px 0 var(--easy), var(--shadow); }
-  .reveal-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
+  .reveal-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; margin-top: 26px; }
+  .reveal-actions { display: flex; align-items: center; gap: 8px; }
   .keys { font-size: 13px; color: var(--ink-faint); }
   @media (hover: none) { .keys { visibility: hidden; } }
   .empty-card .face-text { font-size: 24px; }
-  .summary { display: grid; gap: 22px; padding-top: 4px; }
-  .due-number { font-family: var(--hand); font-size: 72px; line-height: 1; color: var(--heading); }
-  .summary p { margin: 0; }
-  .scope { display: flex; flex-wrap: wrap; gap: 6px; }
+  .scope { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
   .chip { padding: 6px 12px; border: 0; border-radius: 999px; background: var(--chip); color: var(--ink-soft); cursor: pointer; font-size: 14px; }
   .chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
   @media (prefers-color-scheme: dark) { .chip[aria-pressed="true"] { background: var(--paper); color: var(--ink); } }
-  .vox-note { padding-left: 14px; border-left: 3px solid var(--margin); }
+  .vox-note { margin: 22px 0 0; font-size: 14px; color: var(--ink-faint); text-align: center; }
 
   /* Deck shelf */
   .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin: 0 0 18px; }
@@ -225,6 +234,7 @@ const appStyles = `
   .pile .card { display: flex; flex-direction: column; justify-content: flex-end; min-height: 124px; padding: 50px 16px 14px; }
   .pile-name { font-family: var(--hand); font-size: 21px; line-height: 1.25; color: var(--ink); overflow-wrap: anywhere; }
   .pile-meta { margin-top: 6px; font-size: 13px; color: #6b7690; }
+  .pile-series { position: absolute; top: 14px; left: 16px; right: 16px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: #8a94a8; }
   .pile-meta b { color: var(--again); font-weight: 600; }
   .pile-under { position: absolute; left: 0; right: 0; height: 100%; border-radius: 6px; background: var(--paper); box-shadow: var(--shadow); }
   .pile[aria-pressed="true"] .card { outline: 3px solid var(--action); outline-offset: 3px; }
@@ -267,15 +277,31 @@ const appStyles = `
   @media (prefers-color-scheme: dark) { .toast { background: var(--paper); color: var(--ink); } }
 
   @media (max-width: 820px) {
-    .landing, .today { grid-template-columns: 1fr; }
-    .landing { min-height: 0; padding-top: 12px; }
-    .summary { order: -1; grid-template-columns: auto 1fr; align-items: end; gap: 12px 20px; }
-    .due-number { font-size: 56px; }
-    .summary .scope, .summary .vox-note, .summary .study-all { grid-column: 1 / -1; }
+    .landing { grid-template-columns: 1fr; min-height: 0; padding-top: 12px; }
+    /* One swipeable row of decks instead of a tall wrapped block. */
+    .scope { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; max-width: 100vw; margin: 0 -16px; padding: 0 16px 4px; scrollbar-width: none; }
+    .scope::-webkit-scrollbar { display: none; }
+    .chip { flex: none; min-height: 36px; }
   }
-  @media (max-width: 480px) {
+  @media (max-width: 600px) {
+    .flip { aspect-ratio: auto; height: min(62vh, 420px); min-height: 300px; }
     .face { padding: 52px 20px 18px; }
+    .study-stage .face-text { font-size: 24px; }
+    .study-stage .face-text.is-long { font-size: 19px; }
+    .today-head { margin-bottom: 16px; }
+    .due-number { font-size: 36px; }
+    .grades, .reveal-row { margin-top: 20px; }
     .grades { gap: 6px; }
+    .grade { min-height: 62px; }
+    .reveal-row .keys { display: none; }
+    .reveal-row { justify-content: stretch; }
+    .reveal-actions { width: 100%; }
+    .reveal-actions .button { flex: 1; min-height: 52px; }
+    .topbar { padding: 14px 0; }
+    .deck-view h2 { font-size: 26px; }
+    .deck-tools .field { width: 100%; }
+    .cards-grid { grid-template-columns: 1fr; gap: 14px; }
+    .apps { margin-bottom: 40px; }
   }
 `;
 
@@ -310,33 +336,30 @@ export function appPage(mcpUrl: string) {
 
   <div id="app" hidden>
     <section class="today" aria-labelledby="today-title">
-      <div>
-        <div class="study-stage">
-          <button class="flip" id="study-card" type="button" aria-live="polite">
-            <div class="face face-front card"><span class="face-corner"><span id="card-deck"></span><span id="card-side-front">Question</span></span><div class="face-text" id="card-front"></div></div>
-            <div class="face face-back card"><span class="face-corner"><span id="card-deck-back"></span><span>Answer</span></span><div class="face-text" id="card-back"></div><div class="face-note" id="card-note"></div></div>
-          </button>
-        </div>
-        <div class="reveal-row" id="reveal-row">
-          <span class="keys">Tap the card or press Space to see the answer</span>
-          <button class="button button-quiet" id="reveal" type="button">Show answer</button>
-        </div>
-        <div class="grades" id="grades" hidden role="group" aria-label="How well did you know it?">
-          <button class="grade" data-rating="again" type="button">Again<small>1 · forgot</small></button>
-          <button class="grade" data-rating="hard" type="button">Hard<small>2 · struggled</small></button>
-          <button class="grade" data-rating="good" type="button">Good<small>3 · knew it</small></button>
-          <button class="grade" data-rating="easy" type="button">Easy<small>4 · instantly</small></button>
+      <header class="today-head">
+        <h1 id="today-title"><span class="due-number" id="due-number">0</span> <span id="due-text">cards to review</span></h1>
+        <div class="scope" id="scope" role="group" aria-label="Which deck to study"></div>
+      </header>
+      <div class="study-stage">
+        <button class="flip" id="study-card" type="button" aria-live="polite">
+          <div class="face face-front card"><span class="face-corner"><span id="card-deck"></span><span id="card-side-front">Question</span></span><div class="face-text" id="card-front"></div></div>
+          <div class="face face-back card"><span class="face-corner"><span id="card-deck-back"></span><span>Answer</span></span><div class="face-text" id="card-back"></div><div class="face-note" id="card-note"></div></div>
+        </button>
+      </div>
+      <div class="reveal-row" id="reveal-row">
+        <span class="keys">Space to flip, S to skip, 1–4 to grade</span>
+        <div class="reveal-actions">
+          <button class="button button-quiet" id="skip" type="button">Skip</button>
+          <button class="button button-primary" id="reveal" type="button">Show answer</button>
         </div>
       </div>
-      <aside class="summary">
-        <div>
-          <h1 id="today-title">Today</h1>
-          <div class="due-number" id="due-number">0</div>
-          <p id="due-text">cards to review</p>
-        </div>
-        <div class="scope" id="scope" role="group" aria-label="Which deck to study"></div>
-        <p class="vox-note">Or study by voice: connect this site in Vox once, then say “let’s review my flash cards.”</p>
-      </aside>
+      <div class="grades" id="grades" hidden role="group" aria-label="How well did you know it?">
+        <button class="grade" data-rating="again" type="button">Again<small>forgot</small></button>
+        <button class="grade" data-rating="hard" type="button">Hard<small>struggled</small></button>
+        <button class="grade" data-rating="good" type="button">Good<small>knew it</small></button>
+        <button class="grade" data-rating="easy" type="button">Easy<small>instantly</small></button>
+      </div>
+      <p class="vox-note">Or study by voice: connect this site in Vox, then say “let’s review my flash cards.”</p>
     </section>
 
     <section aria-labelledby="decks-title">
@@ -425,6 +448,11 @@ export function appPage(mcpUrl: string) {
     return days === 1 ? "tomorrow" : "in " + days + " days";
   }
   const deckName = (id) => decks.find((deck) => deck.id === id)?.name || "";
+  // "KMU Post-Bac: Genetics" shows as "Genetics" with its series as a label.
+  const splitName = (name) => {
+    const at = name.indexOf(": ");
+    return at > 0 && at < 30 ? { series: name.slice(0, at), title: name.slice(at + 2) } : { series: "", title: name };
+  };
 
   // ---- Studying ----
   function setFlipped(flipped) {
@@ -438,14 +466,17 @@ export function appPage(mcpUrl: string) {
     current = result.card || null;
     setFlipped(false);
     const due = current ? result.due_remaining : 0;
+    document.querySelector(".study-stage").classList.toggle("has-more", due > 1);
     $("due-number").textContent = String(due);
     $("due-text").textContent = due === 1 ? "card to review" : "cards to review";
-    const deckLabel = studyDeckId ? deckName(studyDeckId) : "All decks";
+    const deckLabel = studyDeckId ? splitName(deckName(studyDeckId)).title : "All decks";
     $("card-deck").textContent = deckLabel;
     $("card-deck-back").textContent = deckLabel;
     if (current) {
       $("card-front").textContent = current.front;
       $("card-back").textContent = current.back;
+      $("card-front").classList.toggle("is-long", current.front.length > 70);
+      $("card-back").classList.toggle("is-long", current.back.length > 70);
       $("card-note").textContent = current.notes || "";
       $("study-card").classList.remove("empty-card");
       $("study-card").setAttribute("aria-label", "Question: " + current.front + ". Tap to see the answer.");
@@ -470,20 +501,34 @@ export function appPage(mcpUrl: string) {
     catch (error) { current = card; setFlipped(true); fail(error); }
   }
 
+  async function skip() {
+    if (!current) return;
+    const card = current;
+    current = null;
+    try {
+      clearError();
+      await tool("skip_card", { card_id: card.card_id });
+      await loadNext();
+      if (current && current.card_id === card.card_id) toast("That’s the last card due right now.");
+    } catch (error) { current = card; fail(error); }
+  }
+
   $("study-card").addEventListener("click", () => { if (current) setFlipped(!$("study-card").classList.contains("is-flipped")); });
+  $("skip").addEventListener("click", skip);
   $("reveal").addEventListener("click", () => setFlipped(true));
   for (const button of document.querySelectorAll(".grade")) button.addEventListener("click", () => grade(button.dataset.rating));
   document.addEventListener("keydown", (event) => {
     if (event.target.closest("input, textarea") || event.metaKey || event.ctrlKey || event.altKey || !current || $("app").hidden) return;
     const flipped = $("study-card").classList.contains("is-flipped");
     if (event.key === " " && !event.target.closest("button")) { event.preventDefault(); setFlipped(!flipped); }
+    if (event.key === "s" || event.key === "S") skip();
     if (flipped && ["1", "2", "3", "4"].includes(event.key)) grade(["again", "hard", "good", "easy"][Number(event.key) - 1]);
   });
 
   function renderScope() {
     const options = [{ id: null, name: "All decks" }, ...decks.filter((deck) => deck.cardCount)];
     $("scope").replaceChildren(...options.map((option) => el("button", {
-      className: "chip", type: "button", "aria-pressed": String(option.id === studyDeckId), text: option.name,
+      className: "chip", type: "button", "aria-pressed": String(option.id === studyDeckId), text: splitName(option.name).title, title: option.name,
       onclick: () => { studyDeckId = option.id; renderScope(); loadNext().catch(fail); },
     })));
   }
@@ -510,7 +555,8 @@ export function appPage(mcpUrl: string) {
       }, [
         ...under,
         el("div", { className: "card" }, [
-          el("div", { className: "pile-name", text: deck.name }),
+          ...(splitName(deck.name).series ? [el("div", { className: "pile-series", text: splitName(deck.name).series })] : []),
+          el("div", { className: "pile-name", text: splitName(deck.name).title }),
           el("div", { className: "pile-meta" }, [
             document.createTextNode(deck.cardCount + (deck.cardCount === 1 ? " card" : " cards")),
             ...(deck.dueCount ? [document.createTextNode(", "), el("b", { text: deck.dueCount + " due" })] : []),

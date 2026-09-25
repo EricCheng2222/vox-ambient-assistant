@@ -149,6 +149,16 @@ export const FLASHCARD_TOOLS = [
     },
   },
   {
+    name: "skip_card",
+    description: "Skip a card for now without grading it: it moves to the end of today's due cards. Use when the user wants to skip or come back to it later.",
+    inputSchema: {
+      type: "object",
+      properties: { card_id: { type: "string" } },
+      required: ["card_id"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "study_stats",
     description: "Summarize progress: total cards, due now, new cards, and reviews in the last 24 hours.",
     inputSchema: {
@@ -226,6 +236,10 @@ export async function callTool(store: FlashcardStore, name: string, args: Record
         due_remaining: next.dueRemaining,
         reminder: "Ask the front only. Reveal the back after the user answers.",
       };
+    }
+    case "skip_card": {
+      const card = await store.skipCard(text(args.card_id) ?? "");
+      return { card_id: card.id, skipped: true, message: "Moved to the end of today's cards." };
     }
     case "grade_card": {
       if (!isFlashcardRating(args.rating)) throw new FlashcardError("Rating must be again, hard, good, or easy.");

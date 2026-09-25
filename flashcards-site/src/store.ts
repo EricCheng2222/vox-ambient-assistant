@@ -238,6 +238,19 @@ export class FlashcardStore {
     return { ...card, ...schedule };
   }
 
+  /** Puts a due card at the end of today's pile without grading it. */
+  async skipCard(cardId: string, at = new Date()) {
+    const card = await this.card(cardId);
+    const stamp = at.toISOString();
+    if (card.dueAt <= stamp) {
+      await this.db
+        .prepare("UPDATE cards SET due_at = ?3, updated_at = ?3 WHERE owner_id = ?1 AND id = ?2")
+        .bind(this.ownerId, cardId, stamp)
+        .run();
+    }
+    return card;
+  }
+
   async stats(deckId?: string, at = new Date()) {
     const row = await this.db
       .prepare(
