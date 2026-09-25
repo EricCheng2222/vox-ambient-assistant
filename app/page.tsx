@@ -445,6 +445,13 @@ declare global {
       ) => Promise<Array<{ id: string; status: string }>>;
       places?: () => Promise<string[]>;
       savePlace?: (name: string) => Promise<{ ok: boolean; error?: string; places?: string[] }>;
+      pickPlace?: (name?: string) => Promise<{
+        ok: boolean;
+        cancelled?: boolean;
+        error?: string;
+        name?: string;
+        places?: string[];
+      }>;
       deletePlace?: (name: string) => Promise<string[]>;
     };
     readonly voxLocalCodex?: {
@@ -755,7 +762,7 @@ function reminderLocationStatusLabel(reminder: Reminder, onIPhone: boolean) {
       return "Armed on iPhone";
     case "place_not_found":
       return onIPhone
-        ? `Couldn’t find “${reminder.place}” nearby. Save it as a place below.`
+        ? `Couldn’t find “${reminder.place}” nearby. Pick it on the map or save it as a place above.`
         : `The iPhone couldn’t find “${reminder.place}”. Save it as a place in the iPhone app.`;
     case "permission_needed":
       return "Allow location for Vox in iPhone Settings to arm this.";
@@ -1143,6 +1150,7 @@ export default function Home() {
   const [savedPlaces, setSavedPlaces] = useState<string[] | null>(null);
   const [placeName, setPlaceName] = useState("");
   const [placeSaving, setPlaceSaving] = useState(false);
+  const [mapPickerAvailable, setMapPickerAvailable] = useState(false);
   const [phoneAssistantCallbackNumber, setPhoneAssistantCallbackNumber] = useState("");
   const [phoneAssistantPassphrase, setPhoneAssistantPassphrase] = useState("");
   const [phoneAssistantBusy, setPhoneAssistantBusy] = useState(false);
@@ -1420,6 +1428,7 @@ export default function Home() {
   useEffect(() => {
     if (!window.voxNativeReminders?.syncLocations) return;
     void window.voxNativeReminders.places?.().then(setSavedPlaces).catch(() => undefined);
+    queueMicrotask(() => setMapPickerAvailable(typeof window.voxNativeReminders?.pickPlace === "function"));
     // Re-arm place reminders that fired while Vox was in the background.
     const onVisible = () => {
       if (document.visibilityState === "visible") void syncLocationReminders();
@@ -3555,6 +3564,30 @@ export default function Home() {
       setSavedPlaces(result.places ?? null);
       setPlaceName("");
       toast.success(`Saved “${name}”`, { description: "Place reminders for it will use this spot." });
+      void syncLocationReminders();
+    } catch (error) {
+      toast.error("Could not save this place", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setPlaceSaving(false);
+    }
+  }
+
+  // Opens the iPhone's map picker; a name adjusts that saved place.
+  async function choosePlaceOnMap(name = placeName.trim()) {
+    const pickPlace = window.voxNativeReminders?.pickPlace;
+    if (!pickPlace || placeSaving) return;
+    setPlaceSaving(true);
+    try {
+      const result = await pickPlace(name);
+      if (result.cancelled) return;
+      if (!result.ok) throw new Error(result.error ?? "The place could not be saved.");
+      setSavedPlaces(result.places ?? null);
+      setPlaceName("");
+      toast.success(`Saved “${result.name ?? name}”`, {
+        description: "Place reminders for it will use the spot you picked.",
+      });
       void syncLocationReminders();
     } catch (error) {
       toast.error("Could not save this place", {
@@ -7235,7 +7268,19 @@ export default function Home() {
                                   key={name}
                                   className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] py-0.5 pl-2.5 pr-1 text-xs text-white/75"
                                 >
-                                  {name}
+                                  {mapPickerAvailable ? (
+                                    <button
+                                      type="button"
+                                      className="hover:text-white"
+                                      aria-label={`Move ${name} on the map`}
+                                      title="Move on the map"
+                                      onClick={() => void choosePlaceOnMap(name)}
+                                    >
+                                      {name}
+                                    </button>
+                                  ) : (
+                                    name
+                                  )}
                                   <button
                                     type="button"
                                     className="grid size-5 place-items-center rounded-full text-white/40 hover:bg-white/10 hover:text-white"
@@ -7273,6 +7318,18 @@ export default function Home() {
                               {placeSaving ? "Saving…" : "Save current location"}
                             </Button>
                           </form>
+                          {mapPickerAvailable && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={placeSaving}
+                              onClick={() => void choosePlaceOnMap()}
+                              className="mt-2 h-8 rounded-full border-white/10 bg-white/[0.04] text-xs text-white hover:bg-white/10"
+                            >
+                              <MapPin /> Choose on map
+                            </Button>
+                          )}
                         </div>
                       )}
                       {phoneAssistantStatus?.configured && !reminderCallsAvailable && (
@@ -7350,6 +7407,20 @@ export default function Home() {
                                       >
                                         {reminderLocationStatusLabel(reminder, savedPlaces !== null)}
                                       </p>
+                                    )}
+                                    {reminder.status === "pending" &&
+                                      reminder.locationStatus === "place_not_found" &&
+                                      mapPickerAvailable &&
+                                      reminder.place && (
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="link"
+                                        className="mt-0.5 h-auto p-0 text-xs text-[#f4ff74]/80"
+                                        onClick={() => void choosePlaceOnMap(reminder.place ?? "")}
+                                      >
+                                        Choose “{reminder.place}” on the map
+                                      </Button>
                                     )}
                                   </>
                                 ) : (

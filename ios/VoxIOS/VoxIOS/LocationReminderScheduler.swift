@@ -2,6 +2,7 @@ import CoreLocation
 import Foundation
 import MapKit
 import Security
+import UIKit
 import UserNotifications
 
 /// Arms Vox's place-based reminders as iOS location notifications.
@@ -95,8 +96,7 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
 
     /// Saves the iPhone's current location under a name such as "Home".
     func saveCurrentLocation(as rawName: String) async -> [String: Any] {
-        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name.count <= 40 else {
+        guard Self.validName(rawName) != nil else {
             return ["ok": false, "error": "Use a short place name."]
         }
         guard await requestPermission() == "granted" else {
@@ -105,16 +105,47 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
         guard let location = await currentLocation() else {
             return ["ok": false, "error": "The iPhone couldn’t determine its location. Try again outdoors or with Wi‑Fi on."]
         }
+        return savePlace(named: rawName, at: location.coordinate)
+    }
+
+    /// Opens the map picker so the user can place a pin anywhere.
+    func pickPlace(named rawName: String, from presenter: UIViewController) async -> [String: Any] {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Center on the saved spot when adjusting a place, otherwise on the user.
+        var start = SavedPlaces.match(name)?.coordinate
+        if start == nil, await requestPermission() == "granted" {
+            start = await currentLocation()?.coordinate
+        }
+        let picked: (name: String, coordinate: CLLocationCoordinate2D)? = await withCheckedContinuation { continuation in
+            let picker = PlacePickerViewController(
+                name: String(name.prefix(40)),
+                start: start,
+                radius: Self.regionRadius,
+                showsUserLocation: permission == "granted"
+            ) { continuation.resume(returning: $0) }
+            let navigation = UINavigationController(rootViewController: picker)
+            navigation.modalPresentationStyle = .fullScreen
+            presenter.present(navigation, animated: true)
+        }
+        guard let picked else { return ["ok": false, "cancelled": true] }
+        return savePlace(named: picked.name, at: picked.coordinate)
+    }
+
+    private func savePlace(named rawName: String, at coordinate: CLLocationCoordinate2D) -> [String: Any] {
+        guard let name = Self.validName(rawName) else {
+            return ["ok": false, "error": "Use a short place name."]
+        }
         var places = SavedPlaces.load().filter { SavedPlaces.key($0.name) != SavedPlaces.key(name) }
-        places.append(SavedPlace(
-            name: name,
-            latitude: location.coordinate.latitude,
-            longitude: location.coordinate.longitude
-        ))
+        places.append(SavedPlace(name: name, latitude: coordinate.latitude, longitude: coordinate.longitude))
         guard SavedPlaces.save(Array(places.suffix(20))) else {
             return ["ok": false, "error": "The iPhone couldn’t save this place securely. Try again."]
         }
-        return ["ok": true, "places": placeNames()]
+        return ["ok": true, "name": name, "places": placeNames()]
+    }
+
+    private static func validName(_ rawName: String) -> String? {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !name.isEmpty && name.count <= 40 ? name : nil
     }
 
     func deletePlace(named name: String) -> [String] {

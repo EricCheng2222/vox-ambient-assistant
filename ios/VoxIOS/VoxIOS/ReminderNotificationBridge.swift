@@ -75,6 +75,7 @@ final class ReminderNotificationBridge: NSObject, WKScriptMessageHandlerWithRepl
               locationPermission: () => handler.postMessage({ type: "locationPermission" }),
               places: () => handler.postMessage({ type: "places" }),
               savePlace: (name) => handler.postMessage({ type: "savePlace", name: String(name) }),
+              pickPlace: (name) => handler.postMessage({ type: "pickPlace", name: String(name ?? "") }),
               deletePlace: (name) => handler.postMessage({ type: "deletePlace", name: String(name) }),
             }),
           });
@@ -126,6 +127,15 @@ final class ReminderNotificationBridge: NSObject, WKScriptMessageHandlerWithRepl
             let name = body["name"] as? String ?? ""
             Task { @MainActor in
                 replyHandler(await LocationReminderScheduler.shared.saveCurrentLocation(as: name), nil)
+            }
+        case "pickPlace":
+            let name = body["name"] as? String ?? ""
+            Task { @MainActor in
+                guard let presenter = self.webView?.window?.rootViewController?.topmostPresented else {
+                    replyHandler(["ok": false, "error": "The map couldn’t open right now."], nil)
+                    return
+                }
+                replyHandler(await LocationReminderScheduler.shared.pickPlace(named: name, from: presenter), nil)
             }
         case "deletePlace":
             let name = body["name"] as? String ?? ""

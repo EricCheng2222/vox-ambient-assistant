@@ -15,6 +15,7 @@
 		A10000000000000000000006 /* PairingBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* PairingBridge.swift */; };
 		A10000000000000000000007 /* ReminderNotificationBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* ReminderNotificationBridge.swift */; };
 		A10000000000000000000008 /* LocationReminderScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A /* LocationReminderScheduler.swift */; };
+		A10000000000000000000009 /* PlacePickerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* PlacePickerViewController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -27,6 +28,7 @@
 		A20000000000000000000008 /* PairingBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingBridge.swift; sourceTree = "<group>"; };
 		A20000000000000000000009 /* ReminderNotificationBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderNotificationBridge.swift; sourceTree = "<group>"; };
 		A2000000000000000000000A /* LocationReminderScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationReminderScheduler.swift; sourceTree = "<group>"; };
+		A2000000000000000000000B /* PlacePickerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacePickerViewController.swift; sourceTree = "<group>"; };
 		A20000000000000000000007 /* VoxIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoxIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -57,6 +59,7 @@
 				A20000000000000000000008 /* PairingBridge.swift */,
 				A20000000000000000000009 /* ReminderNotificationBridge.swift */,
 				A2000000000000000000000A /* LocationReminderScheduler.swift */,
+				A2000000000000000000000B /* PlacePickerViewController.swift */,
 				A20000000000000000000003 /* VoxWebView.swift */,
 				A20000000000000000000001 /* VoxIOSApp.swift */,
 				A20000000000000000000005 /* Assets.xcassets */,
@@ -147,6 +150,7 @@
 				A10000000000000000000006 /* PairingBridge.swift in Sources */,
 				A10000000000000000000007 /* ReminderNotificationBridge.swift in Sources */,
 				A10000000000000000000008 /* LocationReminderScheduler.swift in Sources */,
+				A10000000000000000000009 /* PlacePickerViewController.swift in Sources */,
 				A10000000000000000000003 /* VoxWebView.swift in Sources */,
 				A10000000000000000000001 /* VoxIOSApp.swift in Sources */,
 			);
