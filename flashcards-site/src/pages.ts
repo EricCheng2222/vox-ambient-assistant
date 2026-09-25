@@ -76,6 +76,10 @@ const baseStyles = `
   .button:disabled { opacity: 0.45; cursor: default; }
   .link-button { padding: 4px 6px; border: 0; background: none; color: var(--ink-soft); cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; }
   .link-button.danger { color: var(--again); }
+  .nav { display: flex; gap: 4px; margin-right: 10px; }
+  .nav a { padding: 6px 10px; border-radius: 8px; color: var(--ink-soft); font-weight: 600; text-decoration: none; }
+  .nav a[aria-current="page"] { background: var(--chip); color: var(--heading); }
+  @media (max-width: 480px) { .nav { margin-right: 0; } .who-name { display: none; } }
   .field { width: 100%; padding: 10px 12px; border: 1.5px solid color-mix(in srgb, var(--ink-faint) 45%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--paper) 85%, transparent); color: var(--ink); }
   .error { color: var(--again); min-height: 1.5em; }
 
@@ -314,7 +318,8 @@ export function appPage(mcpUrl: string) {
   <header class="topbar">
     <a class="wordmark" href="/"><span class="wordmark-mark" aria-hidden="true"></span>Vox Flash Cards</a>
     <div id="account" hidden style="display:flex;align-items:center;gap:6px">
-      <span id="who"></span>
+      <nav class="nav" aria-label="Pages"><a href="/" aria-current="page">Study</a><a href="/stats">Statistics</a></nav>
+      <span id="who" class="who-name"></span>
       <button class="link-button" id="signout" type="button">Sign out</button>
     </div>
   </header>
@@ -723,5 +728,252 @@ export function appPage(mcpUrl: string) {
   })().catch(fail);
 })();`,
     appStyles,
+  );
+}
+
+const statsStyles = `
+  .stats { display: grid; gap: 28px; padding: 8px 0 72px; }
+  .stats > *, .pair > * { min-width: 0; }
+  .stats h1 { margin: 0; font-family: var(--hand); font-size: clamp(30px, 4vw, 40px); color: var(--heading); }
+  .stats .card h2 { margin: 0 0 4px; font-size: 17px; color: var(--ink); }
+  .stats .card { padding: 58px 24px 22px; }
+  .card-label { position: absolute; top: 14px; left: 24px; right: 24px; display: flex; justify-content: space-between; font-size: 13px; color: #6b7690; }
+  .sentence { margin: 0 0 18px; font-family: var(--hand); font-size: clamp(24px, 3.4vw, 34px); line-height: 1.3; color: var(--ink); }
+  .figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+  .figure b { display: block; font-family: var(--hand); font-size: 36px; line-height: 1.1; color: var(--ink); }
+  .figure span { font-size: 13px; color: #5b6784; }
+  .pair { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 24px; }
+
+  .heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 17px); grid-auto-columns: 17px; justify-content: start; gap: 4px; overflow-x: auto; padding: 6px 0 4px; }
+  .heat i { border-radius: 4px; background: #e8edf3; }
+  .heat i[data-level="1"] { background: #c7d6f0; }
+  .heat i[data-level="2"] { background: #8fb0e8; }
+  .heat i[data-level="3"] { background: #4f74cc; }
+  .heat i[data-level="4"] { background: #2f55b5; }
+  .heat i.future { background: transparent; }
+  .legend { display: flex; align-items: center; gap: 4px; margin-top: 10px; font-size: 12px; color: #6b7690; }
+  .legend i { width: 11px; height: 11px; border-radius: 3px; }
+
+  .bars { display: grid; grid-template-columns: repeat(14, 1fr); align-items: end; gap: 6px; height: 170px; }
+  .bar { display: grid; align-content: end; justify-items: center; gap: 4px; height: 100%; font-size: 11px; color: #6b7690; }
+  .bar div { width: 100%; min-height: 2px; border-radius: 4px 4px 0 0; background: var(--easy); }
+  .bar.today div { background: var(--margin); }
+  .bar b { font-weight: 600; color: var(--ink); font-size: 11px; }
+
+  .stack { display: flex; height: 14px; overflow: hidden; border-radius: 999px; background: #e8edf3; }
+  .stack span { display: block; height: 100%; }
+  .key { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 13px; color: #5b6784; }
+  .key i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 2px; }
+
+  .deck-rows { display: grid; gap: 18px; }
+  .deck-row { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 2fr) auto; gap: 8px 20px; align-items: center; }
+  .deck-row .name { font-family: var(--hand); font-size: 20px; color: var(--ink); overflow-wrap: anywhere; }
+  .deck-row .series { display: block; font-family: var(--ui); font-size: 12px; color: #8a94a8; }
+  .deck-row .numbers { font-size: 13px; color: #5b6784; text-align: right; white-space: nowrap; }
+
+  .slips { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+  .slip { padding: 52px 18px 14px; }
+  .slip .front { font-family: var(--hand); font-size: 18px; line-height: 32px; color: var(--ink); }
+  .slip .back { font-family: var(--hand); font-size: 16px; line-height: 32px; color: #56627e; }
+  .slip .meta { position: absolute; top: 12px; left: 18px; right: 18px; display: flex; justify-content: space-between; font-size: 12px; color: #8a94a8; }
+  .quiet { margin: 0; color: #6b7690; }
+
+  @media (max-width: 820px) {
+    .pair { grid-template-columns: 1fr; }
+    .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .deck-row { grid-template-columns: 1fr auto; }
+    .deck-row .stack { grid-column: 1 / -1; grid-row: 2; }
+  }
+  @media (max-width: 480px) {
+    .stats .card { padding: 54px 16px 18px; }
+    .card-label { left: 16px; right: 16px; }
+    .bars { gap: 3px; height: 140px; }
+    .heat { grid-template-rows: repeat(7, 13px); grid-auto-columns: 13px; gap: 3px; }
+    .bar b { font-size: 10px; }
+  }
+`;
+
+/** Progress over time: activity, accuracy, what's coming due, and each deck's maturity. */
+export function statsPage() {
+  return shell(
+    "Statistics – Vox Flash Cards",
+    `<div class="wrap">
+  <header class="topbar">
+    <a class="wordmark" href="/"><span class="wordmark-mark" aria-hidden="true"></span>Vox Flash Cards</a>
+    <div id="account" style="display:flex;align-items:center;gap:6px">
+      <nav class="nav" aria-label="Pages"><a href="/">Study</a><a href="/stats" aria-current="page">Statistics</a></nav>
+    </div>
+  </header>
+  <main class="stats" id="stats" aria-busy="true">
+    <section class="card" aria-labelledby="summary-title">
+      <span class="card-label"><span id="summary-title">Your progress</span><span id="today-label"></span></span>
+      <p class="sentence" id="sentence">Loading your progress…</p>
+      <div class="figures">
+        <div class="figure"><b id="f-today">–</b><span>reviewed today</span></div>
+        <div class="figure"><b id="f-accuracy">–</b><span>correct, last 30 days</span></div>
+        <div class="figure"><b id="f-mature">–</b><span>cards learned well (3+ week interval)</span></div>
+        <div class="figure"><b id="f-due">–</b><span>due now</span></div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="activity-title">
+      <span class="card-label"><span id="activity-title">Last 12 months</span><span id="activity-total"></span></span>
+      <div class="heat" id="heat" role="img" aria-label="Reviews per day"></div>
+      <div class="legend" aria-hidden="true">Fewer <i style="background:#e8edf3"></i><i style="background:#c7d6f0"></i><i style="background:#8fb0e8"></i><i style="background:#4f74cc"></i><i style="background:#2f55b5"></i> More</div>
+    </section>
+
+    <div class="pair">
+      <section class="card" aria-labelledby="forecast-title">
+        <span class="card-label"><span id="forecast-title">Coming due, next 14 days</span></span>
+        <div class="bars" id="bars" role="img" aria-label="Cards due per day"></div>
+      </section>
+      <section class="card" aria-labelledby="answers-title">
+        <span class="card-label"><span id="answers-title">Your answers, last 30 days</span><span id="answers-total"></span></span>
+        <div class="stack" id="answers" role="img"></div>
+        <div class="key" id="answers-key"></div>
+        <div style="margin-top:22px">
+          <h2>All cards</h2>
+          <div class="stack" id="maturity" role="img"></div>
+          <div class="key" id="maturity-key"></div>
+        </div>
+      </section>
+    </div>
+
+    <section class="card" aria-labelledby="decks-title">
+      <span class="card-label"><span id="decks-title">Decks</span><span>learned well of all cards</span></span>
+      <div class="deck-rows" id="deck-rows"></div>
+    </section>
+
+    <section aria-labelledby="slips-title">
+      <div class="section-head"><h2 id="slips-title">Cards that keep slipping</h2></div>
+      <div class="slips" id="slips"></div>
+    </section>
+    <p class="error" id="error" role="alert"></p>
+  </main>
+</div>`,
+    `(() => {
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, props = {}, children = []) => {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(props)) {
+      if (key === "text") node.textContent = value;
+      else if (key === "className") node.className = value;
+      else node.setAttribute(key, value);
+    }
+    for (const child of children) node.append(child);
+    return node;
+  };
+  const number = (value) => new Intl.NumberFormat().format(value);
+  const percent = (value) => value === null ? "–" : Math.round(value * 100) + "%";
+  const addDays = (day, delta) => new Date(Date.parse(day + "T00:00:00Z") + delta * 86400000).toISOString().slice(0, 10);
+  const dayLabel = (day, style) => new Date(day + "T00:00:00Z").toLocaleDateString(undefined, { timeZone: "UTC", ...style });
+  const splitName = (name) => {
+    const at = name.indexOf(": ");
+    return at > 0 && at < 30 ? { series: name.slice(0, at), title: name.slice(at + 2) } : { series: "", title: name };
+  };
+  const MATURITY = [
+    ["mature", "Learned well", "#2f55b5"],
+    ["young", "Getting there", "#8fb0e8"],
+    ["learning", "Learning", "#b7791f"],
+    ["new", "Not studied yet", "#c9d2de"],
+  ];
+  const RATINGS = [["again", "Again", "#c8453a"], ["hard", "Hard", "#b7791f"], ["good", "Good", "#2f7d4f"], ["easy", "Easy", "#2f55b5"]];
+
+  function stack(target, keyTarget, parts, total, label) {
+    $(target).replaceChildren(...parts.filter((part) => part.value > 0).map((part) =>
+      el("span", { style: "width:" + (part.value / total) * 100 + "%;background:" + part.color, title: part.label + ": " + number(part.value) })));
+    $(target).setAttribute("aria-label", label + ": " + parts.map((part) => part.label + " " + number(part.value)).join(", "));
+    if (keyTarget) $(keyTarget).replaceChildren(...parts.map((part) =>
+      el("span", {}, [el("i", { style: "background:" + part.color }), document.createTextNode(part.label + " " + number(part.value))])));
+  }
+
+  function render(stats) {
+    const { totals } = stats;
+    $("today-label").textContent = dayLabel(stats.today, { weekday: "long", month: "long", day: "numeric" });
+    $("sentence").textContent = stats.streak > 1
+      ? "You’ve studied " + stats.streak + " days in a row."
+      : stats.streak === 1
+        ? (stats.studiedToday ? "You studied today. Come back tomorrow to start a streak." : "You studied yesterday. Study today to keep it going.")
+        : totals.cards
+          ? "Grade a few cards today to start a streak."
+          : "Add a deck to get started.";
+    $("f-today").textContent = number(stats.studiedToday);
+    $("f-accuracy").textContent = percent(stats.last30.accuracy);
+    $("f-mature").textContent = number(totals.mature);
+    $("f-due").textContent = number(totals.due);
+
+    // Activity: one column per week, oldest first, ending with this week.
+    const counts = new Map(stats.activity.map((row) => [row.day, row.reviews]));
+    const max = Math.max(1, ...stats.activity.map((row) => row.reviews));
+    const todayIndex = (new Date(stats.today + "T00:00:00Z").getUTCDay() + 6) % 7;
+    const start = addDays(stats.today, -(stats.activityDays - 7 + todayIndex));
+    const cells = [];
+    for (let index = 0; index < stats.activityDays; index++) {
+      const day = addDays(start, index);
+      const future = day > stats.today;
+      const reviews = counts.get(day) || 0;
+      const level = reviews ? Math.min(4, Math.ceil((reviews / max) * 4)) : 0;
+      cells.push(el("i", { className: future ? "future" : "", "data-level": String(level), title: future ? "" : dayLabel(day, { month: "short", day: "numeric" }) + ": " + reviews + " reviewed" }));
+    }
+    $("heat").replaceChildren(...cells);
+    // Narrow screens scroll the year; start at the most recent weeks.
+    $("heat").scrollLeft = $("heat").scrollWidth;
+    const reviewedTotal = stats.activity.reduce((sum, row) => sum + row.reviews, 0);
+    $("activity-total").textContent = reviewedTotal ? number(reviewedTotal) + " reviews over " + stats.daysStudied + (stats.daysStudied === 1 ? " day" : " days") : "Grade a card and it shows up here";
+
+    // Forecast: overdue cards count toward today.
+    const due = new Map(stats.forecast.map((row) => [row.day, row.due]));
+    const forecastMax = Math.max(1, ...stats.forecast.map((row) => row.due));
+    $("bars").replaceChildren(...Array.from({ length: 14 }, (_, index) => {
+      const day = addDays(stats.today, index);
+      const value = due.get(day) || 0;
+      return el("div", { className: "bar" + (index === 0 ? " today" : ""), title: dayLabel(day, { month: "short", day: "numeric" }) + ": " + value + " due" }, [
+        el("b", { text: value ? number(value) : "" }),
+        el("div", { style: "height:" + (value ? Math.max(3, (value / forecastMax) * 120) : 0) + "px" }),
+        el("span", { text: index === 0 ? "Today" : dayLabel(day, { weekday: "narrow" }) }),
+      ]);
+    }));
+
+    const ratings = stats.last30.ratings;
+    const answered = stats.last30.reviews;
+    $("answers-total").textContent = answered ? number(answered) + " answers" : "";
+    if (answered) {
+      stack("answers", "answers-key", RATINGS.map(([key, label, color]) => ({ label, color, value: ratings[key] })), answered, "Answers");
+    } else {
+      $("answers").replaceChildren();
+      $("answers-key").replaceChildren(el("p", { className: "quiet", text: "No answers yet in the last 30 days." }));
+    }
+    stack("maturity", "maturity-key", MATURITY.map(([key, label, color]) => ({ label, color, value: totals[key] })), Math.max(1, totals.cards), "All cards");
+
+    $("deck-rows").replaceChildren(...(stats.decks.length ? stats.decks.map((deck) => {
+      const name = splitName(deck.name);
+      const bar = el("div", { className: "stack", role: "img" });
+      bar.replaceChildren(...MATURITY.filter(([key]) => deck[key] > 0).map(([key, label, color]) =>
+        el("span", { style: "width:" + (deck[key] / Math.max(1, deck.cards)) * 100 + "%;background:" + color, title: label + ": " + deck[key] })));
+      bar.setAttribute("aria-label", MATURITY.map(([key, label]) => label + " " + deck[key]).join(", "));
+      return el("div", { className: "deck-row" }, [
+        el("div", { className: "name" }, [...(name.series ? [el("span", { className: "series", text: name.series })] : []), document.createTextNode(name.title)]),
+        bar,
+        el("div", { className: "numbers", text: number(deck.mature) + " of " + number(deck.cards) + (deck.accuracy30 === null ? "" : ", " + percent(deck.accuracy30) + " correct") }),
+      ]);
+    }) : [el("p", { className: "quiet", text: "No decks yet." })]));
+
+    $("slips").replaceChildren(...(stats.hardest.length ? stats.hardest.map((card) => el("article", { className: "card slip" }, [
+      el("span", { className: "meta" }, [el("span", { text: splitName(card.deck).title }), el("span", { text: "Forgot " + card.lapses + (card.lapses === 1 ? " time" : " times") })]),
+      el("div", { className: "front", text: card.front }),
+      el("div", { className: "back", text: card.back }),
+    ])) : [el("p", { className: "quiet", text: "Nothing yet. Cards you forget more than once will collect here so you can give them extra attention." })]));
+    $("stats").setAttribute("aria-busy", "false");
+  }
+
+  (async () => {
+    const response = await fetch("/api/stats?offset=" + -new Date().getTimezoneOffset(), { cache: "no-store" });
+    if (response.status === 401) { location.replace("/"); return; }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.stats) throw new Error(payload.error || "Statistics are unavailable right now.");
+    render(payload.stats);
+  })().catch((error) => { $("error").textContent = error.message; $("sentence").textContent = "Couldn’t load your progress."; });
+})();`,
+    statsStyles,
   );
 }

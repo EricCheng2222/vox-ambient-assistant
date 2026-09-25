@@ -228,13 +228,21 @@ export class FlashcardStore {
   async gradeCard(cardId: string, rating: FlashcardRating, at = new Date()) {
     const card = await this.card(cardId);
     const schedule = scheduleReview(card, rating, at);
-    await this.db
-      .prepare(
-        `UPDATE cards SET ease = ?3, interval_days = ?4, reps = ?5, lapses = ?6, due_at = ?7,
-           last_reviewed_at = ?8, updated_at = ?8 WHERE owner_id = ?1 AND id = ?2`,
-      )
-      .bind(this.ownerId, cardId, schedule.ease, schedule.intervalDays, schedule.reps, schedule.lapses, schedule.dueAt, at.toISOString())
-      .run();
+    const stamp = at.toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE cards SET ease = ?3, interval_days = ?4, reps = ?5, lapses = ?6, due_at = ?7,
+             last_reviewed_at = ?8, updated_at = ?8 WHERE owner_id = ?1 AND id = ?2`,
+        )
+        .bind(this.ownerId, cardId, schedule.ease, schedule.intervalDays, schedule.reps, schedule.lapses, schedule.dueAt, stamp),
+      this.db
+        .prepare(
+          `INSERT INTO reviews (id, owner_id, card_id, deck_id, rating, interval_before, interval_after, reviewed_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+        )
+        .bind(crypto.randomUUID(), this.ownerId, cardId, card.deckId, rating, card.intervalDays, schedule.intervalDays, stamp),
+    ]);
     return { ...card, ...schedule };
   }
 
@@ -269,6 +277,134 @@ export class FlashcardStore {
       newCards: Number(row?.fresh ?? 0),
       reviewedLast24h: Number(row?.reviewed ?? 0),
       totalLapses: Number(row?.lapses ?? 0),
+    };
+  }
+
+  /**
+   * Everything the statistics page shows. Days are the viewer's local days:
+   * offsetMinutes is their UTC offset (Taipei is +480).
+   */
+  async dashboard(offsetMinutes: number, at = new Date()) {
+    const offset = Math.max(-840, Math.min(840, Math.round(offsetMinutes)));
+    const shift = `${offset >= 0 ? "+" : "-"}${Math.abs(offset)} minutes`;
+    const stamp = at.toISOString();
+    const localToday = new Date(at.getTime() + offset * 60_000).toISOString().slice(0, 10);
+    const dayStart = (daysFromToday: number) =>
+      new Date(Date.parse(`${localToday}T00:00:00.000Z`) - offset * 60_000 + daysFromToday * 86_400_000).toISOString();
+    const activityDays = 7 * 53;
+
+    const [totals, activity, ratings, forecast, decks, hardest, streakDays] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT count(*) AS total,
+             sum(CASE WHEN due_at <= ?2 THEN 1 ELSE 0 END) AS due,
+             sum(CASE WHEN reps = 0 AND last_reviewed_at IS NULL THEN 1 ELSE 0 END) AS fresh,
+             sum(CASE WHEN last_reviewed_at IS NOT NULL AND interval_days < 1 THEN 1 ELSE 0 END) AS learning,
+             sum(CASE WHEN interval_days >= 1 AND interval_days < 21 THEN 1 ELSE 0 END) AS young,
+             sum(CASE WHEN interval_days >= 21 THEN 1 ELSE 0 END) AS mature
+           FROM cards WHERE owner_id = ?1`,
+        )
+        .bind(this.ownerId, stamp)
+        .first<Record<string, number | null>>(),
+      this.db
+        .prepare(
+          `SELECT date(reviewed_at, ?2) AS day, count(*) AS reviews,
+             sum(CASE WHEN rating = 'again' THEN 1 ELSE 0 END) AS again
+           FROM reviews WHERE owner_id = ?1 AND reviewed_at >= ?3 GROUP BY day ORDER BY day`,
+        )
+        .bind(this.ownerId, shift, dayStart(-(activityDays - 1)))
+        .all<{ day: string; reviews: number; again: number }>(),
+      this.db
+        .prepare("SELECT rating, count(*) AS n FROM reviews WHERE owner_id = ?1 AND reviewed_at >= ?2 GROUP BY rating")
+        .bind(this.ownerId, dayStart(-29))
+        .all<{ rating: string; n: number }>(),
+      this.db
+        .prepare(
+          `SELECT CASE WHEN due_at < ?2 THEN ?3 ELSE date(due_at, ?4) END AS day, count(*) AS n
+           FROM cards WHERE owner_id = ?1 AND due_at < ?5 GROUP BY day ORDER BY day`,
+        )
+        .bind(this.ownerId, dayStart(0), localToday, shift, dayStart(14))
+        .all<{ day: string; n: number }>(),
+      this.db
+        .prepare(
+          `SELECT d.id, d.name,
+             count(c.id) AS cards,
+             sum(CASE WHEN c.due_at <= ?2 THEN 1 ELSE 0 END) AS due,
+             sum(CASE WHEN c.id IS NOT NULL AND c.reps = 0 AND c.last_reviewed_at IS NULL THEN 1 ELSE 0 END) AS fresh,
+             sum(CASE WHEN c.last_reviewed_at IS NOT NULL AND c.interval_days < 1 THEN 1 ELSE 0 END) AS learning,
+             sum(CASE WHEN c.interval_days >= 1 AND c.interval_days < 21 THEN 1 ELSE 0 END) AS young,
+             sum(CASE WHEN c.interval_days >= 21 THEN 1 ELSE 0 END) AS mature,
+             (SELECT count(*) FROM reviews r JOIN cards rc ON rc.id = r.card_id
+                WHERE r.owner_id = ?1 AND rc.deck_id = d.id AND r.reviewed_at >= ?3) AS reviews,
+             (SELECT count(*) FROM reviews r JOIN cards rc ON rc.id = r.card_id
+                WHERE r.owner_id = ?1 AND rc.deck_id = d.id AND r.reviewed_at >= ?3 AND r.rating = 'again') AS again
+           FROM decks d LEFT JOIN cards c ON c.owner_id = d.owner_id AND c.deck_id = d.id
+           WHERE d.owner_id = ?1 GROUP BY d.id ORDER BY d.name COLLATE NOCASE`,
+        )
+        .bind(this.ownerId, stamp, dayStart(-29))
+        .all<Record<string, number | string | null>>(),
+      this.db
+        .prepare(
+          `SELECT c.id, c.front, c.back, c.lapses, d.name AS deck FROM cards c JOIN decks d ON d.id = c.deck_id
+           WHERE c.owner_id = ?1 AND c.lapses > 0 ORDER BY c.lapses DESC, c.ease ASC LIMIT 8`,
+        )
+        .bind(this.ownerId)
+        .all<{ id: string; front: string; back: string; lapses: number; deck: string }>(),
+      this.db
+        .prepare("SELECT DISTINCT date(reviewed_at, ?2) AS day FROM reviews WHERE owner_id = ?1 ORDER BY day DESC LIMIT 400")
+        .bind(this.ownerId, shift)
+        .all<{ day: string }>(),
+    ]);
+
+    // A streak survives until the end of today even if today has no reviews yet.
+    const studied = new Set(streakDays.results.map((row) => row.day));
+    const shiftDay = (day: string, delta: number) =>
+      new Date(Date.parse(`${day}T00:00:00.000Z`) + delta * 86_400_000).toISOString().slice(0, 10);
+    let streak = 0;
+    let cursor = studied.has(localToday) ? localToday : shiftDay(localToday, -1);
+    while (studied.has(cursor)) {
+      streak += 1;
+      cursor = shiftDay(cursor, -1);
+    }
+
+    const ratingCounts = { again: 0, hard: 0, good: 0, easy: 0 } as Record<FlashcardRating, number>;
+    for (const row of ratings.results) {
+      if (row.rating in ratingCounts) ratingCounts[row.rating as FlashcardRating] = Number(row.n);
+    }
+    const reviews30 = Object.values(ratingCounts).reduce((sum, value) => sum + value, 0);
+    const today = activity.results.find((row) => row.day === localToday);
+    const count = (value: unknown) => Number(value ?? 0);
+
+    return {
+      today: localToday,
+      totals: {
+        cards: count(totals?.total),
+        due: count(totals?.due),
+        new: count(totals?.fresh),
+        learning: count(totals?.learning),
+        young: count(totals?.young),
+        mature: count(totals?.mature),
+      },
+      studiedToday: count(today?.reviews),
+      streak,
+      daysStudied: studied.size,
+      last30: { reviews: reviews30, ratings: ratingCounts, accuracy: reviews30 ? 1 - ratingCounts.again / reviews30 : null },
+      activity: activity.results.map((row) => ({ day: row.day, reviews: count(row.reviews), again: count(row.again) })),
+      activityDays,
+      forecast: forecast.results.map((row) => ({ day: row.day, due: count(row.n) })),
+      decks: decks.results.map((row) => ({
+        id: String(row.id),
+        name: String(row.name),
+        cards: count(row.cards),
+        due: count(row.due),
+        new: count(row.fresh),
+        learning: count(row.learning),
+        young: count(row.young),
+        mature: count(row.mature),
+        reviews30: count(row.reviews),
+        accuracy30: count(row.reviews) ? 1 - count(row.again) / count(row.reviews) : null,
+      })),
+      hardest: hardest.results,
     };
   }
 }

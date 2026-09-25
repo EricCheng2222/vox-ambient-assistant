@@ -7,7 +7,7 @@ import {
   OAuthServer,
   protectedResourceMetadata,
 } from "./oauth.ts";
-import { appPage, consentPage, messagePage } from "./pages.ts";
+import { appPage, consentPage, messagePage, statsPage } from "./pages.ts";
 import { currentUser, endSession, startSession } from "./session.ts";
 import { FlashcardError, FlashcardStore } from "./store.ts";
 import { html, json, redirect, sha256, type Env } from "./util.ts";
@@ -248,6 +248,15 @@ async function route(request: Request, env: Env) {
         return json({ error: "That action could not be completed." }, 500);
       }
     }
+    if (path === "/api/stats" && request.method === "GET") {
+      const offset = Number(url.searchParams.get("offset") ?? "0");
+      try {
+        return json({ stats: await new FlashcardStore(env.DB, user.id).dashboard(Number.isFinite(offset) ? offset : 0) });
+      } catch (error) {
+        console.error("Statistics failed", error);
+        return json({ error: "Statistics are unavailable right now." }, 500);
+      }
+    }
     if (path === "/api/connections") {
       if (request.method === "GET") return json({ apps: await oauth.listGrants(user.id) });
       if (request.method === "DELETE") {
@@ -260,6 +269,7 @@ async function route(request: Request, env: Env) {
   }
 
   if (path === "/" && request.method === "GET") return html(appPage(mcpResourceUrl(origin)));
+  if (path === "/stats" && request.method === "GET") return html(statsPage());
   return html(messagePage("Not found", "There’s nothing here.", { href: "/", label: "Go to your flash cards" }), 404);
 }
 
