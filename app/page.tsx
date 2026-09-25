@@ -759,6 +759,8 @@ function reminderLocationStatusLabel(reminder: Reminder, onIPhone: boolean) {
         : `The iPhone couldn’t find “${reminder.place}”. Save it as a place in the iPhone app.`;
     case "permission_needed":
       return "Allow location for Vox in iPhone Settings to arm this.";
+    case "notifications_off":
+      return "Turn on iPhone alerts to arm this.";
     case "limit_reached":
       return "Not armed: iPhone limits how many places can be watched.";
     default:

@@ -9,6 +9,7 @@ export type ReminderLocationStatus =
   | "armed"
   | "place_not_found"
   | "permission_needed"
+  | "notifications_off"
   | "limit_reached";
 
 // Location reminders have no due time. They carry this far-future placeholder
@@ -110,6 +111,7 @@ export function isReminderLocationStatus(value: unknown): value is ReminderLocat
     value === "armed" ||
     value === "place_not_found" ||
     value === "permission_needed" ||
+    value === "notifications_off" ||
     value === "limit_reached"
   );
 }

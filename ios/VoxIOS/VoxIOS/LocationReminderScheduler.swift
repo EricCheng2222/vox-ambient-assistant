@@ -111,12 +111,14 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
             latitude: location.coordinate.latitude,
             longitude: location.coordinate.longitude
         ))
-        SavedPlaces.save(Array(places.suffix(20)))
+        guard SavedPlaces.save(Array(places.suffix(20))) else {
+            return ["ok": false, "error": "The iPhone couldn’t save this place securely. Try again."]
+        }
         return ["ok": true, "places": placeNames()]
     }
 
     func deletePlace(named name: String) -> [String] {
-        SavedPlaces.save(SavedPlaces.load().filter { SavedPlaces.key($0.name) != SavedPlaces.key(name) })
+        _ = SavedPlaces.save(SavedPlaces.load().filter { SavedPlaces.key($0.name) != SavedPlaces.key(name) })
         return placeNames()
     }
 
@@ -150,9 +152,9 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
     /// Replaces every armed place notification with the web app's current list
     /// and reports, per reminder, whether it could be armed.
     func schedule(_ reminders: [LocationReminder]) async -> [[String: String]] {
-        let center = UNUserNotificationCenter.current()
-        let pending = await center.pendingNotificationRequests()
-        center.removePendingNotificationRequests(
+        let notificationCenter = UNUserNotificationCenter.current()
+        let pending = await notificationCenter.pendingNotificationRequests()
+        notificationCenter.removePendingNotificationRequests(
             withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix(Self.identifierPrefix) }
         )
         guard !reminders.isEmpty else { return [] }
@@ -160,12 +162,17 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
         guard await requestPermission() == "granted" else {
             return reminders.map { ["id": $0.id, "status": "permission_needed"] }
         }
+        // iOS refuses to schedule notifications until the user allows them.
+        let alerts = await notificationCenter.notificationSettings().authorizationStatus
+        guard [.authorized, .provisional, .ephemeral].contains(alerts) else {
+            return reminders.map { ["id": $0.id, "status": "notifications_off"] }
+        }
 
         var remaining = Self.maximumRegions
         var statuses: [[String: String]] = []
         for reminder in reminders {
-            let regions = await regions(for: reminder.place)
-            guard !regions.isEmpty else {
+            let centers = await coordinates(for: reminder.place)
+            guard !centers.isEmpty else {
                 statuses.append(["id": reminder.id, "status": "place_not_found"])
                 continue
             }
@@ -173,7 +180,12 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
                 statuses.append(["id": reminder.id, "status": "limit_reached"])
                 continue
             }
-            for (index, region) in regions.prefix(remaining).enumerated() {
+            var armed = 0
+            for (index, center) in centers.prefix(remaining).enumerated() {
+                let identifier = "\(Self.identifierPrefix)\(reminder.id)-\(index)"
+                // iOS tracks an app's regions by identifier, so each geofence
+                // needs its own; a shared one would silently replace another.
+                let region = CLCircularRegion(center: center, radius: Self.regionRadius, identifier: identifier)
                 region.notifyOnEntry = !reminder.leaving
                 region.notifyOnExit = reminder.leaving
                 let content = UNMutableNotificationContent()
@@ -182,21 +194,27 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
                 content.sound = .default
                 content.categoryIdentifier = ReminderNotificationPresenter.categoryIdentifier
                 content.userInfo = ["reminderId": reminder.id]
-                try? await center.add(UNNotificationRequest(
-                    identifier: "\(Self.identifierPrefix)\(reminder.id)-\(index)",
-                    content: content,
-                    trigger: UNLocationNotificationTrigger(region: region, repeats: false)
-                ))
-                remaining -= 1
+                do {
+                    try await notificationCenter.add(UNNotificationRequest(
+                        identifier: identifier,
+                        content: content,
+                        trigger: UNLocationNotificationTrigger(region: region, repeats: false)
+                    ))
+                    armed += 1
+                    remaining -= 1
+                } catch {
+                    continue
+                }
             }
-            statuses.append(["id": reminder.id, "status": "armed"])
+            // Report "armed" only when iOS actually accepted a geofence.
+            statuses.append(["id": reminder.id, "status": armed > 0 ? "armed" : "notifications_off"])
         }
         return statuses
     }
 
-    private func regions(for place: String) async -> [CLCircularRegion] {
+    private func coordinates(for place: String) async -> [CLLocationCoordinate2D] {
         if let saved = SavedPlaces.match(place) {
-            return [circle(saved.coordinate, id: "saved")]
+            return [saved.coordinate]
         }
         // A store or landmark name: arm its nearest branches, searched on-device.
         guard let here = await currentLocation() else { return [] }
@@ -213,12 +231,7 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
             .filter { $0.distance(from: here) <= Self.searchRadius }
             .sorted { $0.distance(from: here) < $1.distance(from: here) }
             .prefix(Self.matchesPerSearch)
-            .enumerated()
-            .map { circle($0.element.coordinate, id: "search-\($0.offset)") }
-    }
-
-    private func circle(_ coordinate: CLLocationCoordinate2D, id: String) -> CLCircularRegion {
-        CLCircularRegion(center: coordinate, radius: Self.regionRadius, identifier: id)
+            .map(\.coordinate)
     }
 
     func cancel(reminderId: String) async {
@@ -289,14 +302,16 @@ enum SavedPlaces {
         return places
     }
 
-    static func save(_ places: [SavedPlace]) {
-        guard let data = try? JSONEncoder().encode(places) else { return }
-        let status = SecItemUpdate(baseQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+    @discardableResult
+    static func save(_ places: [SavedPlace]) -> Bool {
+        guard let data = try? JSONEncoder().encode(places) else { return false }
+        var status = SecItemUpdate(baseQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
             var item = baseQuery
             item[kSecValueData as String] = data
             item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            SecItemAdd(item as CFDictionary, nil)
+            status = SecItemAdd(item as CFDictionary, nil)
         }
+        return status == errSecSuccess
     }
 }

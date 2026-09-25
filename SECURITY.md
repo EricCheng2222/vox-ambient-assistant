@@ -37,7 +37,7 @@ Security fixes currently target the latest commit on `main` and the latest deskt
 
 ## Place-based reminders
 
-- Location never leaves the iPhone. Saved places are stored in the iOS Keychain (this device only), nearby searches run through MapKit on the device, and iOS monitors the geofences. The backend stores only the place name from the user's request, the arrival or departure choice, and a status (armed, place not found, permission needed, or limit reached).
+- Location never leaves the iPhone. Saved places are stored in the iOS Keychain (this device only), nearby searches run through MapKit on the device, and iOS monitors the geofences. The backend stores only the place name from the user's request, the arrival or departure choice, and a status (armed, place not found, location or notification permission needed, or limit reached).
 - The app requests only “While Using the App” location access. It does not collect background location.
 - The notification's **Mark as done** action uses the app's existing signed-in session to update that one reminder.
 
