@@ -1,4 +1,4 @@
-import { FlashcardError, FlashcardStore } from "./store.ts";
+import { FlashcardError, FlashcardStore, type StudyFocus } from "./store.ts";
 import { isFlashcardRating } from "./srs.ts";
 
 // A stateless Model Context Protocol server (Streamable HTTP, JSON responses)
@@ -7,12 +7,21 @@ import { isFlashcardRating } from "./srs.ts";
 export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 export const FLASHCARD_SERVER_INSTRUCTIONS =
-  "Vox Flash Cards. Decks hold cards with a front (prompt) and a back (answer). To study: call next_card, ask the user the front without revealing the back, let them answer, then compare their answer with the back, tell them how they did, and call grade_card with again (wrong or blank), hard (right after real effort or a hint), good (right), or easy (instant and certain). Repeat until next_card reports no cards are due. Cards the user misses come back later in the session. Use add_cards, edit_card, and delete_card to manage cards; every deck argument accepts a deck id or a deck name.";
+  "Vox Flash Cards. Decks hold cards with a front (prompt) and a back (answer). To study: call next_card, ask the user the front without revealing the back, let them answer, then compare their answer with the back, tell them how they did, and call grade_card with again (wrong or blank), hard (right after real effort or a hint), good (right), or easy (instant and certain). If the user says how hard it felt, use their rating. grade_card and skip_card return the next card, so ask it directly. Use skip_card once when the user wants to skip. Pass focus hard to work on the cards they forget most. Repeat until no cards are due. Cards the user misses come back later in the session. Use add_cards, edit_card, and delete_card to manage cards; every deck argument accepts a deck id or a deck name.";
 
 const deckArgument = {
   type: "string",
   description: "Deck id or deck name.",
 };
+const focusArgument = {
+  type: "string",
+  enum: ["due", "hard"],
+  description: "due (default): in due order. hard: the cards the user forgets most often first, for when they want to work on hard cards.",
+};
+
+function studyFocus(value: unknown): StudyFocus {
+  return value === "hard" ? "hard" : "due";
+}
 
 export const FLASHCARD_TOOLS = [
   {
@@ -126,17 +135,19 @@ export const FLASHCARD_TOOLS = [
     description: "Get the next card due for review. Ask the user the front; keep the back hidden until they answer.",
     inputSchema: {
       type: "object",
-      properties: { deck: deckArgument },
+      properties: { deck: deckArgument, focus: focusArgument },
       additionalProperties: false,
     },
     annotations: { readOnlyHint: true },
   },
   {
     name: "grade_card",
-    description: "Record how the user did on a card and schedule its next review.",
+    description: "Record how the user did on a card and schedule its next review. Returns the next card to ask, so don't call next_card afterwards.",
     inputSchema: {
       type: "object",
       properties: {
+        deck: deckArgument,
+        focus: focusArgument,
         card_id: { type: "string" },
         rating: {
           type: "string",
@@ -150,10 +161,10 @@ export const FLASHCARD_TOOLS = [
   },
   {
     name: "skip_card",
-    description: "Skip a card for now without grading it: it moves to the end of today's due cards. Use when the user wants to skip or come back to it later.",
+    description: "Skip a card for now without grading it: it moves to the end of today's due cards. Returns the next card to ask, so don't call next_card afterwards. Call it once per skip request.",
     inputSchema: {
       type: "object",
-      properties: { card_id: { type: "string" } },
+      properties: { card_id: { type: "string" }, deck: deckArgument, focus: focusArgument },
       required: ["card_id"],
       additionalProperties: false,
     },
@@ -186,6 +197,18 @@ function text(value: unknown) {
 }
 
 export async function callTool(store: FlashcardStore, name: string, args: Record<string, unknown>) {
+  const nextCard = async (deckId: string | undefined, focus: StudyFocus, skippedId?: string) => {
+    const next = await store.nextDueCard(deckId, new Date(), focus);
+    if (!next.card) return { done: true, message: "No cards are due right now.", next_due_at: next.nextDueAt ?? null };
+    const { card } = next;
+    return {
+      card: { card_id: card.id, front: card.front, back: card.back, notes: card.notes, reviews: card.reps, lapses: card.lapses },
+      due_remaining: next.dueRemaining,
+      ...(next.repeat ? { repeat: "The user missed this card earlier today; it's back for another try." } : {}),
+      ...(skippedId && card.id === skippedId ? { only_card_left: true } : {}),
+      reminder: "Ask the front only. Reveal the back after the user answers.",
+    };
+  };
   const optionalDeckId = async (ref: unknown) => (text(ref)?.trim() ? (await store.requireDeck(ref)).id : undefined);
   switch (name) {
     case "list_decks":
@@ -227,24 +250,18 @@ export async function callTool(store: FlashcardStore, name: string, args: Record
       };
     case "delete_card":
       return { deleted: await store.deleteCard(text(args.card_id) ?? "") };
-    case "next_card": {
-      const next = await store.nextDueCard(await optionalDeckId(args.deck));
-      if (!next.card) return { done: true, message: "No cards are due right now.", next_due_at: next.nextDueAt ?? null };
-      const { card } = next;
-      return {
-        card: { card_id: card.id, front: card.front, back: card.back, notes: card.notes, reviews: card.reps, lapses: card.lapses },
-        due_remaining: next.dueRemaining,
-        reminder: "Ask the front only. Reveal the back after the user answers.",
-      };
-    }
+    case "next_card":
+      return nextCard(await optionalDeckId(args.deck), studyFocus(args.focus));
     case "skip_card": {
       const card = await store.skipCard(text(args.card_id) ?? "");
-      return { card_id: card.id, skipped: true, message: "Moved to the end of today's cards." };
+      const next = await nextCard(await optionalDeckId(args.deck), studyFocus(args.focus), card.id);
+      return { skipped: card.id, next };
     }
     case "grade_card": {
       if (!isFlashcardRating(args.rating)) throw new FlashcardError("Rating must be again, hard, good, or easy.");
       const card = await store.gradeCard(text(args.card_id) ?? "", args.rating);
-      return { card_id: card.id, rating: args.rating, next_due_at: card.dueAt, interval_days: card.intervalDays };
+      const next = await nextCard(await optionalDeckId(args.deck), studyFocus(args.focus));
+      return { graded: { card_id: card.id, rating: args.rating, next_due_at: card.dueAt }, next };
     }
     case "study_stats":
       return { stats: await store.stats(await optionalDeckId(args.deck)) };

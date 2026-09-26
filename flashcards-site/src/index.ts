@@ -240,7 +240,11 @@ async function route(request: Request, env: Env) {
     if (request.method !== "GET" && request.headers.get("origin") !== origin) {
       return json({ error: "Request not allowed." }, 403);
     }
-    if (path === "/api/me") return json({ user: { name: user.name } });
+    if (path === "/api/me") {
+      const offset = Number(url.searchParams.get("offset"));
+      if (url.searchParams.has("offset")) await new FlashcardStore(env.DB, user.id).setUtcOffset(offset);
+      return json({ user: { name: user.name } });
+    }
     if (path === "/api/tool" && request.method === "POST") {
       const body = (await request.json().catch(() => null)) as { tool?: unknown; arguments?: unknown } | null;
       const tool = typeof body?.tool === "string" ? body.tool : "";
@@ -305,6 +309,7 @@ async function handleAppApi(request: Request, env: Env, oauth: OAuthServer, url:
   const path = url.pathname;
   try {
     if (path === "/api/app/me" && request.method === "GET") {
+      if (url.searchParams.has("offset")) await store.setUtcOffset(Number(url.searchParams.get("offset")));
       const user = await env.DB.prepare("SELECT name FROM users WHERE id = ?1").bind(ownerId).first<{ name: string }>();
       return json({ user: { name: user?.name ?? "" } });
     }

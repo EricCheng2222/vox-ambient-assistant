@@ -31,6 +31,8 @@ struct Card: Codable, Identifiable, Hashable {
     var lapses: Int
     var dueAt: Date
     var lastReviewedAt: Date?
+    /// When the card was last shown and graded or skipped.
+    var seenAt: Date?
 }
 
 enum Rating: String, Codable, CaseIterable, Identifiable {
@@ -66,6 +68,7 @@ enum Scheduler {
     static func review(_ card: Card, _ rating: Rating, at now: Date) -> Card {
         var next = card
         next.lastReviewedAt = now
+        next.seenAt = now
         if rating == .again {
             next.ease = max(minEase, card.ease - 0.2)
             next.intervalDays = 0
@@ -110,6 +113,8 @@ private struct Snapshot: Codable {
     var downloaded: [String: DownloadedDeck] = [:]
     var pending: [PendingReview] = []
     var lastSync: Date?
+    var sinceRepeat: Int?
+    var sinceRepeatDay: String?
 }
 
 struct DownloadedDeck: Codable, Hashable {
@@ -131,6 +136,11 @@ final class Library: ObservableObject {
     @Published private(set) var syncState: SyncState = .idle
     @Published private(set) var downloading: Set<String> = []
 
+    /// New cards shown since a missed card last came back (per day).
+    private var sinceRepeat = 0
+    private var sinceRepeatDay = ""
+    static let repeatMissedEvery = 10
+
     private let auth: AuthManager
     private var api: APIClient { APIClient(auth: auth) }
     private var pushTask: Task<Void, Never>?
@@ -150,11 +160,16 @@ final class Library: ObservableObject {
             downloaded = snapshot.downloaded
             pending = snapshot.pending
             lastSync = snapshot.lastSync
+            sinceRepeat = snapshot.sinceRepeat ?? 0
+            sinceRepeatDay = snapshot.sinceRepeatDay ?? ""
         }
     }
 
     private func save() {
-        let snapshot = Snapshot(remoteDecks: remoteDecks, downloaded: downloaded, pending: pending, lastSync: lastSync)
+        let snapshot = Snapshot(
+            remoteDecks: remoteDecks, downloaded: downloaded, pending: pending, lastSync: lastSync,
+            sinceRepeat: sinceRepeat, sinceRepeatDay: sinceRepeatDay
+        )
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         try? data.write(to: Self.fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
@@ -176,12 +191,59 @@ final class Library: ObservableObject {
         downloaded.values.sorted { $0.deck.name.localizedStandardCompare($1.deck.name) == .orderedAscending }
     }
 
+    /// Due cards in study order, matching the website: a fresh random order
+    /// each day, and a card seen today (graded, missed, or skipped) waits until
+    /// every other due card has had its turn.
     func dueCards(in deckIds: Set<String>?, at now: Date = Date()) -> [Card] {
-        downloaded.values
+        let startOfDay = Calendar.current.startOfDay(for: now)
+        let day = ISO8601.plain.string(from: startOfDay)
+        func seenToday(_ card: Card) -> Bool { (card.seenAt ?? .distantPast) >= startOfDay }
+        return downloaded.values
             .filter { deckIds?.contains($0.deck.id) ?? true }
             .flatMap(\.cards)
             .filter { $0.dueAt <= now }
-            .sorted { $0.dueAt < $1.dueAt }
+            .map { (card: $0, seen: seenToday($0), key: Self.shuffleKey($0.id, day)) }
+            .sorted { a, b in
+                if a.seen != b.seen { return !a.seen }
+                if a.seen, let first = a.card.seenAt, let second = b.card.seenAt, first != second { return first < second }
+                return a.key < b.key
+            }
+            .map(\.card)
+    }
+
+    /// The card to show next: every 10 new cards, the oldest card missed today
+    /// comes back once; otherwise the next card in today's order.
+    func nextCard(in deckIds: Set<String>?, at now: Date = Date()) -> (card: Card, isRepeat: Bool)? {
+        let due = dueCards(in: deckIds, at: now)
+        let startOfDay = Calendar.current.startOfDay(for: now)
+        if sinceRepeatDay == Self.dayKey(now), sinceRepeat >= Self.repeatMissedEvery,
+           let missed = due
+            .filter({ ($0.lastReviewedAt ?? .distantPast) >= startOfDay && $0.reps == 0 && $0.lapses > 0 })
+            .min(by: { ($0.seenAt ?? .distantPast) < ($1.seenAt ?? .distantPast) }) {
+            return (missed, true)
+        }
+        return due.first.map { ($0, false) }
+    }
+
+    private func countShown(_ card: Card, at now: Date) {
+        let day = Self.dayKey(now)
+        let isRepeat = (card.seenAt ?? .distantPast) >= Calendar.current.startOfDay(for: now)
+        sinceRepeat = isRepeat ? 0 : (sinceRepeatDay == day ? sinceRepeat + 1 : 1)
+        sinceRepeatDay = day
+    }
+
+    private static func dayKey(_ date: Date) -> String {
+        ISO8601.plain.string(from: Calendar.current.startOfDay(for: date))
+    }
+
+    /// A stable pseudo-random number per card per day (FNV-1a).
+    private static func shuffleKey(_ id: String, _ day: String) -> UInt64 {
+        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
+        for byte in "\(day)|\(id)".utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01B3
+        }
+        return hash
     }
 
     func nextDue(in deckIds: Set<String>?, after now: Date = Date()) -> Date? {
@@ -199,16 +261,18 @@ final class Library: ObservableObject {
 
     func grade(_ card: Card, _ rating: Rating) {
         let now = Date()
+        countShown(card, at: now)
         replace(Scheduler.review(card, rating, at: now))
         pending.append(PendingReview(id: UUID().uuidString.lowercased(), cardId: card.id, rating: rating, reviewedAt: now))
         save()
         schedulePush()
     }
 
-    /// Puts a card at the end of today's pile. Only on this iPhone; nothing to sync.
+    /// Sends a card to the back of today's pile. Only on this iPhone; nothing to sync.
     func skip(_ card: Card) {
+        countShown(card, at: Date())
         var moved = card
-        moved.dueAt = Date()
+        moved.seenAt = Date()
         replace(moved)
         save()
     }
@@ -250,7 +314,8 @@ final class Library: ObservableObject {
         syncState = .syncing
         do {
             try await pushPending()
-            let me: MeResponse = try await api.get("api/app/me")
+            let offset = String(TimeZone.current.secondsFromGMT() / 60)
+            let me: MeResponse = try await api.get("api/app/me", query: ["offset": offset])
             auth.setUserName(me.user.name)
             let list: DecksResponse = try await api.get("api/app/decks")
             remoteDecks = list.decks

@@ -394,7 +394,7 @@ type RealtimeEvent = {
   response?: {
     id?: string;
     metadata?: Record<string, string>;
-    output?: Array<{ id?: string; type?: string }>;
+    output?: Array<{ id?: string; type?: string; name?: string }>;
   };
 };
 
@@ -1189,7 +1189,7 @@ export default function Home() {
   // Realtime does not continue after an MCP call on its own: once a study
   // reply's calls have all finished, Vox asks the model to carry on.
   const completedMcpCallsRef = useRef(new Set<string>());
-  const studyAwaitingCallsRef = useRef<{ ids: string[]; wrapUp: boolean } | null>(null);
+  const studyAwaitingCallsRef = useRef<{ ids: string[]; names: string[]; wrapUp: boolean } | null>(null);
   // The study opening waits until Realtime has loaded the flash-card tools;
   // requiring a tool call before then is rejected.
   const studyOpeningRef = useRef<{ event: string; timer: number } | null>(null);
@@ -2690,16 +2690,24 @@ export default function Home() {
     }
     if (!awaiting.wrapUp && !studyModeRef.current) return;
     studyContinuationsRef.current += 1;
+    // Once a tool has handed back the next card (or the wrap-up stats), the
+    // follow-up only speaks. Allowing tools here let the model redo the
+    // user's last request, such as skipping card after card.
+    const hasResult =
+      awaiting.wrapUp || awaiting.names.some((name) => ["next_card", "grade_card", "skip_card", "study_stats"].includes(name));
     channel.send(
       JSON.stringify({
         type: "response.create",
         response: {
           metadata: { vox_kind: awaiting.wrapUp ? "study_wrapup" : "study_continue" },
+          ...(hasResult ? { tool_choice: "none" } : {}),
           instructions: [
             awaiting.wrapUp ? buildVoiceInstructions(memoriesRef.current, themeRef.current) : voiceInstructions(),
             responseLanguageInstruction(selectResponseLanguage("", messagesRef.current)),
             awaiting.wrapUp ? studyWrapUpInstructions() : "",
-            "Continue from where you left off; the tool results are now in the conversation.",
+            hasResult
+              ? "The tool results are now in the conversation and the user's last request has already been carried out; don't repeat it. If you haven't yet, say in a few words how they did or that the card was skipped, then ask the front of the next card from the result. Don't narrate what you did."
+              : "Continue from where you left off; the tool results are now in the conversation. Don't repeat an action you already took.",
           ].filter(Boolean).join("\n\n"),
         },
       }),
@@ -5398,11 +5406,13 @@ export default function Home() {
         }
         const studyKind = event.response?.metadata?.vox_kind ?? "";
         if (studyKind.startsWith("study_")) {
-          const calls = (event.response?.output ?? [])
-            .filter((item) => item.type === "mcp_call" && item.id)
-            .map((item) => item.id as string);
+          const calls = (event.response?.output ?? []).filter((item) => item.type === "mcp_call" && item.id);
           if (calls.length) {
-            studyAwaitingCallsRef.current = { ids: calls, wrapUp: studyKind === "study_wrapup" };
+            studyAwaitingCallsRef.current = {
+              ids: calls.map((item) => item.id as string),
+              names: calls.map((item) => item.name ?? ""),
+              wrapUp: studyKind === "study_wrapup",
+            };
             continueStudyAfterTools();
           } else if (studyKind === "study_wrapup") {
             detachStudyTools();

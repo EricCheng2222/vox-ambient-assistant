@@ -477,6 +477,7 @@ export function appPage(mcpUrl: string) {
     const deckLabel = studyDeckId ? splitName(deckName(studyDeckId)).title : "All decks";
     $("card-deck").textContent = deckLabel;
     $("card-deck-back").textContent = deckLabel;
+    $("card-side-front").textContent = result.repeat ? "Missed earlier, try again" : "Question";
     if (current) {
       $("card-front").textContent = current.front;
       $("card-back").textContent = current.back;
@@ -712,7 +713,7 @@ export function appPage(mcpUrl: string) {
 
   // ---- Start ----
   (async () => {
-    const response = await fetch("/api/me", { cache: "no-store" });
+    const response = await fetch("/api/me?offset=" + -new Date().getTimezoneOffset(), { cache: "no-store" });
     if (!response.ok) {
       $("signed-out").hidden = false;
       const demo = $("demo-card");

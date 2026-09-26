@@ -3,6 +3,11 @@ import { now } from "./util.ts";
 
 export class FlashcardError extends Error {}
 
+export type StudyFocus = "due" | "hard";
+
+/** After this many new cards, a card missed earlier today comes back once. */
+export const REPEAT_MISSED_EVERY = 10;
+
 export type Deck = {
   id: string;
   name: string;
@@ -25,20 +30,42 @@ export type Card = {
   lapses: number;
   dueAt: string;
   lastReviewedAt: string | null;
+  seenAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
 const cardColumns =
-  "id, deck_id AS deckId, front, back, notes, ease, interval_days AS intervalDays, reps, lapses, due_at AS dueAt, last_reviewed_at AS lastReviewedAt, created_at AS createdAt, updated_at AS updatedAt";
+  "id, deck_id AS deckId, front, back, notes, ease, interval_days AS intervalDays, reps, lapses, due_at AS dueAt, last_reviewed_at AS lastReviewedAt, seen_at AS seenAt, created_at AS createdAt, updated_at AS updatedAt";
 
 export class FlashcardStore {
   private readonly db: D1Database;
   private readonly ownerId: string;
 
+  private offsetMinutes: number | null = null;
+
   constructor(db: D1Database, ownerId: string) {
     this.db = db;
     this.ownerId = ownerId;
+  }
+
+  /** Remembers the owner's time zone (minutes east of UTC) for their study day. */
+  async setUtcOffset(offset: number) {
+    if (!Number.isFinite(offset)) return;
+    const value = Math.max(-840, Math.min(840, Math.round(offset)));
+    this.offsetMinutes = value;
+    await this.db.prepare("UPDATE users SET utc_offset = ?2 WHERE id = ?1 AND utc_offset <> ?2").bind(this.ownerId, value).run();
+  }
+
+  /** The owner's current local day, and when it started, as ISO strings. */
+  private async studyDay(at: Date) {
+    if (this.offsetMinutes === null) {
+      const row = await this.db.prepare("SELECT utc_offset AS offset FROM users WHERE id = ?1").bind(this.ownerId).first<{ offset: number }>();
+      this.offsetMinutes = Number(row?.offset ?? 480);
+    }
+    const offsetMs = this.offsetMinutes * 60_000;
+    const day = new Date(at.getTime() + offsetMs).toISOString().slice(0, 10);
+    return { day, start: new Date(Date.parse(`${day}T00:00:00.000Z`) - offsetMs).toISOString() };
   }
 
   async listDecks(): Promise<Deck[]> {
@@ -202,22 +229,50 @@ export class FlashcardStore {
     return { id: card.id, front: card.front };
   }
 
-  async nextDueCard(deckId?: string, at = new Date()) {
+  /**
+   * The next due card. Each study day the due cards come in a fresh random
+   * order, and a card already seen today (graded, missed, or skipped) waits
+   * until every other due card has had its turn. "hard" puts the cards
+   * forgotten most often first.
+   */
+  async nextDueCard(deckId?: string, at = new Date(), focus: StudyFocus = "due") {
     const stamp = at.toISOString();
+    const { day, start } = await this.studyDay(at);
+    await this.db
+      .prepare(
+        `UPDATE cards SET shuffle_key = (random() & 9007199254740991) / 9007199254740992.0, shuffle_day = ?2
+         WHERE owner_id = ?1 AND (shuffle_day IS NULL OR shuffle_day <> ?2)`,
+      )
+      .bind(this.ownerId, day)
+      .run();
+    // Every REPEAT_MISSED_EVERY new cards, bring back the oldest card missed today.
+    const counter = await this.db
+      .prepare("SELECT since_repeat AS since, since_repeat_day AS day FROM users WHERE id = ?1")
+      .bind(this.ownerId)
+      .first<{ since: number; day: string | null }>();
+    if (counter?.day === day && counter.since >= REPEAT_MISSED_EVERY) {
+      const missed = await this.db
+        .prepare(
+          `SELECT ${cardColumns} FROM cards WHERE owner_id = ?1 AND (?2 IS NULL OR deck_id = ?2) AND due_at <= ?3
+             AND last_reviewed_at >= ?4 AND reps = 0 AND lapses > 0
+           ORDER BY seen_at LIMIT 1`,
+        )
+        .bind(this.ownerId, deckId ?? null, stamp, start)
+        .first<Card>();
+      if (missed) return { card: missed, dueRemaining: await this.dueCount(deckId, stamp), repeat: true };
+    }
+    const hardFirst = focus === "hard" ? "lapses DESC, ease ASC," : "";
     const card = await this.db
       .prepare(
         `SELECT ${cardColumns} FROM cards WHERE owner_id = ?1 AND (?2 IS NULL OR deck_id = ?2) AND due_at <= ?3
-         ORDER BY due_at LIMIT 1`,
+         ORDER BY CASE WHEN seen_at >= ?4 THEN 1 ELSE 0 END,
+           CASE WHEN seen_at >= ?4 THEN seen_at END,
+           ${hardFirst} shuffle_key
+         LIMIT 1`,
       )
-      .bind(this.ownerId, deckId ?? null, stamp)
+      .bind(this.ownerId, deckId ?? null, stamp, start)
       .first<Card>();
-    if (card) {
-      const due = await this.db
-        .prepare("SELECT count(*) AS n FROM cards WHERE owner_id = ?1 AND (?2 IS NULL OR deck_id = ?2) AND due_at <= ?3")
-        .bind(this.ownerId, deckId ?? null, stamp)
-        .first<{ n: number }>();
-      return { card, dueRemaining: Number(due?.n ?? 0) };
-    }
+    if (card) return { card, dueRemaining: await this.dueCount(deckId, stamp), repeat: false };
     const upcoming = await this.db
       .prepare("SELECT due_at AS dueAt FROM cards WHERE owner_id = ?1 AND (?2 IS NULL OR deck_id = ?2) AND due_at > ?3 ORDER BY due_at LIMIT 1")
       .bind(this.ownerId, deckId ?? null, stamp)
@@ -225,15 +280,37 @@ export class FlashcardStore {
     return { card: null, dueRemaining: 0, nextDueAt: upcoming?.dueAt ?? null };
   }
 
+  private async dueCount(deckId: string | undefined, stamp: string) {
+    const due = await this.db
+      .prepare("SELECT count(*) AS n FROM cards WHERE owner_id = ?1 AND (?2 IS NULL OR deck_id = ?2) AND due_at <= ?3")
+      .bind(this.ownerId, deckId ?? null, stamp)
+      .first<{ n: number }>();
+    return Number(due?.n ?? 0);
+  }
+
+  /** Counts new cards toward the next repeat; showing a card again resets it. */
+  private async countShown(card: Card, at: Date) {
+    const { day, start } = await this.studyDay(at);
+    const repeat = Boolean(card.seenAt && card.seenAt >= start);
+    await this.db
+      .prepare(
+        `UPDATE users SET since_repeat = CASE WHEN ?3 THEN 0 WHEN since_repeat_day = ?2 THEN since_repeat + 1 ELSE 1 END,
+           since_repeat_day = ?2 WHERE id = ?1`,
+      )
+      .bind(this.ownerId, day, repeat ? 1 : 0)
+      .run();
+  }
+
   async gradeCard(cardId: string, rating: FlashcardRating, at = new Date()) {
     const card = await this.card(cardId);
+    await this.countShown(card, at);
     const schedule = scheduleReview(card, rating, at);
     const stamp = at.toISOString();
     await this.db.batch([
       this.db
         .prepare(
           `UPDATE cards SET ease = ?3, interval_days = ?4, reps = ?5, lapses = ?6, due_at = ?7,
-             last_reviewed_at = ?8, updated_at = ?8 WHERE owner_id = ?1 AND id = ?2`,
+             last_reviewed_at = ?8, seen_at = ?8, updated_at = ?8 WHERE owner_id = ?1 AND id = ?2`,
         )
         .bind(this.ownerId, cardId, schedule.ease, schedule.intervalDays, schedule.reps, schedule.lapses, schedule.dueAt, stamp),
       this.db
@@ -246,16 +323,14 @@ export class FlashcardStore {
     return { ...card, ...schedule };
   }
 
-  /** Puts a due card at the end of today's pile without grading it. */
+  /** Sends a card to the back of today's pile without grading it. */
   async skipCard(cardId: string, at = new Date()) {
     const card = await this.card(cardId);
-    const stamp = at.toISOString();
-    if (card.dueAt <= stamp) {
-      await this.db
-        .prepare("UPDATE cards SET due_at = ?3, updated_at = ?3 WHERE owner_id = ?1 AND id = ?2")
-        .bind(this.ownerId, cardId, stamp)
-        .run();
-    }
+    await this.countShown(card, at);
+    await this.db
+      .prepare("UPDATE cards SET seen_at = ?3 WHERE owner_id = ?1 AND id = ?2")
+      .bind(this.ownerId, cardId, at.toISOString())
+      .run();
     return card;
   }
 
@@ -310,7 +385,7 @@ export class FlashcardStore {
       this.db
         .prepare(
           `UPDATE cards SET ease = ?3, interval_days = ?4, reps = ?5, lapses = ?6, due_at = ?7,
-             last_reviewed_at = ?8, updated_at = ?9 WHERE owner_id = ?1 AND id = ?2`,
+             last_reviewed_at = ?8, seen_at = max(coalesce(seen_at, ''), ?8), updated_at = ?9 WHERE owner_id = ?1 AND id = ?2`,
         )
         .bind(this.ownerId, cardId, schedule.ease, schedule.intervalDays, schedule.reps, schedule.lapses, schedule.dueAt, stamp, now()),
       this.db

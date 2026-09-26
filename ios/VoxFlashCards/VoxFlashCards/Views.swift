@@ -370,6 +370,7 @@ struct StudyView: View {
     @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
     @State private var card: Card?
+    @State private var isRepeat = false
     @State private var flipped = false
     @State private var reviewed = 0
     @State private var now = Date()
@@ -413,7 +414,7 @@ struct StudyView: View {
                 RoundedRectangle(cornerRadius: 8).fill(Palette.paper).rotationEffect(.degrees(1.5)).offset(x: 5, y: 7)
                     .shadow(color: Palette.ink.opacity(0.1), radius: 8, y: 4)
             }
-            IndexCard(topLeft: deckTitle, topRight: flipped ? "Answer" : "Question") {
+            IndexCard(topLeft: deckTitle, topRight: flipped ? "Answer" : (isRepeat ? "Missed earlier, try again" : "Question")) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(flipped ? card.back : card.front)
@@ -522,6 +523,8 @@ struct StudyView: View {
     private func advance() {
         now = Date()
         flipped = false
-        card = library.dueCards(in: scope.deckIds, at: now).first
+        let next = library.nextCard(in: scope.deckIds, at: now)
+        card = next?.card
+        isRepeat = next?.isRepeat ?? false
     }
 }
