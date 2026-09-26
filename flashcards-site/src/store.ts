@@ -280,6 +280,49 @@ export class FlashcardStore {
     };
   }
 
+  /** Every card in a deck, for the iPhone app's offline copy. */
+  async allCards(deckId: string) {
+    const deck = await this.requireDeck(deckId);
+    const { results } = await this.db
+      .prepare(`SELECT ${cardColumns} FROM cards WHERE owner_id = ?1 AND deck_id = ?2 ORDER BY due_at, created_at LIMIT ?3`)
+      .bind(this.ownerId, deck.id, FLASHCARD_LIMITS.cardsPerOwner)
+      .all<Card>();
+    return { deck, cards: results };
+  }
+
+  /**
+   * Applies a grade made offline in the iPhone app at the time it happened.
+   * Idempotent by review id; a grade older than the card's latest review
+   * (it was studied elsewhere since) is skipped.
+   */
+  async applyReview(reviewId: string, cardId: string, rating: FlashcardRating, at: Date) {
+    const existing = await this.db
+      .prepare("SELECT 1 AS found FROM reviews WHERE id = ?1 AND owner_id = ?2")
+      .bind(reviewId, this.ownerId)
+      .first<{ found: number }>();
+    if (existing) return { status: "duplicate" as const, card: await this.card(cardId).catch(() => null) };
+    const card = await this.card(cardId).catch(() => null);
+    if (!card) return { status: "missing" as const, card: null };
+    if (card.lastReviewedAt && card.lastReviewedAt >= at.toISOString()) return { status: "stale" as const, card };
+    const schedule = scheduleReview(card, rating, at);
+    const stamp = at.toISOString();
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE cards SET ease = ?3, interval_days = ?4, reps = ?5, lapses = ?6, due_at = ?7,
+             last_reviewed_at = ?8, updated_at = ?9 WHERE owner_id = ?1 AND id = ?2`,
+        )
+        .bind(this.ownerId, cardId, schedule.ease, schedule.intervalDays, schedule.reps, schedule.lapses, schedule.dueAt, stamp, now()),
+      this.db
+        .prepare(
+          `INSERT INTO reviews (id, owner_id, card_id, deck_id, rating, interval_before, interval_after, reviewed_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+        )
+        .bind(reviewId, this.ownerId, cardId, card.deckId, rating, card.intervalDays, schedule.intervalDays, stamp),
+    ]);
+    return { status: "applied" as const, card: { ...card, ...schedule, lastReviewedAt: stamp } };
+  }
+
   /**
    * Everything the statistics page shows. Days are the viewer's local days:
    * offsetMinutes is their UTC offset (Taipei is +480).

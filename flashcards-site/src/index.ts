@@ -9,6 +9,7 @@ import {
 } from "./oauth.ts";
 import { appPage, consentPage, messagePage, statsPage } from "./pages.ts";
 import { currentUser, endSession, startSession } from "./session.ts";
+import { isFlashcardRating } from "./srs.ts";
 import { FlashcardError, FlashcardStore } from "./store.ts";
 import { html, json, redirect, sha256, type Env } from "./util.ts";
 import { beginVoxLogin, clearLoginCookie, finishVoxLogin } from "./vox-login.ts";
@@ -139,7 +140,9 @@ async function route(request: Request, env: Env) {
       if (!user) return redirect(`/auth/login?return_to=${encodeURIComponent(path + url.search)}`);
       let returnHost = result.redirectUri;
       try {
-        returnHost = new URL(result.redirectUri).host || result.redirectUri;
+        const target = new URL(result.redirectUri);
+        // An app's custom scheme (voxflashcards://…) has no meaningful host.
+        returnHost = target.protocol === "https:" || target.protocol === "http:" ? target.host : "the app";
       } catch {
         // Keep the raw value.
       }
@@ -226,6 +229,9 @@ async function route(request: Request, env: Env) {
     return new Response(null, { status: 204, headers: { "Set-Cookie": await endSession(env.DB, request) } });
   }
 
+  // ---- The iPhone app's API (OAuth bearer token) ----
+  if (path.startsWith("/api/app/")) return handleAppApi(request, env, oauth, url);
+
   // ---- The editor's API (session cookie) ----
   if (path.startsWith("/api/")) {
     const user = await currentUser(env.DB, request);
@@ -283,3 +289,58 @@ export default {
     }
   },
 } satisfies ExportedHandler<Env>;
+
+const REVIEW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const MAX_REVIEWS_PER_SYNC = 500;
+const OFFLINE_REVIEW_MAX_AGE_MS = 60 * 24 * 60 * 60_000;
+
+// The Vox Flash Cards iPhone app signs in through this site's OAuth (as any
+// MCP client does) and uses these endpoints to download decks and sync grades
+// made offline.
+async function handleAppApi(request: Request, env: Env, oauth: OAuthServer, url: URL) {
+  const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/iu)?.[1] ?? "";
+  const ownerId = bearer ? await oauth.authenticate(bearer) : null;
+  if (!ownerId) return json({ error: "Sign in again." }, 401, { "WWW-Authenticate": 'Bearer error="invalid_token"' });
+  const store = new FlashcardStore(env.DB, ownerId);
+  const path = url.pathname;
+  try {
+    if (path === "/api/app/me" && request.method === "GET") {
+      const user = await env.DB.prepare("SELECT name FROM users WHERE id = ?1").bind(ownerId).first<{ name: string }>();
+      return json({ user: { name: user?.name ?? "" } });
+    }
+    if (path === "/api/app/decks" && request.method === "GET") {
+      return json({ decks: await store.listDecks() });
+    }
+    if (path === "/api/app/deck" && request.method === "GET") {
+      return json(await store.allCards(url.searchParams.get("id") ?? ""));
+    }
+    if (path === "/api/app/reviews" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as { reviews?: unknown } | null;
+      const reviews = Array.isArray(body?.reviews) ? body.reviews.slice(0, MAX_REVIEWS_PER_SYNC) : [];
+      const results = [];
+      const oldest = Date.now() - OFFLINE_REVIEW_MAX_AGE_MS;
+      const newest = Date.now() + 5 * 60_000;
+      // Apply in the order they happened so each builds on the last.
+      const ordered = reviews
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+        .sort((a, b) => String(a.reviewed_at).localeCompare(String(b.reviewed_at)));
+      for (const item of ordered) {
+        const id = typeof item.id === "string" ? item.id : "";
+        const cardId = typeof item.card_id === "string" ? item.card_id : "";
+        const at = Date.parse(typeof item.reviewed_at === "string" ? item.reviewed_at : "");
+        if (!REVIEW_ID.test(id) || !cardId || !isFlashcardRating(item.rating) || !Number.isFinite(at) || at < oldest || at > newest) {
+          results.push({ id, status: "invalid" });
+          continue;
+        }
+        const outcome = await store.applyReview(id.toLowerCase(), cardId, item.rating, new Date(Math.min(at, Date.now())));
+        results.push({ id, status: outcome.status, card: outcome.card });
+      }
+      return json({ results });
+    }
+    return json({ error: "Not found." }, 404);
+  } catch (error) {
+    if (error instanceof FlashcardError) return json({ error: error.message }, 400);
+    console.error("App request failed", path, error);
+    return json({ error: "That didn’t work. Try again." }, 500);
+  }
+}
