@@ -91,6 +91,15 @@ struct RootView: View {
         .onChange(of: scenePhase) { phase in
             if phase == .active { Task { await library.sync() } }
         }
+        // While open, pick up reviews and edits made in Vox, ChatGPT, or the website.
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                if Task.isCancelled { break }
+                await library.refreshChanges()
+            }
+        }
         .onChange(of: auth.isSignedIn) { signedIn in
             if signedIn { Task { await library.sync() } }
         }
@@ -392,6 +401,16 @@ struct StudyView: View {
             .padding(20)
         }
         .onAppear(perform: advance)
+        // If the card on screen was reviewed or edited elsewhere, keep up.
+        .onChange(of: library.downloaded) { _ in
+            guard let current = card else { return advance() }
+            let fresh = library.downloaded[current.deckId]?.cards.first { $0.id == current.id }
+            if let fresh, fresh.dueAt <= Date(), fresh.lastReviewedAt == current.lastReviewedAt {
+                if fresh != current { card = fresh }
+            } else if !flipped {
+                advance()
+            }
+        }
     }
 
     private var header: some View {

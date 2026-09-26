@@ -711,6 +711,29 @@ export function appPage(mcpUrl: string) {
   $("copy").addEventListener("click", () => navigator.clipboard?.writeText(mcpUrl).then(() => toast("Address copied")));
   $("signout").addEventListener("click", async () => { await fetch("/auth/logout", { method: "POST" }); location.reload(); });
 
+  // ---- Stay in step with studying elsewhere (Vox, ChatGPT, the iPhone app) ----
+  let refreshing = false;
+  async function refresh() {
+    if (refreshing || document.visibilityState !== "visible" || $("app").hidden) return;
+    // Never pull the page out from under something in progress.
+    if (document.activeElement?.closest?.("input, textarea")) return;
+    const drafting = [...$("cards").querySelectorAll("textarea")].some((field) => field.value.trim());
+    refreshing = true;
+    try {
+      await loadDecks();
+      if (!$("study-card").classList.contains("is-flipped")) await loadNext();
+      if (openDeckId && !drafting && confirmId === null) await loadCards();
+      await loadApps();
+    } catch {
+      // Try again on the next tick.
+    } finally {
+      refreshing = false;
+    }
+  }
+  document.addEventListener("visibilitychange", refresh);
+  window.addEventListener("focus", refresh);
+  setInterval(refresh, 30_000);
+
   // ---- Start ----
   (async () => {
     const response = await fetch("/api/me?offset=" + -new Date().getTimezoneOffset(), { cache: "no-store" });
@@ -967,13 +990,22 @@ export function statsPage() {
     $("stats").setAttribute("aria-busy", "false");
   }
 
-  (async () => {
+  let loaded = false;
+  async function load() {
     const response = await fetch("/api/stats?offset=" + -new Date().getTimezoneOffset(), { cache: "no-store" });
     if (response.status === 401) { location.replace("/"); return; }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.stats) throw new Error(payload.error || "Statistics are unavailable right now.");
     render(payload.stats);
-  })().catch((error) => { $("error").textContent = error.message; $("sentence").textContent = "Couldn’t load your progress."; });
+    loaded = true;
+    $("error").textContent = "";
+  }
+  load().catch((error) => { $("error").textContent = error.message; $("sentence").textContent = "Couldn’t load your progress."; });
+  // Reviews made in Vox, ChatGPT, or the iPhone app show up without a reload.
+  const refresh = () => { if (document.visibilityState === "visible" && loaded) load().catch(() => {}); };
+  document.addEventListener("visibilitychange", refresh);
+  window.addEventListener("focus", refresh);
+  setInterval(refresh, 60_000);
 })();`,
     statsStyles,
   );

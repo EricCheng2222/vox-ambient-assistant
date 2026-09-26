@@ -355,6 +355,21 @@ export class FlashcardStore {
     };
   }
 
+  /**
+   * Cards changed since a moment (graded, skipped, edited, or added anywhere:
+   * the website, Vox, ChatGPT, or another device), for the app's light sync.
+   */
+  async changedCards(since: string) {
+    const { results } = await this.db
+      .prepare(
+        `SELECT ${cardColumns} FROM cards WHERE owner_id = ?1 AND (updated_at > ?2 OR seen_at > ?2 OR created_at > ?2)
+         ORDER BY updated_at LIMIT 2000`,
+      )
+      .bind(this.ownerId, since)
+      .all<Card>();
+    return results;
+  }
+
   /** Every card in a deck, for the iPhone app's offline copy. */
   async allCards(deckId: string) {
     const deck = await this.requireDeck(deckId);

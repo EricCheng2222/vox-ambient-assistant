@@ -100,6 +100,7 @@ enum Scheduler {
 
 private struct DecksResponse: Decodable { let decks: [Deck] }
 private struct DeckResponse: Decodable { let deck: Deck; let cards: [Card] }
+private struct ChangesResponse: Decodable { let now: Date; let cards: [Card]; let decks: [Deck] }
 private struct MeResponse: Decodable { struct User: Decodable { let name: String }; let user: User }
 private struct ReviewsResponse: Decodable {
     struct Result: Decodable { let id: String; let status: String; let card: Card? }
@@ -115,6 +116,7 @@ private struct Snapshot: Codable {
     var lastSync: Date?
     var sinceRepeat: Int?
     var sinceRepeatDay: String?
+    var changesSince: Date?
 }
 
 struct DownloadedDeck: Codable, Hashable {
@@ -137,6 +139,8 @@ final class Library: ObservableObject {
     @Published private(set) var downloading: Set<String> = []
 
     /// New cards shown since a missed card last came back (per day).
+    /// Server time of the last change check.
+    private var changesSince: Date?
     private var sinceRepeat = 0
     private var sinceRepeatDay = ""
     static let repeatMissedEvery = 10
@@ -162,13 +166,14 @@ final class Library: ObservableObject {
             lastSync = snapshot.lastSync
             sinceRepeat = snapshot.sinceRepeat ?? 0
             sinceRepeatDay = snapshot.sinceRepeatDay ?? ""
+            changesSince = snapshot.changesSince
         }
     }
 
     private func save() {
         let snapshot = Snapshot(
             remoteDecks: remoteDecks, downloaded: downloaded, pending: pending, lastSync: lastSync,
-            sinceRepeat: sinceRepeat, sinceRepeatDay: sinceRepeatDay
+            sinceRepeat: sinceRepeat, sinceRepeatDay: sinceRepeatDay, changesSince: changesSince
         )
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         try? data.write(to: Self.fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
@@ -177,6 +182,7 @@ final class Library: ObservableObject {
     /// Removes everything saved on this iPhone (on sign-out).
     func erase() {
         pushTask?.cancel()
+        changesSince = nil
         remoteDecks = []
         downloaded = [:]
         pending = []
@@ -312,6 +318,8 @@ final class Library: ObservableObject {
     func sync() async {
         guard auth.isSignedIn, syncState != .syncing else { return }
         syncState = .syncing
+        // Anything changed after this moment is caught by the next light check.
+        let syncStarted = Date().addingTimeInterval(-5)
         do {
             try await pushPending()
             let offset = String(TimeZone.current.secondsFromGMT() / 60)
@@ -334,8 +342,46 @@ final class Library: ObservableObject {
                 downloaded[id] = DownloadedDeck(deck: response.deck, cards: cards, downloadedAt: Date())
             }
             lastSync = Date()
+            changesSince = syncStarted
             save()
             syncState = .idle
+        } catch {
+            report(error)
+        }
+    }
+
+    /// A light check while the app is open: sends queued grades, then picks up
+    /// cards graded, skipped, edited, or added elsewhere (the website, Vox,
+    /// ChatGPT) since the last check.
+    func refreshChanges() async {
+        guard auth.isSignedIn, syncState != .syncing else { return }
+        guard let since = changesSince else { return await sync() }
+        do {
+            try await pushPending()
+            let changes: ChangesResponse = try await api.get(
+                "api/app/changes", query: ["since": ISO8601.withFraction.string(from: since)]
+            )
+            remoteDecks = changes.decks
+            for card in changes.cards where !pending.contains(where: { $0.cardId == card.id }) {
+                guard var entry = downloaded[card.deckId] else {
+                    // A card moved out of a downloaded deck.
+                    removeCard(card.id)
+                    continue
+                }
+                if let index = entry.cards.firstIndex(where: { $0.id == card.id }) {
+                    entry.cards[index] = card
+                } else {
+                    removeCard(card.id)
+                    entry = downloaded[card.deckId] ?? entry
+                    entry.cards.append(card)
+                }
+                if let deck = changes.decks.first(where: { $0.id == card.deckId }) { entry.deck = deck }
+                downloaded[card.deckId] = entry
+            }
+            changesSince = changes.now
+            lastSync = Date()
+            save()
+            if syncState != .idle { syncState = .idle }
         } catch {
             report(error)
         }

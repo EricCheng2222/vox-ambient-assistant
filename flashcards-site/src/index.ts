@@ -316,6 +316,14 @@ async function handleAppApi(request: Request, env: Env, oauth: OAuthServer, url:
     if (path === "/api/app/decks" && request.method === "GET") {
       return json({ decks: await store.listDecks() });
     }
+    if (path === "/api/app/changes" && request.method === "GET") {
+      const since = url.searchParams.get("since") ?? "";
+      if (!Number.isFinite(Date.parse(since))) return json({ error: "Give a valid since time." }, 400);
+      // Read the clock first so nothing written during this request is missed next time.
+      const now = new Date().toISOString();
+      const [cards, decks] = await Promise.all([store.changedCards(new Date(Date.parse(since)).toISOString()), store.listDecks()]);
+      return json({ now, cards, decks });
+    }
     if (path === "/api/app/deck" && request.method === "GET") {
       return json(await store.allCards(url.searchParams.get("id") ?? ""));
     }
