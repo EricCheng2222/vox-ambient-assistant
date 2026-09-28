@@ -12,12 +12,14 @@ const sherpa = require("sherpa-onnx-node");
 const RATE = 48_000;
 const FRAME = 480; // 10 ms at 48 kHz, matching the page's audio worklet.
 const LOW_RATE = 16_000;
-const DELAY_SECONDS = 0.9; // Covers the first words until a second voiceprint check confirms the speaker.
 const CHECK_EVERY = 0.24 * LOW_RATE; // Re-check about four times a second of speech.
 const MIN_SPEECH = 0.56 * LOW_RATE; // Shortest stretch worth a voiceprint.
 const MAX_SPEECH = 1.2 * LOW_RATE; // Recent speech used per check; short so a new speaker shows quickly.
-const HOLD_SECONDS = 1.2; // Keep listening briefly after a match.
-const RAMP = FRAME * 2; // 20 ms fade in and out of the gate.
+const PREROLL_FRAMES = 40; // 0.4 s kept from before speech is detected (detection is slower over music), so first sounds aren't cut.
+const MAX_PENDING_FRAMES = 300; // Decide within 3 s of an utterance starting.
+const CONTINUITY_FRAMES = 80; // Speaking again within 0.8 s of a match (mid-thought) passes straight through.
+const KEEP_PAUSE_FRAMES = 20; // When catching up, each pause keeps 0.2 s.
+const END_FRAMES = 60; // 0.6 s of silence ends an utterance.
 
 const modelDirectory = process.env.VOX_VOICE_MODELS ?? "";
 const debug = (...args) => {
@@ -161,11 +163,20 @@ export class Session {
     this.speech = new SpeechBuffer(MAX_SPEECH);
     this.sinceCheck = 0;
     this.inSpeech = false;
-    this.delay = new Float32Array(Math.round(RATE * DELAY_SECONDS));
-    this.delayIndex = 0;
-    this.gain = 0;
-    this.openUntil = 0; // In 48 kHz samples processed.
-    this.clock = 0;
+    this.speaking = false;
+    this.silentFrames = 0;
+    this.preroll = []; // The last 0.4 s, so an utterance's first sounds aren't lost.
+    this.release = []; // Approved frames waiting to go out: { samples, utterance }.
+    // The utterance being spoken now: "none", "held" (waiting for the
+    // voiceprint), "approved", or "rejected".
+    this.status = "none";
+    this.utterance = 0;
+    this.held = [];
+    this.pause = 0; // Silent frames in a row inside the current utterance.
+    this.checks = 0;
+    this.bestScore = -1;
+    this.lastOwnerFrame = -Infinity;
+    this.frameIndex = 0;
     this.lastScore = null;
     this.frames = 0;
     debug("session started");
@@ -183,14 +194,13 @@ export class Session {
       const result = denoiser.run({ samples: input, sampleRate: RATE, enableExternalBuffer: false });
       clean = result.samples.length === FRAME ? result.samples : new Float32Array(FRAME);
     }
-    this.clock += FRAME;
     const verifying = settings.verify && settings.voiceprint && extractor;
     const output = verifying ? this.gate(clean) : clean;
     this.port.postMessage(Float32Array.from(output));
   }
 
-  /** Passes delayed audio only while the speech matches the owner's voiceprint. */
-  gate(clean) {
+  /** Runs speech detection, and voiceprint checks while someone is talking. */
+  listen(clean) {
     const low = this.resampler.resample(clean);
     const merged = new Float32Array(this.pending.length + low.length);
     merged.set(this.pending);
@@ -199,9 +209,9 @@ export class Session {
     while (merged.length - offset >= 512) {
       const window = merged.subarray(offset, offset + 512);
       this.vad.acceptWaveform(window);
-      const speaking = this.vad.isDetected();
+      this.speaking = this.vad.isDetected();
       while (!this.vad.isEmpty()) this.vad.pop();
-      if (speaking) {
+      if (this.speaking) {
         if (!this.inSpeech) {
           this.inSpeech = true;
           this.speech.clear();
@@ -212,35 +222,99 @@ export class Session {
         if (this.speech.length >= MIN_SPEECH && this.sinceCheck >= CHECK_EVERY) {
           this.sinceCheck = 0;
           const embedding = embed(this.speech.recent(MAX_SPEECH));
-          if (embedding) {
-            this.lastScore = cosine(embedding, settings.voiceprint);
-            const matched = this.lastScore >= settings.threshold;
-            if (matched) {
-              // Open for the delayed audio of this utterance too.
-              this.openUntil = this.clock + Math.round(RATE * (DELAY_SECONDS + HOLD_SECONDS));
-            } else if (this.lastScore < settings.threshold - 0.1) {
-              this.openUntil = 0;
-            }
-            this.port.postMessage({ type: "state", matched, score: Math.round(this.lastScore * 1000) / 1000 });
-          }
+          if (embedding) this.decide(cosine(embedding, settings.voiceprint));
         }
-      } else if (this.inSpeech) {
+      } else {
         this.inSpeech = false;
       }
       offset += 512;
     }
     this.pending = merged.slice(offset);
+  }
 
-    // Delay line: what leaves now was spoken DELAY_SECONDS ago.
-    const out = new Float32Array(FRAME);
-    const open = this.clock <= this.openUntil;
-    for (let i = 0; i < FRAME; i++) {
-      out[i] = this.delay[this.delayIndex] * this.gain;
-      this.delay[this.delayIndex] = clean[i];
-      this.delayIndex = (this.delayIndex + 1) % this.delay.length;
-      this.gain = open ? Math.min(1, this.gain + 1 / RAMP) : Math.max(0, this.gain - 1 / RAMP);
+  decide(score) {
+    this.lastScore = score;
+    this.checks += 1;
+    this.bestScore = Math.max(this.bestScore, score);
+    const matched = score >= settings.threshold;
+    if (matched) {
+      if (this.status === "held") this.approve();
+    } else if (score < settings.threshold - 0.1 && (this.status === "approved" || this.checks >= 2)) {
+      // Clearly someone else, or someone else took over mid-way.
+      this.reject();
     }
-    return out;
+    this.port.postMessage({ type: "state", matched, score: Math.round(score * 1000) / 1000 });
+  }
+
+  approve() {
+    this.status = "approved";
+    for (const samples of this.held) this.release.push({ samples, utterance: this.utterance });
+    this.held = [];
+  }
+
+  reject() {
+    this.status = "rejected";
+    this.held = [];
+    // Drop anything of this utterance that was waiting to go out.
+    this.release = this.release.filter((entry) => entry.utterance !== this.utterance);
+  }
+
+  /**
+   * Holds each utterance, from just before it was detected, until the
+   * voiceprint decides; then releases it from the first syllable, or drops it.
+   * Released audio runs a little behind and catches up in pauses and between
+   * utterances, which aren't queued.
+   */
+  gate(clean) {
+    this.frameIndex += 1;
+    this.listen(clean);
+    const frame = Float32Array.from(clean);
+    this.silentFrames = this.speaking ? 0 : this.silentFrames + 1;
+
+    if (this.status === "none") {
+      if (this.speaking) {
+        // A new utterance, starting with the audio just before it was detected.
+        this.utterance += 1;
+        this.checks = 0;
+        this.bestScore = -1;
+        this.pause = 0;
+        this.held = this.preroll.splice(0);
+        this.held.push(frame);
+        this.status = "held";
+        // Picking up again moments after speaking to Vox: no need to wait.
+        if (this.frameIndex - this.lastOwnerFrame <= CONTINUITY_FRAMES) this.approve();
+      } else {
+        this.preroll.push(frame);
+        if (this.preroll.length > PREROLL_FRAMES) this.preroll.shift();
+      }
+    } else if (this.status !== "rejected") {
+      this.pause = this.speaking ? 0 : this.pause + 1;
+      if (this.status === "held") {
+        this.held.push(frame);
+        if (this.held.length >= MAX_PENDING_FRAMES) {
+          // Out of time: go with the best check so far.
+          if (this.bestScore >= settings.threshold - 0.05) this.approve();
+          else this.reject();
+        }
+      } else if (this.status === "approved") {
+        if (this.speaking) this.lastOwnerFrame = this.frameIndex;
+        // Pauses keep 0.2 s, so released audio catches up.
+        if (this.pause <= KEEP_PAUSE_FRAMES) this.release.push({ samples: frame, utterance: this.utterance });
+      }
+    }
+
+    // The utterance ends after 0.6 s of silence.
+    if (this.silentFrames >= END_FRAMES && this.status !== "none") {
+      if (this.status === "held") {
+        if (this.checks > 0 && this.bestScore >= settings.threshold - 0.05) this.approve();
+        else this.held = []; // Too short or unclear (a cough, a click).
+      }
+      this.status = "none";
+      this.preroll = [];
+    }
+
+    // One frame out per frame in keeps the stream real time.
+    return this.release.length ? this.release.shift().samples : new Float32Array(FRAME);
   }
 
   close() {

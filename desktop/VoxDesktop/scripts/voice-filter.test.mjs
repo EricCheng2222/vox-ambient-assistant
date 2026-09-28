@@ -81,24 +81,25 @@ test("voice filter keeps the owner's voice and drops others and music", { skip: 
 
   const question = "Can you check the weather and then quiz me on the next card?";
   const scene = [
-    ["owner", say("Samantha", question, "owner"), true],
-    ["someone else (Daniel)", say("Daniel", question, "daniel"), false],
-    ["singer over music (Karen)", withMusic(say("Karen", "Tonight we dance until the morning light, oh oh oh.", "karen")), false],
-    ["music alone", music(RATE * 3), false],
-    ["owner over music", withMusic(say("Samantha", "Okay, next card please. I think the answer is the cytosol.", "owner-music")), true],
+    ["owner", say("Samantha", question, "owner"), true, 1.5],
+    ["owner again after a short pause", say("Samantha", "And after that, remind me about the dentist.", "owner-again"), true, 1.5],
+    ["someone else (Daniel)", say("Daniel", question, "daniel"), false, 1.5],
+    ["singer over music (Karen)", withMusic(say("Karen", "Tonight we dance until the morning light, oh oh oh.", "karen")), false, 1.5],
+    ["music alone", music(RATE * 3), false, 1.5],
+    ["owner over music", withMusic(say("Samantha", "Okay, next card please. I think the answer is the cytosol.", "owner-music")), true, 1.5],
   ];
   const marks = [];
   let at = 0;
-  for (const [label, samples, expected] of scene) {
-    marks.push({ label, start: at, end: at + samples.length, expected, input: samples.speech ?? samples });
+  for (const [label, samples, expected, gap] of scene) {
+    marks.push({ label, start: at, end: at + samples.length, expected, reference: samples.speech ?? samples });
     const before = session.sent.length;
     session.feed(samples);
-    session.feed(silence(1.5));
+    session.feed(silence(gap));
     const scores = session.sent.slice(before).filter((d) => !(d instanceof Float32Array)).map((d) => d.score.toFixed(2));
     console.log(`  scores during ${label}: ${scores.join(" ")}`);
-    at += samples.length + Math.round(RATE * 1.5);
+    at += samples.length + Math.round(RATE * gap);
   }
-  session.feed(silence(1));
+  session.feed(silence(2));
 
   const frames = session.sent.filter((d) => d instanceof Float32Array);
   const output = new Float32Array(frames.length * FRAME);
@@ -108,18 +109,55 @@ test("voice filter keeps the owner's voice and drops others and music", { skip: 
     offset += FRAME;
   }
   const energy = (x) => x.reduce((sum, v) => sum + v * v, 0);
-  const delay = Math.round(RATE * 0.9);
+  // The first 0.3 s of speech in a clip (after any leading silence).
+  const onsetOf = (x) => {
+    let i = 0;
+    while (i < x.length && Math.abs(x[i]) < 0.02) i++;
+    return { index: i, samples: x.subarray(i, i + Math.round(RATE * 0.3)) };
+  };
+  // Best normalized correlation of the onset against the output, within 2 s.
+  const onsetFound = (mark) => {
+    const { index, samples } = onsetOf(mark.reference);
+    const from = mark.start + index;
+    const norm = Math.sqrt(energy(samples));
+    let best = 0;
+    let bestLag = 0;
+    for (let lag = 0; lag < RATE * 2; lag += 24) {
+      const window = output.subarray(from + lag, from + lag + samples.length);
+      if (window.length < samples.length) break;
+      let dot = 0;
+      for (let i = 0; i < samples.length; i += 2) dot += samples[i] * window[i];
+      const windowNorm = Math.sqrt(energy(window));
+      const score = windowNorm > 0 ? (2 * dot) / (norm * windowNorm) : 0;
+      if (score > best) {
+        best = score;
+        bestLag = lag;
+      }
+    }
+    return { score: best, lag: bestLag / RATE };
+  };
   const results = marks.map((mark) => {
-    const passed = energy(output.subarray(mark.start + delay, mark.end + delay)) / Math.max(1e-9, energy(mark.input));
-    return { ...mark, passed };
+    // Released audio can run behind by up to about a second.
+    const passed = energy(output.subarray(mark.start, mark.end + Math.round(RATE * 1.4))) / Math.max(1e-9, energy(mark.reference));
+    const found = mark.expected ? onsetFound(mark) : null;
+    return { ...mark, passed, onset: found?.score ?? null, lag: found?.lag ?? null };
   });
   for (const result of results) {
-    console.log(`  ${result.label.padEnd(28)} passed ${(result.passed * 100).toFixed(0)}% (${result.expected ? "should pass" : "should be blocked"})`);
+    console.log(
+      `  ${result.label.padEnd(32)} passed ${(result.passed * 100).toFixed(0)}%` +
+        (result.onset === null
+          ? " (should be blocked)"
+          : `, first words ${result.onset >= 0.6 ? "kept" : "MISSING"} (match ${result.onset.toFixed(2)}), heard ${result.lag.toFixed(2)} s later`),
+    );
   }
   rmSync(scratch, { recursive: true, force: true });
 
   for (const result of results) {
-    if (result.expected) assert.ok(result.passed > 0.5, `${result.label} should reach Vox`);
-    else assert.ok(result.passed < 0.15, `${result.label} should be blocked`);
+    if (result.expected) {
+      assert.ok(result.passed > 0.7, `${result.label} should reach Vox`);
+      assert.ok(result.onset >= 0.6, `${result.label} should keep its first words`);
+    } else {
+      assert.ok(result.passed < 0.15, `${result.label} should be blocked`);
+    }
   }
 });

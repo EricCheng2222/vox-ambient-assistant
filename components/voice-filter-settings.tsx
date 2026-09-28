@@ -210,8 +210,8 @@ export function VoiceFilterSettings() {
                   <span>
                     <span className="block text-sm font-medium text-white">Only listen to my voice</span>
                     <span className="mt-1 block text-xs leading-5 text-white/46">
-                      Optional. Ignores other people, TV, and singers in music. Adds about a
-                      second before Vox hears you.
+                      Optional. Ignores other people, TV, and singers in music. Vox hears the
+                      start of each sentence about a second later; nothing you say is cut off.
                     </span>
                   </span>
                   <Switch
