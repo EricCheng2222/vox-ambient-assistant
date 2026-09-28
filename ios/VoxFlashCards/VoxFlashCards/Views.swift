@@ -157,6 +157,7 @@ struct SignInView: View {
                 }
                 .disabled(auth.isSigningIn)
             }
+            .frame(maxWidth: 520)
             .padding(24)
         }
     }
@@ -171,24 +172,37 @@ struct LibraryView: View {
     @State private var confirmSignOut = false
     @State private var signInError: String?
 
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
     private var dueTotal: Int { library.dueCards(in: nil).count }
     private var notDownloaded: [Deck] { library.remoteDecks.filter { library.downloaded[$0.id] == nil } }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    todayCard
-                    if !library.downloadedDecks.isEmpty { downloadedSection }
-                    if !notDownloaded.isEmpty { accountSection }
-                    if library.remoteDecks.isEmpty && library.downloaded.isEmpty && library.syncState != .syncing {
-                        Text("No decks yet. Make one on the Vox Flash Cards website, then pull down here to refresh.")
-                            .foregroundStyle(Palette.inkSoft)
+                if sizeClass == .regular {
+                    // iPad: today's pile stays in view beside the decks.
+                    HStack(alignment: .top, spacing: 32) {
+                        VStack(alignment: .leading, spacing: 20) {
+                            todayCard.fixedSize(horizontal: false, vertical: true)
+                            syncFooter
+                        }
+                        .frame(width: 380)
+                        decksColumn
+                            .frame(maxWidth: 640, alignment: .leading)
                     }
-                    syncFooter
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 40)
+                    .frame(maxWidth: .infinity)
+                } else {
+                    VStack(alignment: .leading, spacing: 28) {
+                        todayCard
+                        decksColumn
+                        syncFooter
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 40)
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 40)
             }
             .refreshable { await library.sync() }
             .background(Palette.desk.ignoresSafeArea())
@@ -206,7 +220,7 @@ struct LibraryView: View {
             }
             .confirmationDialog(
                 library.pending.isEmpty
-                    ? "Sign out and remove downloaded decks from this iPhone?"
+                    ? "Sign out and remove downloaded decks from this \(UIDevice.current.model)?"
                     : "\(library.pending.count) grades haven’t synced yet and will be lost. Sign out anyway?",
                 isPresented: $confirmSignOut,
                 titleVisibility: .visible
@@ -252,9 +266,20 @@ struct LibraryView: View {
         }
     }
 
+    private var decksColumn: some View {
+        VStack(alignment: .leading, spacing: 28) {
+            if !library.downloadedDecks.isEmpty { downloadedSection }
+            if !notDownloaded.isEmpty { accountSection }
+            if library.remoteDecks.isEmpty && library.downloaded.isEmpty && library.syncState != .syncing {
+                Text("No decks yet. Make one on the Vox Flash Cards website, then pull down here to refresh.")
+                    .foregroundStyle(Palette.inkSoft)
+            }
+        }
+    }
+
     private var downloadedSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionTitle("On this iPhone")
+            sectionTitle("On this \(UIDevice.current.model)")
             ForEach(library.downloadedDecks, id: \.deck.id) { entry in
                 let due = library.dueCards(in: [entry.deck.id]).count
                 Button {
@@ -378,6 +403,7 @@ struct StudyView: View {
     let scope: StudyScope
     @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var card: Card?
     @State private var isRepeat = false
     @State private var flipped = false
@@ -392,13 +418,19 @@ struct StudyView: View {
             VStack(spacing: 20) {
                 header
                 if let card {
+                    // iPad: the card and its buttons sit together, centered.
+                    if sizeClass == .regular { Spacer(minLength: 0) }
                     cardView(card)
                     controls(card)
+                    if sizeClass == .regular { Spacer(minLength: 0) }
                 } else {
                     doneView
                 }
             }
+            // On iPad the card keeps index-card proportions instead of stretching.
+            .frame(maxWidth: 760)
             .padding(20)
+            .frame(maxWidth: .infinity)
         }
         .onAppear(perform: advance)
         // If the card on screen was reviewed or edited elsewhere, keep up.
@@ -415,7 +447,7 @@ struct StudyView: View {
 
     private var header: some View {
         HStack {
-            Button("Done") { dismiss() }.font(.headline)
+            Button("Done") { dismiss() }.font(.headline).keyboardShortcut(.cancelAction)
             Spacer()
             VStack(spacing: 2) {
                 Text(scope.title).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.heading).lineLimit(1)
@@ -452,8 +484,9 @@ struct StudyView: View {
             .scaleEffect(x: flipped ? -1 : 1, y: 1)
             .rotation3DEffect(.degrees(flipped ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.4)
         }
-        .frame(maxHeight: 560)
-        .frame(maxHeight: .infinity)
+        .frame(height: sizeClass == .regular ? 460 : nil)
+        .frame(maxHeight: sizeClass == .regular ? nil : 560)
+        .frame(maxHeight: sizeClass == .regular ? nil : .infinity)
         .contentShape(Rectangle())
         .onTapGesture { withAnimation(.easeInOut(duration: 0.45)) { flipped.toggle() } }
         .accessibilityElement(children: .combine)
@@ -484,6 +517,8 @@ struct StudyView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     .accessibilityLabel("\(rating.label), \(rating.hint)")
+                    // Hardware keyboard: 1 Again, 2 Hard, 3 Good, 4 Easy.
+                    .keyboardShortcut(KeyEquivalent(Character(String((Rating.allCases.firstIndex(of: rating) ?? 0) + 1))), modifiers: [])
                 }
             }
         } else {
@@ -498,6 +533,7 @@ struct StudyView: View {
                         .foregroundStyle(Palette.inkSoft)
                         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Palette.inkSoft.opacity(0.4), lineWidth: 1.5))
                 }
+                .keyboardShortcut("s", modifiers: [])
                 Button {
                     withAnimation(.easeInOut(duration: 0.45)) { flipped = true }
                 } label: {
@@ -507,6 +543,7 @@ struct StudyView: View {
                         .foregroundStyle(Palette.actionInk)
                         .background(Palette.action, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
+                .keyboardShortcut(.space, modifiers: [])
             }
         }
     }
