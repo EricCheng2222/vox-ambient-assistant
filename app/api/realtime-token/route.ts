@@ -27,6 +27,7 @@ export async function POST(request: Request) {
     replyLength?: unknown;
     mandarinTranscription?: unknown;
     theme?: unknown;
+    micDistance?: unknown;
   };
   const voice = parseRealtimeVoice(requestBody.voice);
   const replyLength = parseReplyLength(requestBody.replyLength);
@@ -56,6 +57,10 @@ export async function POST(request: Request) {
           audio: {
             input: {
               transcription: transcriptionConfig(requestBody.mandarinTranscription === true),
+              // Filters background sound before Realtime decides whether the
+              // user is still speaking: near_field for a phone held close or a
+              // headset, far_field for a laptop or desktop microphone.
+              noise_reduction: { type: requestBody.micDistance === "far" ? "far_field" : "near_field" },
               turn_detection: {
                 type: "semantic_vad",
                 eagerness: "low",

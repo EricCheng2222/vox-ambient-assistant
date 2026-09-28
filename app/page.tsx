@@ -440,6 +440,9 @@ declare global {
     readonly voxNativeIOS?: {
       canScanPairing: boolean;
       scanPairing: () => void;
+      // Added with the Mic Mode shortcut; older iPhone builds lack these.
+      canChooseMicMode?: boolean;
+      showMicModes?: () => void;
     };
     readonly voxNativeReminders?: {
       available: boolean;
@@ -1200,6 +1203,7 @@ export default function Home() {
   const [placeName, setPlaceName] = useState("");
   const [placeSaving, setPlaceSaving] = useState(false);
   const [mapPickerAvailable, setMapPickerAvailable] = useState(false);
+  const [micModeAvailable, setMicModeAvailable] = useState(false);
   const [phoneAssistantCallbackNumber, setPhoneAssistantCallbackNumber] = useState("");
   const [phoneAssistantPassphrase, setPhoneAssistantPassphrase] = useState("");
   const [phoneAssistantBusy, setPhoneAssistantBusy] = useState(false);
@@ -1473,6 +1477,11 @@ export default function Home() {
     // syncLocationReminders reads the latest reminders through a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reminders, remindersError, remindersLoading]);
+
+  useEffect(() => {
+    // Only the iPhone app can open iOS's Mic Mode picker (Voice Isolation).
+    queueMicrotask(() => setMicModeAvailable(typeof window.voxNativeIOS?.showMicModes === "function"));
+  }, []);
 
   useEffect(() => {
     if (!window.voxNativeReminders?.syncLocations) return;
@@ -5490,7 +5499,14 @@ export default function Home() {
         const tokenResponse = await fetch("/api/realtime-token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ voice, replyLength: replyLengthRef.current, mandarinTranscription: mandarinTranscriptionRef.current, theme: themeRef.current }),
+          body: JSON.stringify({
+            voice,
+            replyLength: replyLengthRef.current,
+            mandarinTranscription: mandarinTranscriptionRef.current,
+            theme: themeRef.current,
+            // Phones are held close; laptop and desktop microphones hear the room.
+            micDistance: /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1 ? "near" : "far",
+          }),
         });
         tokenPayload = (await tokenResponse.json()) as RealtimeTokenPayload;
         if (!tokenResponse.ok) {
@@ -7184,6 +7200,16 @@ export default function Home() {
                         : "Listening for you — and for a useful moment to speak"
                     : "Tap the orb to begin")}
               </p>
+              {connected && micModeAvailable && (
+                <button
+                  type="button"
+                  onClick={() => window.voxNativeIOS?.showMicModes?.()}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.04] px-3 py-1.5 text-xs text-white/60 transition hover:bg-white/10 hover:text-white"
+                >
+                  <Mic className="size-3.5" aria-hidden="true" />
+                  Noisy here? Turn on Voice Isolation
+                </button>
+              )}
             </div>
 
             {macTasks.length > 0 && (

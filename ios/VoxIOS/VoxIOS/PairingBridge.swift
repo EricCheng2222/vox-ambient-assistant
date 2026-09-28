@@ -26,6 +26,10 @@ final class PairingBridge: NSObject, WKScriptMessageHandler {
             value: Object.freeze({
               canScanPairing: true,
               scanPairing: () => handler.postMessage({ type: "scanPairing" }),
+              // Opens iOS's Mic Mode picker (Standard, Voice Isolation, Wide
+              // Spectrum). Apps can't switch it themselves, only offer it.
+              canChooseMicMode: true,
+              showMicModes: () => handler.postMessage({ type: "showMicModes" }),
             }),
           });
           const store = window.sessionStorage;
@@ -73,6 +77,8 @@ final class PairingBridge: NSObject, WKScriptMessageHandler {
             VoxWebView.installUserScripts(on: userContentController)
         case "scanPairing":
             presentScanner()
+        case "showMicModes":
+            AVCaptureDevice.showSystemUserInterface(.microphoneModes)
         default:
             break
         }
