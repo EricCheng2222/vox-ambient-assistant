@@ -30,6 +30,12 @@ final class PairingBridge: NSObject, WKScriptMessageHandler {
               // Spectrum). Apps can't switch it themselves, only offer it.
               canChooseMicMode: true,
               showMicModes: () => handler.postMessage({ type: "showMicModes" }),
+              // "Welcome home" greeting on the paired Mac.
+              welcomeHome: Object.freeze({
+                enabled: \(ProximityGreeter.shared.isEnabled ? "true" : "false"),
+                setEnabled: (on) => handler.postMessage({ type: "welcomeHome", enabled: on === true }),
+                test: () => handler.postMessage({ type: "welcomeHomeTest" }),
+              }),
             }),
           });
           const store = window.sessionStorage;
@@ -69,8 +75,10 @@ final class PairingBridge: NSObject, WKScriptMessageHandler {
         case "pairing":
             if let value = body["value"] as? String, PairingBridge.isValidStoredPairing(value) {
                 PairingKeychain.save(value)
+                ProximityGreeter.shared.start()
             } else if body["value"] is NSNull {
                 PairingKeychain.delete()
+                ProximityGreeter.shared.stop()
             } else {
                 return
             }
@@ -79,6 +87,10 @@ final class PairingBridge: NSObject, WKScriptMessageHandler {
             presentScanner()
         case "showMicModes":
             AVCaptureDevice.showSystemUserInterface(.microphoneModes)
+        case "welcomeHome":
+            ProximityGreeter.shared.setEnabled(body["enabled"] as? Bool == true)
+        case "welcomeHomeTest":
+            ProximityGreeter.shared.testNow()
         default:
             break
         }

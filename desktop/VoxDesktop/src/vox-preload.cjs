@@ -80,6 +80,13 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
     cancelEnrollment: () => ipcRenderer.invoke("vox-voice-filter:enroll-cancel"),
     forget: () => ipcRenderer.invoke("vox-voice-filter:forget"),
   },
+  // "Welcome home" greeting when the paired iPhone comes near.
+  welcomeHome: {
+    status: () => ipcRenderer.invoke("vox-welcome-home:status"),
+    update: (changes) =>
+      ipcRenderer.invoke("vox-welcome-home:update", typeof changes?.enabled === "boolean" ? { enabled: changes.enabled } : {}),
+    test: () => ipcRenderer.invoke("vox-welcome-home:test"),
+  },
 });
 
 // Audio ports can't cross the context bridge, so the page posts one here and

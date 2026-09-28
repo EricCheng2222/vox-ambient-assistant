@@ -170,6 +170,7 @@ import {
 import { playHudCue, type HudCue } from "@/lib/hud-sounds";
 import { FlashcardsConnection, openFlashcardsConnection } from "@/components/flashcards-connection";
 import { VoiceFilterSettings } from "@/components/voice-filter-settings";
+import { WelcomeHomePhoneToggle } from "@/components/welcome-home";
 import { filterMicrophone, voiceFilterBridge, type FilteredMicrophone } from "@/lib/desktop-voice-filter";
 import {
   isFlashcardStudyRequest,
@@ -6790,6 +6791,7 @@ export default function Home() {
                     This choice is stored only in this browser and remains visible
                     in the header. Pairing never enables Mac routing by itself.
                   </p>
+                  <WelcomeHomePhoneToggle />
                 </div>
               </SheetContent>
             </Sheet>

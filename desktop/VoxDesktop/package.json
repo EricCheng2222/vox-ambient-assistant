@@ -9,11 +9,12 @@
   "main": "src/main.mjs",
   "scripts": {
     "start": "electron .",
-    "check": "node scripts/check.mjs && node --test scripts/computer-use-session.test.mjs scripts/local-web-server.test.mjs scripts/dyson-local.test.mjs scripts/smart-home-hub.test.mjs scripts/voice-filter.test.mjs && node scripts/personal-api.test.mjs && node scripts/personal-route.test.mjs",
+    "check": "node scripts/check.mjs && node --test scripts/computer-use-session.test.mjs scripts/local-web-server.test.mjs scripts/dyson-local.test.mjs scripts/smart-home-hub.test.mjs scripts/voice-filter.test.mjs scripts/welcome-home.test.mjs && node scripts/personal-api.test.mjs && node scripts/personal-route.test.mjs",
     "prepare:web": "npm --prefix ../.. run build",
     "package": "electron-builder --dir",
-    "dist": "npm run voice-models && npm run prepare:web && electron-builder",
-    "voice-models": "node scripts/fetch-voice-models.mjs"
+    "dist": "npm run voice-models && npm run beacon && npm run prepare:web && electron-builder",
+    "voice-models": "node scripts/fetch-voice-models.mjs",
+    "beacon": "xcrun swiftc -O -target arm64-apple-macos12 -o resources/bin/vox-beacon native/vox-beacon.swift"
   },
   "dependencies": {
     "@openai/codex-sdk": "0.155.1",
@@ -51,6 +52,20 @@
         "filter": [
           "*.onnx"
         ]
+      },
+      {
+        "from": "resources/bin",
+        "to": "bin",
+        "filter": [
+          "vox-beacon"
+        ]
+      },
+      {
+        "from": "resources/sounds",
+        "to": "sounds",
+        "filter": [
+          "*.m4a"
+        ]
       }
     ],
     "mac": {
@@ -69,7 +84,8 @@
         "NSLocalNetworkUsageDescription": "Vox connects directly to smart-home devices that you configure on your local Wi-Fi network.",
         "NSBonjourServices": [
           "_dyson_mqtt._tcp"
-        ]
+        ],
+        "NSBluetoothAlwaysUsageDescription": "Vox uses Bluetooth to notice when your iPhone comes home, so it can greet you."
       }
     },
     "win": {

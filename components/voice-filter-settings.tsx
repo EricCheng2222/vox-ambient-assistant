@@ -15,6 +15,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
+import { WelcomeHomeDesktopSection } from "@/components/welcome-home";
 import {
   filterMicrophone,
   voiceFilterBridge,
@@ -318,6 +319,8 @@ export function VoiceFilterSettings() {
                   </div>
                 )}
               </div>
+
+              <WelcomeHomeDesktopSection />
 
               {status.error && <p className="text-xs leading-5 text-[#ff9d96]">{status.error}</p>}
               <p className="text-xs leading-5 text-white/36">

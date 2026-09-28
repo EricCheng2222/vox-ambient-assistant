@@ -37,6 +37,7 @@ import {
 } from "./personal-route.mjs";
 import { startLocalVoxServer } from "./local-web-server.mjs";
 import { registerVoiceFilter } from "./voice-filter.mjs";
+import { registerWelcomeHome } from "./welcome-home.mjs";
 import {
   availableSmartHomeAdapters,
   configureSmartHomeDevice,
@@ -62,6 +63,7 @@ const productionUrl = "https://vox-assistant.ericcheng306.workers.dev/";
 const developmentUrl = process.env.VOX_DESKTOP_DEV_URL;
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 let voiceFilter = null;
+let welcomeHome = null;
 const shellFile = path.join(currentDirectory, "shell.html");
 const shellUrl = pathToFileURL(shellFile).href;
 const settingsFileName = "desktop-settings.json";
@@ -899,6 +901,7 @@ async function processRemoteRelay() {
         ...settings,
         remoteMacPairing: { ...settings.remoteMacPairing, status: "active", phoneLabel: device.claimLabel },
       });
+      void welcomeHome?.refresh();
     }
     if (device?.status !== "active" && pairing.status !== "active") return;
     if (Date.now() - lastRemoteHeartbeatAt >= 30_000) {
@@ -1210,6 +1213,7 @@ function registerIpcHandlers() {
     await saveSettings(remaining);
     remoteControlArmed = false;
     lastRemoteHeartbeatAt = 0;
+    void welcomeHome?.refresh();
     return { revoked: true };
   });
 
@@ -1682,6 +1686,7 @@ app.whenReady().then(async () => {
   });
   registerIpcHandlers();
   voiceFilter = registerVoiceFilter({ requireTrustedVoxSender, readSettings, saveSettings, secureStorageAvailable });
+  welcomeHome = registerWelcomeHome({ requireTrustedVoxSender, readSettings, saveSettings, pairing: unlockedRemotePairing });
   // Installed-app discovery is useful for voice routing, but it must never sit
   // on the first conversational turn's latency path.
   void installedApps().catch(() => undefined);
@@ -1703,5 +1708,6 @@ app.on("before-quit", () => {
   if (remoteRelayTimer) clearInterval(remoteRelayTimer);
   remoteRelayTimer = null;
   voiceFilter?.stop();
+  welcomeHome?.stop();
   void localVoxServer?.close();
 });
