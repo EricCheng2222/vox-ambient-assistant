@@ -168,6 +168,7 @@ struct SignInView: View {
 struct LibraryView: View {
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var library: Library
+    @EnvironmentObject private var stats: StatsStore
     @State private var studying: StudyScope?
     @State private var confirmSignOut = false
     @State private var signInError: String?
@@ -209,6 +210,13 @@ struct LibraryView: View {
             .navigationTitle("Flash Cards")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        StatsView()
+                    } label: {
+                        Image(systemName: "chart.bar.xaxis").accessibilityLabel("Statistics")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         if !auth.userName.isEmpty { Text("Signed in as \(auth.userName)") }
                         Link("Open the website", destination: AppConfig.siteURL)
@@ -227,6 +235,7 @@ struct LibraryView: View {
             ) {
                 Button("Sign out", role: .destructive) {
                     library.erase()
+                    stats.erase()
                     auth.signOut()
                 }
             }

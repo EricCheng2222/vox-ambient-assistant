@@ -316,6 +316,10 @@ async function handleAppApi(request: Request, env: Env, oauth: OAuthServer, url:
     if (path === "/api/app/decks" && request.method === "GET") {
       return json({ decks: await store.listDecks() });
     }
+    if (path === "/api/app/stats" && request.method === "GET") {
+      const offset = Number(url.searchParams.get("offset") ?? "480");
+      return json({ stats: await store.dashboard(Number.isFinite(offset) ? offset : 480) });
+    }
     if (path === "/api/app/changes" && request.method === "GET") {
       const since = url.searchParams.get("since") ?? "";
       if (!Number.isFinite(Date.parse(since))) return json({ error: "Give a valid since time." }, 400);

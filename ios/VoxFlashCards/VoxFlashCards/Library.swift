@@ -138,9 +138,9 @@ final class Library: ObservableObject {
     @Published private(set) var syncState: SyncState = .idle
     @Published private(set) var downloading: Set<String> = []
 
-    /// New cards shown since a missed card last came back (per day).
     /// Server time of the last change check.
     private var changesSince: Date?
+    /// New cards shown since a missed card last came back (per day).
     private var sinceRepeat = 0
     private var sinceRepeatDay = ""
     static let repeatMissedEvery = 10

@@ -4,6 +4,7 @@ import SwiftUI
 struct VoxFlashCardsApp: App {
     @StateObject private var auth: AuthManager
     @StateObject private var library: Library
+    @StateObject private var stats = StatsStore()
 
     init() {
         let auth = AuthManager()
@@ -16,6 +17,7 @@ struct VoxFlashCardsApp: App {
             RootView()
                 .environmentObject(auth)
                 .environmentObject(library)
+                .environmentObject(stats)
         }
     }
 }
