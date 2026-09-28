@@ -537,7 +537,6 @@ declare global {
         prompt: string;
       }) => Promise<{ answer?: string }>;
       resolveApp?: (text: string) => Promise<{ id: `installed:${string}`; name: string; appOnly: boolean } | null>;
-      openWebsite?: (url: string) => Promise<{ opened: boolean }>;
       runTask: (request: { prompt: string }) => Promise<{
         canceled: boolean;
         answer?: string;
@@ -2152,17 +2151,8 @@ export default function Home() {
     refreshRealtimeContext();
   }
 
-  /** Opens a website where the user is: Safari on the Mac, iOS in the app, or a tap in a browser. */
-  async function openWebsite(website: WebsiteRequest): Promise<"mac" | "device" | "button"> {
-    const desktop = window.voxLocalCodex?.openWebsite;
-    if (desktop) {
-      try {
-        await desktop(website.url);
-        return "mac";
-      } catch {
-        // Fall through to a button.
-      }
-    }
+  /** Opens a website on iPhone/iPad (Safari or the site's app), or with a tap in a browser. */
+  async function openWebsite(website: WebsiteRequest): Promise<"device" | "button"> {
     if (window.voxNativeIOS?.openWebsite) {
       window.voxNativeIOS.openWebsite(website.url);
       return "device";
@@ -4375,6 +4365,37 @@ export default function Home() {
     if (website && isOpenableWebsite(website.url)) {
       pendingUtteranceRef.current = null;
       setThinkingCue("");
+      const desktop = window.voxLocalCodex;
+      if (desktop?.available && desktop.runDesktopControl) {
+        // On the Mac, computer use opens it the way a person would: Safari,
+        // the address bar, the site's own search box.
+        const host = new URL(website.url).hostname.replace(/^www\./u, "");
+        const task = website.query
+          ? `Open Safari, click the address bar, type ${host} and press Return. When the page loads, use the site's own search box to search for ${JSON.stringify(website.query)}.`
+          : `Open Safari, click the address bar, type ${host} and press Return, then wait for the page to load.`;
+        const tracked = await runTrackedMacTask({
+          prompt: completeText,
+          language: turnLanguage,
+          isCurrentTurn,
+          run: () =>
+            runWithFrontVoice("desktop_control", () =>
+              desktop.runDesktopControl({
+                mode: "fast",
+                appId: "safari",
+                intent: "interact",
+                prompt: `${task} Only do this; nothing else. Current user request: ${completeText}`,
+              }),
+            ),
+        });
+        const result = tracked.result;
+        if (!tracked.current || !result) return;
+        sendTurnResponse(
+          "desktop_action_completed",
+          result.canceled ? (turnLanguage === "taiwan_mandarin" ? "好，已取消。" : "Okay, cancelled.") : result.answer?.trim() || `${website.name} should be open in Safari.`,
+          true,
+        );
+        return;
+      }
       const where = await openWebsite(website);
       if (!isCurrentTurn()) return;
       const did = website.query ? `opened ${website.name} and searched for ${JSON.stringify(website.query)}` : `opened ${website.name}`;
@@ -4385,7 +4406,7 @@ export default function Home() {
           turnLanguageInstruction,
           where === "button"
             ? `The browser needs one tap to open ${website.name}. Tell the user in a few words to tap the "Open ${website.name}" button on screen.`
-            : `You just ${did} for the user${where === "mac" ? " in Safari on their Mac" : ""}. Confirm in a few natural words (for example: "好，YouTube 打開了。"). Don't read out the web address.`,
+            : `You just ${did} for the user. Confirm in a few natural words (for example: "好，YouTube 打開了。"). Don't read out the web address.`,
         ].join("\n\n"),
       );
       setConnectionState("thinking");

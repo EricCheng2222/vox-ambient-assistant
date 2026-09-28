@@ -1425,27 +1425,6 @@ function registerIpcHandlers() {
     }
   });
 
-  // "Open YouTube": websites open in Safari. Only https links to real
-  // hostnames, the same check the page makes.
-  ipcMain.handle("vox-desktop:open-website", async (event, rawUrl) => {
-    requireTrustedVoxSender(event);
-    let url;
-    try {
-      url = new URL(typeof rawUrl === "string" ? rawUrl : "");
-    } catch {
-      throw new Error("That isn't a website address.");
-    }
-    if (url.protocol !== "https:" || !/^[a-z0-9.-]+\.[a-z]{2,}$/iu.test(url.hostname) || url.username || url.password) {
-      throw new Error("Vox only opens https websites.");
-    }
-    try {
-      await execFileAsync("/usr/bin/open", ["-a", "Safari", url.href]);
-    } catch {
-      await shell.openExternal(url.href);
-    }
-    return { opened: true };
-  });
-
   ipcMain.handle("vox-desktop:open-workspace", async (event) => {
     requireTrustedVoxSender(event);
     const now = Date.now();
