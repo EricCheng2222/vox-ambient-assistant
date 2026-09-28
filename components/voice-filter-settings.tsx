@@ -324,7 +324,8 @@ export function VoiceFilterSettings() {
 
               {status.error && <p className="text-xs leading-5 text-[#ff9d96]">{status.error}</p>}
               <p className="text-xs leading-5 text-white/36">
-                Changes apply right away, including to a conversation in progress.
+                Both are off by default, so Vox uses your microphone exactly as before. Turning
+                one on or off takes effect the next time you start talking to Vox.
               </p>
             </>
           )}

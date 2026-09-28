@@ -75,7 +75,8 @@ test("voice filter keeps the owner's voice and drops others and music", { skip: 
   const enrolled = enrollment.finish();
   assert.ok(enrolled.seconds >= 8, "enough speech was captured");
 
-  worker.configure({ denoise: true, verify: true, threshold: 0.65, voiceprint: enrolled.voiceprint });
+  // Defaults: only-my-voice on, noise removal off (Vox hears the raw microphone).
+  worker.configure({ denoise: false, verify: true, threshold: 0.65, voiceprint: enrolled.voiceprint });
   const session = fakePort();
   new worker.Session(session);
 
@@ -91,7 +92,8 @@ test("voice filter keeps the owner's voice and drops others and music", { skip: 
   const marks = [];
   let at = 0;
   for (const [label, samples, expected, gap] of scene) {
-    marks.push({ label, start: at, end: at + samples.length, expected, reference: samples.speech ?? samples });
+    // Noise removal is off, so what should come through is what the microphone heard.
+    marks.push({ label, start: at, end: at + samples.length, expected, reference: samples });
     const before = session.sent.length;
     session.feed(samples);
     session.feed(silence(gap));
@@ -100,6 +102,15 @@ test("voice filter keeps the owner's voice and drops others and music", { skip: 
     at += samples.length + Math.round(RATE * gap);
   }
   session.feed(silence(2));
+
+  // Interrupting Vox while it talks: the owner should get through at once.
+  const interruptStart = at + Math.round(RATE * 2);
+  session.listeners.message({ data: { type: "assistant", speaking: true } });
+  const interruption = say("Samantha", "Wait, stop, that's not what I meant.", "interrupt");
+  session.feed(interruption);
+  session.feed(silence(1.5));
+  session.listeners.message({ data: { type: "assistant", speaking: false } });
+  marks.push({ label: "owner interrupting Vox", start: interruptStart, end: interruptStart + interruption.length, expected: true, reference: interruption });
 
   const frames = session.sent.filter((d) => d instanceof Float32Array);
   const output = new Float32Array(frames.length * FRAME);
@@ -134,8 +145,20 @@ test("voice filter keeps the owner's voice and drops others and music", { skip: 
         bestLag = lag;
       }
     }
-    return { score: best, lag: bestLag / RATE };
+    const at = from + bestLag;
+    const presence = energy(output.subarray(at, at + samples.length)) / Math.max(1e-9, energy(samples));
+    if (process.env.VOICE_FILTER_DEBUG) console.log(`    onset debug ${mark.label}: presence ${presence.toFixed(2)} at lag ${(bestLag / RATE).toFixed(2)}`);
+    return { score: best, lag: bestLag / RATE, presence };
   };
+  if (process.env.VOICE_FILTER_DEBUG) {
+    const last = marks.at(-1);
+    const bins = [];
+    for (let t = last.start - RATE * 0.5; t < last.end + RATE; t += RATE / 10) bins.push(Math.sqrt(energy(output.subarray(t, t + RATE / 10)) / (RATE / 10)).toFixed(3));
+    console.log(`    output rms from 0.5 s before the interruption, per 0.1 s: ${bins.join(" ")}`);
+    const ref = [];
+    for (let t = 0; t < last.reference.length; t += RATE / 10) ref.push(Math.sqrt(energy(last.reference.subarray(t, t + RATE / 10)) / (RATE / 10)).toFixed(3));
+    console.log(`    reference rms per 0.1 s: ${ref.join(" ")}`);
+  }
   const results = marks.map((mark) => {
     // Released audio can run behind by up to about a second.
     const passed = energy(output.subarray(mark.start, mark.end + Math.round(RATE * 1.4))) / Math.max(1e-9, energy(mark.reference));

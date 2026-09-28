@@ -15,10 +15,11 @@ const LOW_RATE = 16_000;
 const CHECK_EVERY = 0.24 * LOW_RATE; // Re-check about four times a second of speech.
 const MIN_SPEECH = 0.56 * LOW_RATE; // Shortest stretch worth a voiceprint.
 const MAX_SPEECH = 1.2 * LOW_RATE; // Recent speech used per check; short so a new speaker shows quickly.
-const PREROLL_FRAMES = 40; // 0.4 s kept from before speech is detected (detection is slower over music), so first sounds aren't cut.
+const PREROLL_FRAMES = 70; // 0.7 s kept from before speech is detected, so first sounds are never cut.
+const BARGE_IN_PREROLL_FRAMES = 50; // While Vox is talking, 0.5 s (shorter than usual), so interrupting stays quick.
 const MAX_PENDING_FRAMES = 300; // Decide within 3 s of an utterance starting.
 const CONTINUITY_FRAMES = 80; // Speaking again within 0.8 s of a match (mid-thought) passes straight through.
-const KEEP_PAUSE_FRAMES = 20; // When catching up, each pause keeps 0.2 s.
+const KEEP_PAUSE_FRAMES = 35; // When catching up, each pause keeps 0.35 s so phrasing stays natural.
 const END_FRAMES = 60; // 0.6 s of silence ends an utterance.
 
 const modelDirectory = process.env.VOX_VOICE_MODELS ?? "";
@@ -179,8 +180,15 @@ export class Session {
     this.frameIndex = 0;
     this.lastScore = null;
     this.frames = 0;
+    this.assistantSpeaking = false;
+    this.provisional = false;
+    this.lowChecks = 0;
     debug("session started");
-    port.on("message", (event) => this.onFrame(event.data));
+    port.on("message", (event) => {
+      const data = event.data;
+      if (data && typeof data === "object" && data.type === "assistant") this.assistantSpeaking = data.speaking === true;
+      else this.onFrame(data);
+    });
     port.on("close", () => this.close());
     port.start();
   }
@@ -189,13 +197,17 @@ export class Session {
     const input = asFrame(data);
     if (!this.frames++) debug("first frame", Object.prototype.toString.call(data), input?.length);
     if (!input || input.length !== FRAME) return;
+    const verifying = settings.verify && settings.voiceprint && extractor;
+    // The voiceprint always checks a cleaned copy (it was enrolled that way);
+    // what Vox hears is cleaned only if noise removal is on, otherwise it's
+    // the microphone exactly as the original path would send it.
     let clean = input;
-    if (settings.denoise && denoiser) {
+    if ((settings.denoise || verifying) && denoiser) {
       const result = denoiser.run({ samples: input, sampleRate: RATE, enableExternalBuffer: false });
       clean = result.samples.length === FRAME ? result.samples : new Float32Array(FRAME);
     }
-    const verifying = settings.verify && settings.voiceprint && extractor;
-    const output = verifying ? this.gate(clean) : clean;
+    const heard = settings.denoise ? clean : input;
+    const output = verifying ? this.gate(clean, heard) : heard;
     this.port.postMessage(Float32Array.from(output));
   }
 
@@ -237,17 +249,27 @@ export class Session {
     this.checks += 1;
     this.bestScore = Math.max(this.bestScore, score);
     const matched = score >= settings.threshold;
-    if (matched) {
+    // The first check has the least speech to go on, so a near-miss there is
+    // enough to start releasing; later checks still confirm or cut it.
+    const promising = this.checks === 1 && score >= settings.threshold - 0.07;
+    if (matched || promising) {
       if (this.status === "held") this.approve();
-    } else if (score < settings.threshold - 0.1 && (this.status === "approved" || this.checks >= 2)) {
-      // Clearly someone else, or someone else took over mid-way.
-      this.reject();
+      if (matched) this.lowChecks = 0;
+    } else if (score < settings.threshold - 0.1) {
+      this.lowChecks += 1;
+      // Passed straight through (interrupting, or continuing): cut only on
+      // clear evidence, since the first checks have little speech to go on.
+      const clearlySomeoneElse = this.provisional
+        ? score < settings.threshold - 0.2 || this.lowChecks >= 2
+        : this.status === "approved" || this.checks >= 2;
+      if (clearlySomeoneElse) this.reject();
     }
     this.port.postMessage({ type: "state", matched, score: Math.round(score * 1000) / 1000 });
   }
 
-  approve() {
+  approve(provisional = false) {
     this.status = "approved";
+    this.provisional = provisional;
     for (const samples of this.held) this.release.push({ samples, utterance: this.utterance });
     this.held = [];
   }
@@ -265,10 +287,10 @@ export class Session {
    * Released audio runs a little behind and catches up in pauses and between
    * utterances, which aren't queued.
    */
-  gate(clean) {
+  gate(clean, heard) {
     this.frameIndex += 1;
     this.listen(clean);
-    const frame = Float32Array.from(clean);
+    const frame = Float32Array.from(heard);
     this.silentFrames = this.speaking ? 0 : this.silentFrames + 1;
 
     if (this.status === "none") {
@@ -278,11 +300,15 @@ export class Session {
         this.checks = 0;
         this.bestScore = -1;
         this.pause = 0;
-        this.held = this.preroll.splice(0);
+        const interrupting = this.assistantSpeaking;
+        this.held = this.preroll.splice(interrupting ? -BARGE_IN_PREROLL_FRAMES : 0);
+        this.preroll = [];
         this.held.push(frame);
         this.status = "held";
-        // Picking up again moments after speaking to Vox: no need to wait.
-        if (this.frameIndex - this.lastOwnerFrame <= CONTINUITY_FRAMES) this.approve();
+        // Interrupting Vox, or picking up moments after speaking to it: pass
+        // straight through (still checked, and cut if it's someone else).
+        this.lowChecks = 0;
+        if (interrupting || this.frameIndex - this.lastOwnerFrame <= CONTINUITY_FRAMES) this.approve(true);
       } else {
         this.preroll.push(frame);
         if (this.preroll.length > PREROLL_FRAMES) this.preroll.shift();

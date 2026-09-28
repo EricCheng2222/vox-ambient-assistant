@@ -18,6 +18,11 @@ class VoxVoiceFilterProcessor extends AudioWorkletProcessor {
     this.primed = false;
     this.lastReply = -1;
     this.port.onmessage = (event) => {
+      // Page → filter control messages (for example, "Vox is speaking").
+      if (event.data?.type === "assistant") {
+        this.link?.postMessage({ type: "assistant", speaking: event.data.speaking === true });
+        return;
+      }
       if (event.data?.type !== "link" || !event.data.port) return;
       this.link = event.data.port;
       this.link.onmessage = (message) => {

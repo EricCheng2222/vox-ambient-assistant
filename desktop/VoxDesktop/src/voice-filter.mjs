@@ -61,7 +61,8 @@ export function registerVoiceFilter(deps) {
       }
     }
     return {
-      denoise: saved.denoise !== false,
+      // Both options start off: the original microphone path.
+      denoise: saved.denoise === true,
       onlyMyVoice: saved.onlyMyVoice === true && Array.isArray(voiceprint),
       strictness: strictness(saved.strictness),
       voiceprint: Array.isArray(voiceprint) ? voiceprint : null,

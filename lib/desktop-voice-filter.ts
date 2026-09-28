@@ -36,6 +36,8 @@ export type FilteredMicrophone = {
   onState: (listener: (state: { matched: boolean; score: number }) => void) => void;
   /** Called with each processed frame's level (0–1), for a meter. */
   onLevel: (listener: (level: number) => void) => void;
+  /** While Vox is talking, the owner's interruptions pass straight through. */
+  setAssistantSpeaking: (speaking: boolean) => void;
   stop: () => void;
 };
 
@@ -90,6 +92,7 @@ export async function filterMicrophone(raw: MediaStream, kind: "session" | "enro
   return {
     stream: destination.stream,
     onState: (listener) => stateListeners.push(listener),
+    setAssistantSpeaking: (speaking) => node.port.postMessage({ type: "assistant", speaking }),
     onLevel: (listener) => {
       levelListeners.push(listener);
       if (!levelTimer) levelTimer = window.setInterval(measure, 80);

@@ -1507,6 +1507,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    // Lets the voice filter pass the owner straight through when interrupting.
+    voiceFilterRef.current?.setAssistantSpeaking(connectionState === "speaking");
+  }, [connectionState]);
+
+  useEffect(() => {
     if (audioRef.current) audioRef.current.volume = voxVolume / 100;
     setHudVolume(voxVolume / 100);
   }, [voxVolume]);
@@ -5623,8 +5628,10 @@ export default function Home() {
       const peer = new RTCPeerConnection();
       // On the Mac desktop app the microphone goes through the local voice
       // filter (noise and music removal, optionally only the owner's voice).
+      // With both options off (the default), nothing is added: the
+      // microphone path is exactly the original one.
       const filterStatus = await voiceFilterBridge()?.status().catch(() => null);
-      const useVoiceFilter = Boolean(filterStatus?.available);
+      const useVoiceFilter = Boolean(filterStatus?.available && (filterStatus.denoise || filterStatus.onlyMyVoice));
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -5647,7 +5654,8 @@ export default function Home() {
       streamRef.current = stream;
       void startCameraPreview(true);
       try {
-        startSpeechTimingMonitor(sendStream);
+        // Local timing and interruption hints read the raw microphone, as before.
+        startSpeechTimingMonitor(stream);
       } catch {
         // Timing is an optional local hint; voice should still work without it.
       }
