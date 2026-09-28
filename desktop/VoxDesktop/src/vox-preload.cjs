@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
       prompt: typeof request?.prompt === "string" ? request.prompt : "",
     }),
   openWorkspace: () => ipcRenderer.invoke("vox-desktop:open-workspace"),
+  openWebsite: (url) => ipcRenderer.invoke("vox-desktop:open-website", typeof url === "string" ? url.slice(0, 2_000) : ""),
   runDesktopControl: (request) =>
     ipcRenderer.invoke("vox-desktop:control", {
       prompt: typeof request?.prompt === "string" ? request.prompt : "",

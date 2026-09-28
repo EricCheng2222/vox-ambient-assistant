@@ -171,6 +171,7 @@ import {
 import { playHudCue, type HudCue, setHudVolume } from "@/lib/hud-sounds";
 import { FlashcardsConnection, openFlashcardsConnection } from "@/components/flashcards-connection";
 import { VoiceFilterSettings } from "@/components/voice-filter-settings";
+import { detectWebsiteRequest, isOpenableWebsite, type WebsiteRequest } from "@/lib/website-route";
 import { WelcomeHomePhoneToggle } from "@/components/welcome-home";
 import { filterMicrophone, voiceFilterBridge, type FilteredMicrophone } from "@/lib/desktop-voice-filter";
 import {
@@ -445,6 +446,7 @@ declare global {
       canScanPairing: boolean;
       scanPairing: () => void;
       // Added with the Mic Mode shortcut; older iPhone builds lack these.
+      openWebsite?: (url: string) => void;
       canChooseMicMode?: boolean;
       showMicModes?: () => void;
     };
@@ -535,6 +537,7 @@ declare global {
         prompt: string;
       }) => Promise<{ answer?: string }>;
       resolveApp?: (text: string) => Promise<{ id: `installed:${string}`; name: string; appOnly: boolean } | null>;
+      openWebsite?: (url: string) => Promise<{ opened: boolean }>;
       runTask: (request: { prompt: string }) => Promise<{
         canceled: boolean;
         answer?: string;
@@ -2147,6 +2150,29 @@ export default function Home() {
       void savePreferences({ theme: nextTheme });
     }
     refreshRealtimeContext();
+  }
+
+  /** Opens a website where the user is: Safari on the Mac, iOS in the app, or a tap in a browser. */
+  async function openWebsite(website: WebsiteRequest): Promise<"mac" | "device" | "button"> {
+    const desktop = window.voxLocalCodex?.openWebsite;
+    if (desktop) {
+      try {
+        await desktop(website.url);
+        return "mac";
+      } catch {
+        // Fall through to a button.
+      }
+    }
+    if (window.voxNativeIOS?.openWebsite) {
+      window.voxNativeIOS.openWebsite(website.url);
+      return "device";
+    }
+    toast(`Open ${website.name}`, {
+      description: website.query ? `Search: ${website.query}` : undefined,
+      duration: 20_000,
+      action: { label: "Open", onClick: () => window.open(website.url, "_blank", "noopener") },
+    });
+    return "button";
   }
 
   function playThemeCue(cue: HudCue) {
@@ -4341,6 +4367,27 @@ export default function Home() {
       pendingUtteranceRef.current = null;
       setThinkingCue("");
       startStudy(completeText, null);
+      setConnectionState("thinking");
+      return;
+    }
+    // "Open YouTube": a website, not an app (an installed Mac app still wins).
+    const website = installedApp ? null : detectWebsiteRequest(completeText);
+    if (website && isOpenableWebsite(website.url)) {
+      pendingUtteranceRef.current = null;
+      setThinkingCue("");
+      const where = await openWebsite(website);
+      if (!isCurrentTurn()) return;
+      const did = website.query ? `opened ${website.name} and searched for ${JSON.stringify(website.query)}` : `opened ${website.name}`;
+      sendTurnResponse(
+        "website_open",
+        [
+          voiceInstructions(),
+          turnLanguageInstruction,
+          where === "button"
+            ? `The browser needs one tap to open ${website.name}. Tell the user in a few words to tap the "Open ${website.name}" button on screen.`
+            : `You just ${did} for the user${where === "mac" ? " in Safari on their Mac" : ""}. Confirm in a few natural words (for example: "好，YouTube 打開了。"). Don't read out the web address.`,
+        ].join("\n\n"),
+      );
       setConnectionState("thinking");
       return;
     }

@@ -36,7 +36,8 @@
     "deploy:cloudflare": "npm run build && npm run deploy:prepare && npm run deploy:migrate && npm run deploy:worker",
     "flashcards:dev": "wrangler dev --config flashcards-site/wrangler.jsonc --local --persist-to .wrangler/flashcards",
     "flashcards:deploy": "node scripts/deploy-flashcards.mjs",
-    "flashcards:typecheck": "tsc -p flashcards-site"
+    "flashcards:typecheck": "tsc -p flashcards-site",
+    "test:website-route": "node --experimental-strip-types scripts/test-website-route.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

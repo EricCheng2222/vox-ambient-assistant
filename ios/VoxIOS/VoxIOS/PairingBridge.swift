@@ -28,6 +28,7 @@ final class PairingBridge: NSObject, WKScriptMessageHandler {
               scanPairing: () => handler.postMessage({ type: "scanPairing" }),
               // Opens iOS's Mic Mode picker (Standard, Voice Isolation, Wide
               // Spectrum). Apps can't switch it themselves, only offer it.
+              openWebsite: (url) => handler.postMessage({ type: "openWebsite", url: String(url) }),
               canChooseMicMode: true,
               showMicModes: () => handler.postMessage({ type: "showMicModes" }),
               // "Welcome home" greeting on the paired Mac.
@@ -85,6 +86,12 @@ final class PairingBridge: NSObject, WKScriptMessageHandler {
             VoxWebView.installUserScripts(on: userContentController)
         case "scanPairing":
             presentScanner()
+        case "openWebsite":
+            // https only; iOS opens Safari, or the site's app if installed.
+            if let text = body["url"] as? String, text.count <= 2_000,
+               let url = URL(string: text), url.scheme == "https", url.host != nil, url.user == nil {
+                UIApplication.shared.open(url)
+            }
         case "showMicModes":
             AVCaptureDevice.showSystemUserInterface(.microphoneModes)
         case "welcomeHome":
