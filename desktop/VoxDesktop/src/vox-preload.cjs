@@ -67,4 +67,27 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
       intent: request?.intent === "interact" ? "interact" : "launch",
       mode: request?.mode === "fast" ? "fast" : "standard",
     }),
+  // Background noise and music removal, and "only listen to my voice".
+  voiceFilter: {
+    status: () => ipcRenderer.invoke("vox-voice-filter:status"),
+    update: (changes) =>
+      ipcRenderer.invoke("vox-voice-filter:update", {
+        ...(typeof changes?.denoise === "boolean" ? { denoise: changes.denoise } : {}),
+        ...(typeof changes?.onlyMyVoice === "boolean" ? { onlyMyVoice: changes.onlyMyVoice } : {}),
+        ...(typeof changes?.strictness === "string" ? { strictness: changes.strictness.slice(0, 20) } : {}),
+      }),
+    finishEnrollment: () => ipcRenderer.invoke("vox-voice-filter:enroll-finish"),
+    cancelEnrollment: () => ipcRenderer.invoke("vox-voice-filter:enroll-cancel"),
+    forget: () => ipcRenderer.invoke("vox-voice-filter:forget"),
+  },
+});
+
+// Audio ports can't cross the context bridge, so the page posts one here and
+// it's handed to the main process, which connects it to the voice filter.
+window.addEventListener("message", (event) => {
+  if (event.source !== window || event.data?.type !== "vox-voice-filter:connect") return;
+  const [port] = event.ports;
+  if (!port) return;
+  const kind = event.data.kind === "enroll" ? "enroll" : "session";
+  ipcRenderer.postMessage("vox-voice-filter:connect", kind, [port]);
 });

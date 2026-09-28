@@ -9,15 +9,17 @@
   "main": "src/main.mjs",
   "scripts": {
     "start": "electron .",
-    "check": "node scripts/check.mjs && node --test scripts/computer-use-session.test.mjs scripts/local-web-server.test.mjs scripts/dyson-local.test.mjs scripts/smart-home-hub.test.mjs && node scripts/personal-api.test.mjs && node scripts/personal-route.test.mjs",
+    "check": "node scripts/check.mjs && node --test scripts/computer-use-session.test.mjs scripts/local-web-server.test.mjs scripts/dyson-local.test.mjs scripts/smart-home-hub.test.mjs scripts/voice-filter.test.mjs && node scripts/personal-api.test.mjs && node scripts/personal-route.test.mjs",
     "prepare:web": "npm --prefix ../.. run build",
     "package": "electron-builder --dir",
-    "dist": "npm run prepare:web && electron-builder"
+    "dist": "npm run voice-models && npm run prepare:web && electron-builder",
+    "voice-models": "node scripts/fetch-voice-models.mjs"
   },
   "dependencies": {
     "@openai/codex-sdk": "0.155.1",
     "bonjour-service": "^1.4.4",
-    "mqtt": "^5.16.0"
+    "mqtt": "^5.16.0",
+    "sherpa-onnx-node": "1.13.8"
   },
   "devDependencies": {
     "electron": "44.4.3",
@@ -28,7 +30,8 @@
     "productName": "Vox",
     "asar": true,
     "asarUnpack": [
-      "node_modules/@openai/codex-*/vendor/**/*"
+      "node_modules/@openai/codex-*/vendor/**/*",
+      "node_modules/sherpa-onnx-*/**/*"
     ],
     "files": [
       "src/**/*",
@@ -40,6 +43,13 @@
         "to": "vox-web",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "resources/voice-models",
+        "to": "voice-models",
+        "filter": [
+          "*.onnx"
         ]
       }
     ],

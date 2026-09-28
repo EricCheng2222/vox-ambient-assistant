@@ -49,3 +49,4 @@ next-env.d.ts
 /.codex/
 /outputs/
 /work/
+/desktop/VoxDesktop/resources/voice-models/

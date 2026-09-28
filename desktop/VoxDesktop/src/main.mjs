@@ -36,6 +36,7 @@ import {
   validTypeSafeKey,
 } from "./personal-route.mjs";
 import { startLocalVoxServer } from "./local-web-server.mjs";
+import { registerVoiceFilter } from "./voice-filter.mjs";
 import {
   availableSmartHomeAdapters,
   configureSmartHomeDevice,
@@ -60,6 +61,7 @@ import {
 const productionUrl = "https://vox-assistant.ericcheng306.workers.dev/";
 const developmentUrl = process.env.VOX_DESKTOP_DEV_URL;
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
+let voiceFilter = null;
 const shellFile = path.join(currentDirectory, "shell.html");
 const shellUrl = pathToFileURL(shellFile).href;
 const settingsFileName = "desktop-settings.json";
@@ -1679,6 +1681,7 @@ app.whenReady().then(async () => {
     }),
   });
   registerIpcHandlers();
+  voiceFilter = registerVoiceFilter({ requireTrustedVoxSender, readSettings, saveSettings, secureStorageAvailable });
   // Installed-app discovery is useful for voice routing, but it must never sit
   // on the first conversational turn's latency path.
   void installedApps().catch(() => undefined);
@@ -1699,5 +1702,6 @@ app.on("before-quit", () => {
   remoteControlArmed = false;
   if (remoteRelayTimer) clearInterval(remoteRelayTimer);
   remoteRelayTimer = null;
+  voiceFilter?.stop();
   void localVoxServer?.close();
 });

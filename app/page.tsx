@@ -169,6 +169,8 @@ import {
 } from "@/lib/visual-theme";
 import { playHudCue, type HudCue } from "@/lib/hud-sounds";
 import { FlashcardsConnection, openFlashcardsConnection } from "@/components/flashcards-connection";
+import { VoiceFilterSettings } from "@/components/voice-filter-settings";
+import { filterMicrophone, voiceFilterBridge, type FilteredMicrophone } from "@/lib/desktop-voice-filter";
 import {
   isFlashcardStudyRequest,
   isStudyStopRequest,
@@ -1204,6 +1206,7 @@ export default function Home() {
   const [placeSaving, setPlaceSaving] = useState(false);
   const [mapPickerAvailable, setMapPickerAvailable] = useState(false);
   const [micModeAvailable, setMicModeAvailable] = useState(false);
+  const voiceFilterRef = useRef<FilteredMicrophone | null>(null);
   const [phoneAssistantCallbackNumber, setPhoneAssistantCallbackNumber] = useState("");
   const [phoneAssistantPassphrase, setPhoneAssistantPassphrase] = useState("");
   const [phoneAssistantBusy, setPhoneAssistantBusy] = useState(false);
@@ -5522,22 +5525,37 @@ export default function Home() {
       }
 
       const peer = new RTCPeerConnection();
+      // On the Mac desktop app the microphone goes through the local voice
+      // filter (noise and music removal, optionally only the owner's voice).
+      const filterStatus = await voiceFilterBridge()?.status().catch(() => null);
+      const useVoiceFilter = Boolean(filterStatus?.available);
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
-          noiseSuppression: true,
+          // The voice filter's own noise removal replaces the browser's.
+          noiseSuppression: !(useVoiceFilter && filterStatus?.denoise),
           autoGainControl: true,
         },
       });
+      let sendStream = stream;
+      if (useVoiceFilter) {
+        try {
+          const filtered = await filterMicrophone(stream, "session");
+          voiceFilterRef.current = filtered;
+          sendStream = filtered.stream;
+        } catch {
+          // Fall back to the plain microphone.
+        }
+      }
       peerRef.current = peer;
       streamRef.current = stream;
       void startCameraPreview(true);
       try {
-        startSpeechTimingMonitor(stream);
+        startSpeechTimingMonitor(sendStream);
       } catch {
         // Timing is an optional local hint; voice should still work without it.
       }
-      stream.getAudioTracks().forEach((track) => peer.addTrack(track, stream));
+      sendStream.getAudioTracks().forEach((track) => peer.addTrack(track, sendStream));
 
       peer.ontrack = (event) => {
         if (audioRef.current) {
@@ -5573,6 +5591,8 @@ export default function Home() {
         close: () => {
           channel.close();
           peer.close();
+          voiceFilterRef.current?.stop();
+          voiceFilterRef.current = null;
           stream.getTracks().forEach((track) => track.stop());
         },
       };
@@ -5697,6 +5717,8 @@ export default function Home() {
       peerRef.current?.close();
       streamRef.current?.getTracks().forEach((track) => track.stop());
     }
+    voiceFilterRef.current?.stop();
+    voiceFilterRef.current = null;
     sessionOwnerRef.current = null;
     channelRef.current = null;
     peerRef.current = null;
@@ -6772,6 +6794,8 @@ export default function Home() {
               </SheetContent>
             </Sheet>
           )}
+
+          {desktopPersonalAvailable && <VoiceFilterSettings />}
 
           {desktopPersonalAvailable && (
             <Sheet open={smartHomeOpen} onOpenChange={changeSmartHomeOpen}>
