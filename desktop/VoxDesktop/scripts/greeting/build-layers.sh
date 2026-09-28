@@ -1,0 +1,8 @@
+#!/bin/bash
+set -e
+R=48000
+ffmpeg -v error -y -f lavfi -i "aevalsrc='0.22*pow(t/1.6,2)*sin(2*PI*(70*t+109.4*t*t))+0.08*pow(t/1.6,3)*sin(2*PI*(140*t+218.8*t*t))':s=$R:d=1.6" -f lavfi -i "anoisesrc=color=pink:amplitude=0.35:d=1.6:r=$R" -filter_complex "[1]highpass=f=500,lowpass=f=4500,afade=t=in:d=1.5:curve=exp,volume=0.5[n];[0][n]amix=inputs=2:normalize=0,afade=t=out:st=1.45:d=0.15,aformat=channel_layouts=stereo" riser.wav
+ffmpeg -v error -y -f lavfi -i "aevalsrc='0.22*sin(2*PI*2400*t)*exp(-t*55)*lt(t,0.07)+0.2*sin(2*PI*3000*(t-0.09))*exp(-(t-0.09)*55)*between(t,0.09,0.16)+0.24*sin(2*PI*3600*(t-0.18))*exp(-(t-0.18)*40)*between(t,0.18,0.3)':s=$R:d=0.4" -af "aformat=channel_layouts=stereo" chirps.wav
+ffmpeg -v error -y -f lavfi -i "aevalsrc='0.9*sin(2*PI*(52-18*t)*t)*exp(-t*3.2)':s=$R:d=1.4" -f lavfi -i "anoisesrc=color=brown:amplitude=0.6:d=0.3:r=$R" -filter_complex "[1]lowpass=f=220,afade=t=out:d=0.3[n];[0][n]amix=inputs=2:normalize=0,aformat=channel_layouts=stereo" impact.wav
+ffmpeg -v error -y -f lavfi -i "aevalsrc='0.07*(sin(2*PI*220*t)+sin(2*PI*220.6*t)+0.8*sin(2*PI*277.18*t)+0.8*sin(2*PI*329.63*t)+0.6*sin(2*PI*440.4*t))*(0.8+0.2*sin(2*PI*0.7*t))|0.07*(sin(2*PI*219.4*t)+sin(2*PI*220.3*t)+0.8*sin(2*PI*277.6*t)+0.8*sin(2*PI*329.2*t)+0.6*sin(2*PI*439.6*t))*(0.8+0.2*sin(2*PI*0.9*t))':s=$R:d=4.6:c=stereo" -af "lowpass=f=1800,afade=t=in:d=1.2,afade=t=out:st=2.4:d=2.2" pad.wav
+ffmpeg -v error -y -f lavfi -i "anoisesrc=color=white:amplitude=1:d=2.4:r=$R:seed=7" -f lavfi -i "anoisesrc=color=white:amplitude=1:d=2.4:r=$R:seed=11" -filter_complex "[0][1]join=inputs=2:channel_layout=stereo,aeval='val(ch)*exp(-t*2.6)*gte(t,0.02)':c=same,lowpass=f=6000" ir.wav

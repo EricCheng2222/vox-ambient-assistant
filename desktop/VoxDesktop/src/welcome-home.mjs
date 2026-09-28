@@ -21,7 +21,24 @@ function resource(...parts) {
 }
 
 const beaconPath = () => resource("bin", "vox-beacon");
-const soundPath = () => resource("sounds", "welcome-home.m4a");
+
+// Greeting sounds in resources/sounds (made by scripts/greeting).
+export const WELCOME_HOME_SOUNDS = [
+  { id: "cinematic-onyx", label: "Cinematic, Onyx" },
+  { id: "cinematic-fable", label: "Cinematic, Fable" },
+  { id: "cinematic-ash", label: "Cinematic, Ash" },
+  { id: "simple-onyx", label: "Simple, Onyx" },
+  { id: "simple-fable", label: "Simple, Fable" },
+  { id: "simple-ash", label: "Simple, Ash" },
+  { id: "simple-cedar", label: "Simple, Cedar" },
+];
+const DEFAULT_SOUND = "cinematic-onyx";
+
+function soundId(value) {
+  return WELCOME_HOME_SOUNDS.some((sound) => sound.id === value) ? value : DEFAULT_SOUND;
+}
+
+const soundPath = (id) => resource("sounds", `welcome-home-${soundId(id)}.m4a`);
 
 /**
  * @param {{
@@ -37,8 +54,14 @@ export function registerWelcomeHome(deps) {
   let pairing = null;
   const seenNonces = new Set();
 
-  function play() {
-    execFile("/usr/bin/afplay", [soundPath()], () => undefined);
+  let player = null;
+
+  async function play(id) {
+    const sound = id ?? (await deps.readSettings()).welcomeHome?.sound;
+    player?.kill();
+    player = execFile("/usr/bin/afplay", [soundPath(sound)], () => {
+      player = null;
+    });
   }
 
   async function greet(kind) {
@@ -101,6 +124,8 @@ export function registerWelcomeHome(deps) {
     const current = deps.pairing(settings);
     return {
       enabled: settings.welcomeHome?.enabled !== false,
+      sound: soundId(settings.welcomeHome?.sound),
+      sounds: WELCOME_HOME_SOUNDS,
       paired: current?.status === "active",
       bluetooth,
       lastGreetedAt: settings.welcomeHome?.lastGreetedAt ?? null,
@@ -115,17 +140,21 @@ export function registerWelcomeHome(deps) {
 
   ipcMain.handle("vox-welcome-home:update", async (event, raw) => {
     deps.requireTrustedVoxSender(event);
-    if (typeof raw?.enabled === "boolean") {
+    const changes = {};
+    if (typeof raw?.enabled === "boolean") changes.enabled = raw.enabled;
+    if (typeof raw?.sound === "string") changes.sound = soundId(raw.sound);
+    if (Object.keys(changes).length) {
       const settings = await deps.readSettings();
-      await deps.saveSettings({ ...settings, welcomeHome: { ...(settings.welcomeHome ?? {}), enabled: raw.enabled } });
+      await deps.saveSettings({ ...settings, welcomeHome: { ...(settings.welcomeHome ?? {}), ...changes } });
     }
     await refresh();
     return status();
   });
 
-  ipcMain.handle("vox-welcome-home:test", (event) => {
+  // Preview a sound (or the chosen one).
+  ipcMain.handle("vox-welcome-home:test", async (event, id) => {
     deps.requireTrustedVoxSender(event);
-    play();
+    await play(typeof id === "string" ? soundId(id) : undefined);
     return true;
   });
 

@@ -7,11 +7,18 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 
 type PhoneBridge = { enabled: boolean; setEnabled: (on: boolean) => void; test?: () => void };
-type DesktopStatus = { enabled: boolean; paired: boolean; bluetooth: string; lastGreetedAt: string | null };
+type DesktopStatus = {
+  enabled: boolean;
+  sound: string;
+  sounds: Array<{ id: string; label: string }>;
+  paired: boolean;
+  bluetooth: string;
+  lastGreetedAt: string | null;
+};
 type DesktopBridge = {
   status: () => Promise<DesktopStatus>;
-  update: (changes: { enabled?: boolean }) => Promise<DesktopStatus>;
-  test: () => Promise<boolean>;
+  update: (changes: { enabled?: boolean; sound?: string }) => Promise<DesktopStatus>;
+  test: (sound?: string) => Promise<boolean>;
 };
 
 function phoneBridge(): PhoneBridge | null {
@@ -113,20 +120,49 @@ export function WelcomeHomeDesktopSection() {
           aria-label="Welcome home greeting"
         />
       </div>
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <span className="text-xs leading-5 text-white/46">
-          {detail}
-          {status.lastGreetedAt ? ` Last greeting ${new Date(status.lastGreetedAt).toLocaleString()}.` : ""}
-        </span>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="shrink-0 rounded-full border-white/12 bg-transparent text-white hover:bg-white/10"
-          onClick={() => void bridge.test()}
-        >
-          <Play /> Play
-        </Button>
+      <p className="mt-3 text-xs leading-5 text-white/46">
+        {detail}
+        {status.lastGreetedAt ? ` Last greeting ${new Date(status.lastGreetedAt).toLocaleString()}.` : ""}
+      </p>
+      <p className="mt-4 text-xs font-medium text-white/70">Sound</p>
+      <div className="mt-2 space-y-1.5" role="radiogroup" aria-label="Greeting sound">
+        {status.sounds.map((sound) => {
+          const chosen = sound.id === status.sound;
+          return (
+            <div
+              key={sound.id}
+              className={`flex items-center gap-2 rounded-lg px-2.5 py-1.5 transition ${
+                chosen ? "bg-[#f4ff74]/[0.1] ring-1 ring-[#f4ff74]/30" : "bg-white/[0.035] hover:bg-white/[0.06]"
+              }`}
+            >
+              <button
+                type="button"
+                role="radio"
+                aria-checked={chosen}
+                className="flex flex-1 items-center gap-2 text-left text-sm text-white/80"
+                onClick={() => void bridge.update({ sound: sound.id }).then(setStatus)}
+              >
+                <span
+                  className={`grid size-4 place-items-center rounded-full border ${chosen ? "border-[#f4ff74]" : "border-white/30"}`}
+                  aria-hidden="true"
+                >
+                  {chosen && <span className="size-2 rounded-full bg-[#f4ff74]" />}
+                </span>
+                {sound.label}
+              </button>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                className="rounded-full text-white/60 hover:bg-white/10 hover:text-white"
+                aria-label={`Play ${sound.label}`}
+                onClick={() => void bridge.test(sound.id)}
+              >
+                <Play />
+              </Button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

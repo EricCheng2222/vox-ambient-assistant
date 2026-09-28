@@ -84,8 +84,11 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
   welcomeHome: {
     status: () => ipcRenderer.invoke("vox-welcome-home:status"),
     update: (changes) =>
-      ipcRenderer.invoke("vox-welcome-home:update", typeof changes?.enabled === "boolean" ? { enabled: changes.enabled } : {}),
-    test: () => ipcRenderer.invoke("vox-welcome-home:test"),
+      ipcRenderer.invoke("vox-welcome-home:update", {
+        ...(typeof changes?.enabled === "boolean" ? { enabled: changes.enabled } : {}),
+        ...(typeof changes?.sound === "string" ? { sound: changes.sound.slice(0, 40) } : {}),
+      }),
+    test: (sound) => ipcRenderer.invoke("vox-welcome-home:test", typeof sound === "string" ? sound.slice(0, 40) : undefined),
   },
 });
 
