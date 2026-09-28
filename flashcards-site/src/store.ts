@@ -31,12 +31,13 @@ export type Card = {
   dueAt: string;
   lastReviewedAt: string | null;
   seenAt: string | null;
+  lessonId: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
 const cardColumns =
-  "id, deck_id AS deckId, front, back, notes, ease, interval_days AS intervalDays, reps, lapses, due_at AS dueAt, last_reviewed_at AS lastReviewedAt, seen_at AS seenAt, created_at AS createdAt, updated_at AS updatedAt";
+  "id, deck_id AS deckId, front, back, notes, ease, interval_days AS intervalDays, reps, lapses, due_at AS dueAt, last_reviewed_at AS lastReviewedAt, seen_at AS seenAt, lesson_id AS lessonId, created_at AS createdAt, updated_at AS updatedAt";
 
 export class FlashcardStore {
   private readonly db: D1Database;
@@ -145,6 +146,7 @@ export class FlashcardStore {
     if (!deck || deck.id !== deckId) throw new FlashcardError("That deck was not found.");
     await this.db.batch([
       this.db.prepare("DELETE FROM cards WHERE owner_id = ?1 AND deck_id = ?2").bind(this.ownerId, deckId),
+      this.db.prepare("DELETE FROM lessons WHERE owner_id = ?1 AND deck_id = ?2").bind(this.ownerId, deckId),
       this.db.prepare("DELETE FROM decks WHERE owner_id = ?1 AND id = ?2").bind(this.ownerId, deckId),
     ]);
     return { id: deck.id, name: deck.name };
@@ -370,14 +372,37 @@ export class FlashcardStore {
     return results;
   }
 
-  /** Every card in a deck, for the iPhone app's offline copy. */
+  /** Every card in a deck, and its lessons, for the app's offline copy. */
   async allCards(deckId: string) {
     const deck = await this.requireDeck(deckId);
+    const [{ results }, lessons] = await Promise.all([
+      this.db
+        .prepare(`SELECT ${cardColumns} FROM cards WHERE owner_id = ?1 AND deck_id = ?2 ORDER BY due_at, created_at LIMIT ?3`)
+        .bind(this.ownerId, deck.id, FLASHCARD_LIMITS.cardsPerOwner)
+        .all<Card>(),
+      this.lessons(deck.id),
+    ]);
+    return { deck, cards: results, lessons };
+  }
+
+  /** A deck's textbook-style lessons, in teaching order. */
+  async lessons(deckId: string) {
     const { results } = await this.db
-      .prepare(`SELECT ${cardColumns} FROM cards WHERE owner_id = ?1 AND deck_id = ?2 ORDER BY due_at, created_at LIMIT ?3`)
-      .bind(this.ownerId, deck.id, FLASHCARD_LIMITS.cardsPerOwner)
-      .all<Card>();
-    return { deck, cards: results };
+      .prepare(
+        `SELECT id, deck_id AS deckId, title, summary, content, position FROM lessons
+         WHERE owner_id = ?1 AND deck_id = ?2 ORDER BY position`,
+      )
+      .bind(this.ownerId, deckId)
+      .all<{ id: string; deckId: string; title: string; summary: string | null; content: string; position: number }>();
+    return results.map(({ content, ...lesson }) => {
+      let slides: unknown = [];
+      try {
+        slides = JSON.parse(content);
+      } catch {
+        slides = [];
+      }
+      return { ...lesson, slides };
+    });
   }
 
   /**

@@ -291,16 +291,34 @@ struct LibraryView: View {
             sectionTitle("On this \(UIDevice.current.model)")
             ForEach(library.downloadedDecks, id: \.deck.id) { entry in
                 let due = library.dueCards(in: [entry.deck.id]).count
-                Button {
-                    studying = StudyScope(deckIds: [entry.deck.id], title: entry.deck.title)
-                } label: {
-                    DeckRow(deck: entry.deck, detail: "\(entry.cards.count) cards", due: due, trailing: AnyView(
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.grade(.good)).accessibilityLabel("Downloaded")
-                    ))
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    Button("Remove download", systemImage: "trash", role: .destructive) { library.removeDownload(entry.deck.id) }
+                HStack(spacing: 12) {
+                    Button {
+                        studying = StudyScope(deckIds: [entry.deck.id], title: entry.deck.title)
+                    } label: {
+                        DeckRow(deck: entry.deck, detail: "\(entry.cards.count) cards", due: due, trailing: AnyView(
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.grade(.good)).accessibilityLabel("Downloaded")
+                        ))
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Remove download", systemImage: "trash", role: .destructive) { library.removeDownload(entry.deck.id) }
+                    }
+                    // iPad: the deck's textbook lessons.
+                    if LessonsAvailability.enabled, let count = entry.lessons?.count, count > 0 {
+                        NavigationLink {
+                            LessonListView(entry: entry)
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: "book.pages").font(.title2)
+                                Text("\(count) lessons").font(.caption)
+                            }
+                            .foregroundStyle(Color(hex: 0x2F55B5))
+                            .frame(width: 96, height: 96)
+                            .background(Palette.paper, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .shadow(color: Palette.ink.opacity(0.1), radius: 8, y: 4)
+                        }
+                        .accessibilityLabel("\(entry.deck.title) lessons")
+                    }
                 }
             }
         }
@@ -415,6 +433,7 @@ struct StudyView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var card: Card?
     @State private var isRepeat = false
+    @State private var openLesson: Lesson?
     @State private var flipped = false
     @State private var reviewed = 0
     @State private var now = Date()
@@ -430,6 +449,20 @@ struct StudyView: View {
                     // iPad: the card and its buttons sit together, centered.
                     if sizeClass == .regular { Spacer(minLength: 0) }
                     cardView(card)
+                    if flipped, LessonsAvailability.enabled, let lesson = library.lesson(for: card) {
+                        // iPad: from the answer to the lesson that teaches it.
+                        Button {
+                            openLesson = lesson
+                        } label: {
+                            Label("Learn this topic: \(lesson.title)", systemImage: "book.pages")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color(hex: 0x2F55B5))
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background(Palette.paper, in: Capsule())
+                        }
+                        .keyboardShortcut("l", modifiers: [])
+                    }
                     controls(card)
                     if sizeClass == .regular { Spacer(minLength: 0) }
                 } else {
@@ -442,6 +475,9 @@ struct StudyView: View {
             .frame(maxWidth: .infinity)
         }
         .onAppear(perform: advance)
+        .fullScreenCover(item: $openLesson) { lesson in
+            LessonView(lesson: lesson, deckTitle: library.deck(lesson.deckId)?.title ?? "")
+        }
         // If the card on screen was reviewed or edited elsewhere, keep up.
         .onChange(of: library.downloaded) { _ in
             guard let current = card else { return advance() }

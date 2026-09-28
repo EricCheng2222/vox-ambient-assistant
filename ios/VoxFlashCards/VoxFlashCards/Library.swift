@@ -33,6 +33,8 @@ struct Card: Codable, Identifiable, Hashable {
     var lastReviewedAt: Date?
     /// When the card was last shown and graded or skipped.
     var seenAt: Date?
+    /// The lesson that teaches this card's topic (iPad).
+    var lessonId: String?
 }
 
 enum Rating: String, Codable, CaseIterable, Identifiable {
@@ -99,7 +101,7 @@ enum Scheduler {
 }
 
 private struct DecksResponse: Decodable { let decks: [Deck] }
-private struct DeckResponse: Decodable { let deck: Deck; let cards: [Card] }
+private struct DeckResponse: Decodable { let deck: Deck; let cards: [Card]; let lessons: [Lesson]? }
 private struct ChangesResponse: Decodable { let now: Date; let cards: [Card]; let decks: [Deck] }
 private struct MeResponse: Decodable { struct User: Decodable { let name: String }; let user: User }
 private struct ReviewsResponse: Decodable {
@@ -123,6 +125,7 @@ struct DownloadedDeck: Codable, Hashable {
     var deck: Deck
     var cards: [Card]
     var downloadedAt: Date
+    var lessons: [Lesson]? = nil
 }
 
 enum SyncState: Equatable {
@@ -261,6 +264,12 @@ final class Library: ObservableObject {
             .min()
     }
 
+    /// The lesson that teaches a card, if its deck has one downloaded.
+    func lesson(for card: Card) -> Lesson? {
+        guard let id = card.lessonId else { return nil }
+        return downloaded[card.deckId]?.lessons?.first { $0.id == id }
+    }
+
     func deck(_ id: String) -> Deck? {
         downloaded[id]?.deck ?? remoteDecks.first { $0.id == id }
     }
@@ -297,7 +306,7 @@ final class Library: ObservableObject {
         do {
             try await pushPending()
             let response: DeckResponse = try await api.get("api/app/deck", query: ["id": deck.id])
-            downloaded[deck.id] = DownloadedDeck(deck: response.deck, cards: response.cards, downloadedAt: Date())
+            downloaded[deck.id] = DownloadedDeck(deck: response.deck, cards: response.cards, downloadedAt: Date(), lessons: response.lessons)
             save()
             syncState = .idle
         } catch {
@@ -339,7 +348,7 @@ final class Library: ObservableObject {
                     if let local = localNewer[remote.id], pending.contains(where: { $0.cardId == remote.id }) { return local }
                     return remote
                 }
-                downloaded[id] = DownloadedDeck(deck: response.deck, cards: cards, downloadedAt: Date())
+                downloaded[id] = DownloadedDeck(deck: response.deck, cards: cards, downloadedAt: Date(), lessons: response.lessons)
             }
             lastSync = Date()
             changesSince = syncStarted

@@ -12,6 +12,7 @@
 		B10000000000000000000003 /* Library.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* Library.swift */; };
 		B10000000000000000000004 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* Views.swift */; };
 		B10000000000000000000005 /* Stats.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000005 /* Stats.swift */; };
+		B10000000000000000000006 /* Lessons.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000006 /* Lessons.swift */; };
 		B10000000000000000000010 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000010 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -21,6 +22,7 @@
 		B20000000000000000000003 /* Library.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Library.swift; sourceTree = "<group>"; };
 		B20000000000000000000004 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
 		B20000000000000000000005 /* Stats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Stats.swift; sourceTree = "<group>"; };
+		B20000000000000000000006 /* Lessons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lessons.swift; sourceTree = "<group>"; };
 		B20000000000000000000010 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B20000000000000000000011 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B20000000000000000000012 /* VoxFlashCards.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoxFlashCards.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -53,6 +55,7 @@
 				B20000000000000000000003 /* Library.swift */,
 				B20000000000000000000004 /* Views.swift */,
 				B20000000000000000000005 /* Stats.swift */,
+				B20000000000000000000006 /* Lessons.swift */,
 				B20000000000000000000010 /* Assets.xcassets */,
 				B20000000000000000000011 /* Info.plist */,
 			);
@@ -141,6 +144,7 @@
 				B10000000000000000000003 /* Library.swift in Sources */,
 				B10000000000000000000004 /* Views.swift in Sources */,
 				B10000000000000000000005 /* Stats.swift in Sources */,
+				B10000000000000000000006 /* Lessons.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
