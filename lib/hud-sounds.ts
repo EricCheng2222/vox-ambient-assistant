@@ -34,7 +34,15 @@ function audioContext() {
   return context;
 }
 
+let cueVolume = 1;
+
+/** Scales the interface sounds with the user's Vox volume (0–1). */
+export function setHudVolume(volume: number) {
+  cueVolume = Math.min(1, Math.max(0, volume));
+}
+
 export function playHudCue(cue: HudCue) {
+  if (cueVolume <= 0.01) return;
   try {
     const ctx = audioContext();
     if (!ctx) return;
@@ -57,7 +65,7 @@ export function playHudCue(cue: HudCue) {
         oscillator.frequency.exponentialRampToValueAtTime(tone.endFrequency, end);
       }
       envelope.gain.setValueAtTime(0.0001, begin);
-      envelope.gain.exponentialRampToValueAtTime(tone.gain, begin + 0.012);
+      envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, tone.gain * cueVolume), begin + 0.012);
       envelope.gain.exponentialRampToValueAtTime(0.0001, end);
       oscillator.connect(envelope).connect(filter);
       oscillator.start(begin);

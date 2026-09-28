@@ -69,6 +69,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import {
   Sheet,
   SheetContent,
@@ -167,7 +168,7 @@ import {
   visualThemeOptions,
   type VisualTheme,
 } from "@/lib/visual-theme";
-import { playHudCue, type HudCue } from "@/lib/hud-sounds";
+import { playHudCue, type HudCue, setHudVolume } from "@/lib/hud-sounds";
 import { FlashcardsConnection, openFlashcardsConnection } from "@/components/flashcards-connection";
 import { VoiceFilterSettings } from "@/components/voice-filter-settings";
 import { WelcomeHomePhoneToggle } from "@/components/welcome-home";
@@ -1207,6 +1208,10 @@ export default function Home() {
   const [placeSaving, setPlaceSaving] = useState(false);
   const [mapPickerAvailable, setMapPickerAvailable] = useState(false);
   const [micModeAvailable, setMicModeAvailable] = useState(false);
+  // Vox's speaking volume, per device. iOS ignores page-set volume, so the
+  // control only appears where it works (there the volume buttons apply).
+  const [voxVolume, setVoxVolume] = useState(100);
+  const [volumeAdjustable, setVolumeAdjustable] = useState(false);
   const voiceFilterRef = useRef<FilteredMicrophone | null>(null);
   const [phoneAssistantCallbackNumber, setPhoneAssistantCallbackNumber] = useState("");
   const [phoneAssistantPassphrase, setPhoneAssistantPassphrase] = useState("");
@@ -1481,6 +1486,28 @@ export default function Home() {
     // syncLocationReminders reads the latest reminders through a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reminders, remindersError, remindersLoading]);
+
+  useEffect(() => {
+    let saved = 100;
+    try {
+      const stored = Number(window.localStorage.getItem("vox.volume"));
+      if (Number.isFinite(stored) && stored >= 0 && stored <= 100 && window.localStorage.getItem("vox.volume") !== null) saved = stored;
+    } catch {
+      // Storage can be unavailable; full volume it is.
+    }
+    const probe = document.createElement("audio");
+    probe.volume = 0.5;
+    const adjustable = Math.abs(probe.volume - 0.5) < 0.01;
+    queueMicrotask(() => {
+      setVolumeAdjustable(adjustable);
+      if (adjustable) setVoxVolume(saved);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = voxVolume / 100;
+    setHudVolume(voxVolume / 100);
+  }, [voxVolume]);
 
   useEffect(() => {
     // Only the iPhone app can open iOS's Mic Mode picker (Voice Isolation).
@@ -7495,6 +7522,32 @@ export default function Home() {
                   </SelectContent>
                 </Select>
               </div>
+              {volumeAdjustable && (
+                <div className="control-module flex min-h-11 items-center justify-between gap-3 sm:min-h-0 sm:justify-start">
+                  <label id="vox-volume-label" className="whitespace-nowrap">
+                    Volume
+                  </label>
+                  <div className="flex w-[132px] items-center gap-2.5 sm:w-[140px]">
+                    <Slider
+                      value={[voxVolume]}
+                      min={0}
+                      max={100}
+                      step={5}
+                      aria-labelledby="vox-volume-label"
+                      onValueChange={([value]) => {
+                        setVoxVolume(value);
+                        try {
+                          window.localStorage.setItem("vox.volume", String(value));
+                        } catch {
+                          // Not saved; it still applies now.
+                        }
+                      }}
+                      className="flex-1"
+                    />
+                    <span className="w-8 text-right tabular-nums text-white/50">{voxVolume}%</span>
+                  </div>
+                </div>
+              )}
               <span className="control-save text-[11px] text-white/28 sm:basis-full sm:text-right">
                 {connectionMode === "personal"
                   ? "DEVICE SETTING · SAVED ONLY ON THIS COMPUTER"
