@@ -1525,7 +1525,10 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
   letter-spacing: 0.18em;
 }
 .vox-view-empty { color: var(--muted-foreground); font-size: 0.95rem; line-height: 1.6; }
-.settings-groups { display: grid; gap: 1.75rem; }
+/* minmax(0, …) and min-width: 0 let long rows shrink and truncate instead of
+   pushing the lists past the edge of a phone screen. */
+.settings-groups { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.75rem; }
+.settings-groups > *, .settings-group, .settings-group-rows { min-width: 0; }
 @media (min-width: 1100px) { .settings-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }
 .settings-group-title {
   margin: 0 0 0.6rem 0.25rem;
@@ -1794,4 +1797,39 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
 @media (max-width: 420px) {
   .vox-share-card { flex-wrap: wrap; }
   .vox-share-button { width: 100%; }
+}
+
+/* Phones. */
+@media (max-width: 639px) {
+  /* The Today page is already inset by its view; don't inset it twice. */
+  .vox-today-view .vx-today[data-variant="full"] { padding-left: 0; padding-right: 0; }
+  /* An empty "camera off" box isn't worth a third of a phone screen; it
+     appears once the camera is on. */
+  .camera-block[data-active="false"] { display: none; }
+  .vox-settings-view .control-module { gap: 0.75rem; }
+  .vox-settings-view .control-module [data-slot="select-trigger"] { max-width: 60%; }
+}
+/* In Settings, the voice controls are a list (name left, control right), not
+   the old four-across strip that sat under the reactor. */
+.vox-shell .vox-settings-view .control-deck .control-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.vox-shell .vox-settings-view .control-deck .control-module {
+  display: flex;
+  min-height: 3.25rem;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0;
+  border-left: 0;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 40%, transparent);
+}
+.vox-shell .vox-settings-view .control-deck .control-module:last-of-type { border-bottom: 0; }
+.vox-shell .vox-settings-view .control-deck .control-module label { font-size: 0.85rem; letter-spacing: normal; text-transform: none; font-family: inherit; color: var(--foreground); }
+.vox-shell .vox-settings-view .control-deck .control-module [data-slot="select-trigger"] { width: min(11rem, 55vw); max-width: none; }
+.vox-shell[data-vox-theme="holographic"] .vox-settings-view .control-deck .control-module label {
+  color: #b9dfe6;
 }

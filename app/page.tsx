@@ -7131,7 +7131,7 @@ export default function Home() {
 
             <Waveform live={connected && !muted} analyserRef={inputAnalyserRef} />
 
-            <div className="mt-5 flex min-h-[5.75rem] flex-col items-center justify-center">
+            <div className="camera-block mt-5 flex min-h-[5.75rem] flex-col items-center justify-center" data-active={cameraActive || cameraStarting ? "true" : "false"}>
               <div
                 className="camera-preview relative aspect-video w-40 overflow-hidden rounded-2xl border border-white/12 bg-black/25 shadow-[0_12px_38px_rgba(0,0,0,0.22)]"
                 role="img"
