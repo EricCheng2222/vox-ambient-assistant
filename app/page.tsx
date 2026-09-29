@@ -3166,8 +3166,7 @@ export default function Home() {
         const devices = await fetchDeviceLocations().catch(() => null);
         output = deviceLocationsToolOutput(devices);
         const points = devices ? devicePoints(devices) : [];
-        // The map is for the web and the Mac, not the iPhone app.
-        if (points.length && !isIPhoneApp()) {
+        if (points.length) {
           showStage({
             id: crypto.randomUUID(),
             title: "Where your devices are",
@@ -7496,10 +7495,10 @@ export default function Home() {
       </section>
 
       <section className="vox-view vox-today-view relative z-10" hidden={view !== "today"} aria-label="Today">
-        {view === "today" && todayAvailable && !iphoneApp && (
+        {todayAvailable && iphoneApp && <ShareLocationCard />}
+        {view === "today" && todayAvailable && (
           <DeviceLocationsCard theme={theme === "holographic" ? "dark" : "light"} />
         )}
-        {todayAvailable && iphoneApp && <ShareLocationCard />}
         <TodayPanel variant="full" {...todayProps} />
       </section>
 

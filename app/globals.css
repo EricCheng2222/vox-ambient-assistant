@@ -1739,7 +1739,7 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
   font-size: 0.85rem;
 }
 
-/* Device map (Leaflet), web and Mac only. */
+/* Device map (Leaflet). */
 .vox-map { position: relative; z-index: 0; width: 100%; height: 22rem; overflow: hidden; border: 1px solid rgb(120 235 255 / 18%); border-radius: calc(var(--radius) + 2px); background: #0b1620; }
 .vx-block-map .vox-map { height: 18rem; }
 .vox-map .leaflet-control-attribution { background: rgb(2 10 18 / 72%); color: #83aab5; font-size: 10px; }
@@ -1801,8 +1801,6 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
 
 /* Phones. */
 @media (max-width: 639px) {
-  /* The Today page is already inset by its view; don't inset it twice. */
-  .vox-today-view .vx-today[data-variant="full"] { padding-left: 0; padding-right: 0; }
   /* An empty "camera off" box isn't worth a third of a phone screen; it
      appears once the camera is on. */
   .camera-block[data-active="false"] { display: none; }
@@ -1833,3 +1831,10 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
 .vox-shell[data-vox-theme="holographic"] .vox-settings-view .control-deck .control-module label {
   color: #b9dfe6;
 }
+
+/* The Today page is already inset by its view; don't inset it twice. */
+.vox-today-view .vx-today[data-variant="full"] { padding-left: 0; padding-right: 0; }
+/* At every width: the old strip's utility classes centre and shrink these. */
+.vox-shell .vox-settings-view .control-deck { flex-direction: column; align-items: stretch; }
+.vox-shell .vox-settings-view .control-deck .control-grid { width: 100%; align-items: stretch; justify-content: flex-start; }
+.vox-shell .vox-settings-view .control-deck .control-module { width: 100%; }

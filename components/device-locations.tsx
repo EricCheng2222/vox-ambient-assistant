@@ -58,7 +58,7 @@ export function nativeLocationSharing(): NativeSharing | null {
   return (window as { voxNativeIOS?: { locationSharing?: NativeSharing } }).voxNativeIOS?.locationSharing ?? null;
 }
 
-/** Inside the iPhone app the map isn't shown; it's for the web and the Mac. */
+/** Running inside the Vox iPhone/iPad app (which can share this device's location). */
 export function isIPhoneApp() {
   return typeof window !== "undefined" && Boolean((window as { voxNativeIOS?: unknown }).voxNativeIOS);
 }
@@ -85,7 +85,7 @@ export function devicePoints(devices: LocationDevice[], now = Date.now()): MapPo
   );
 }
 
-/** Today: where each device last was (web and Mac only). */
+/** Today: where each device last was. */
 export function DeviceLocationsCard({ theme }: { theme: "dark" | "light" }) {
   const [devices, setDevices] = useState<LocationDevice[] | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -205,7 +205,7 @@ export function LocationSharingSettings() {
           </div>
           <SheetDescription className="mt-2 leading-6 text-white/55">
             Devices you turn this on for report where they are, so Vox can tell you where your phone last was and
-            show it on the map in Vox on the web and on your Mac. Positions are encrypted, and only the most recent
+            show it on the map in Vox on any of your devices. Positions are encrypted, and only the most recent
             ones are kept.
           </SheetDescription>
         </SheetHeader>
@@ -310,7 +310,7 @@ export function ShareLocationCard() {
         <div>
           <p className="vox-share-title">Sharing this {/iPad/i.test(navigator.userAgent) ? "iPad" : "iPhone"}’s location</p>
           <p className="vox-share-detail">
-            {status.lastPingAt ? `Last sent ${ageLabel(status.lastPingAt)}. ` : ""}Vox on the web and your Mac can see where it is.
+            {status.lastPingAt ? `Last sent ${ageLabel(status.lastPingAt)}. ` : ""}It’s on the map in Today.
           </p>
         </div>
         <button
@@ -362,7 +362,7 @@ export function ShareLocationCard() {
     ? "Location is off for Vox. Turn it on in Settings → Vox → Location, choosing “Always”."
     : status.enabled
       ? "It only updates while Vox is open. Choose “Always” so Vox knows where your phone is even when it’s closed."
-      : "Let Vox on the web and your Mac see where this phone is, so you can ask “where’s my phone?”.";
+      : "Put this device on your map in Vox, so you can ask “where’s my phone?” from any device.";
   return (
     <section className="vox-share-card" data-state={denied ? "denied" : status.enabled ? "partial" : "off"}>
       <MapPin aria-hidden="true" />

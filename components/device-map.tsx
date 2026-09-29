@@ -95,6 +95,16 @@ export function DeviceMap({
     };
   }, [pointsKey, theme]);
 
+  // Re-measure whenever the box changes size (layout settling, rotation, a
+  // panel opening); otherwise only part of the map draws.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => mapRef.current?.invalidateSize());
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(
     () => () => {
       mapRef.current?.remove();

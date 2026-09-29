@@ -52,9 +52,9 @@ assert.equal(devices.match(/if \(!sameOrigin\(request\)\)/gu).length, 2);
 // Tokens are stored hashed, positions encrypted and bound to their device.
 assert.match(store, /tokenHash: await sha256\(token\)/u);
 assert.match(store, /additionalData: new TextEncoder\(\)\.encode\(deviceId\)/u);
-// The map shows on the web and the Mac, not in the iPhone app.
-assert.match(page, /view === "today" && todayAvailable && !iphoneApp/u);
-assert.match(page, /if \(points\.length && !isIPhoneApp\(\)\)/u);
+// The map shows everywhere: web, Mac, iPhone, and iPad.
+assert.match(page, /\{view === "today" && todayAvailable && \(\n\s+<DeviceLocationsCard/u);
+assert.doesNotMatch(page, /!isIPhoneApp\(\)/u);
 assert.match(csp, /"img-src 'self' data: blob: https:"/u);
 assert.match(proxy, /\["\/api\/locations", new Set\(\["GET"\]\)\]/u);
 console.log("Device location checks passed.");

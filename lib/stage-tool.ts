@@ -189,5 +189,5 @@ export function deviceLocationsToolOutput(devices: DeviceSummary[] | null, now =
         device.last.battery !== null ? `battery ${Math.round(device.last.battery * 100)}%` : "",
       ].filter(Boolean).join(", ") + ".";
     })
-    .join("\n") + "\nThe map is on the user's screen if they're on the web or the Mac.";
+    .join("\n") + "\nThe map is on the user's screen.";
 }
