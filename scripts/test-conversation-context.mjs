@@ -43,4 +43,34 @@ assert.match(page, /realtimeTruncationConfig/u);
 assert.match(cloudRoute, /remembered_context/u);
 assert.match(cloudRoute, /memory_timing/u);
 
+
+// Every background path carries the recent conversation.
+const { parseRecentMessages, earlierMessages, formatTaskContext } = await import(
+  "../lib/conversation-context.ts"
+);
+assert.deepEqual(parseRecentMessages("nope"), []);
+assert.deepEqual(
+  parseRecentMessages([{ role: "system", text: "x" }, { role: "user", text: "hi" }, { role: "assistant", text: 3 }]),
+  [{ role: "user", text: "hi" }],
+);
+const dialogue = [
+  { role: "user", text: "Tell me about the Krebs cycle." },
+  { role: "assistant", text: "It oxidizes acetyl-CoA in the mitochondria." },
+  { role: "user", text: "Now compare it" },
+  { role: "user", text: "with glycolysis in detail." },
+];
+assert.deepEqual(
+  earlierMessages(dialogue, "Now compare it with glycolysis in detail."),
+  dialogue.slice(0, 2),
+);
+const taskContext = formatTaskContext(dialogue, "Now compare it with glycolysis in detail.");
+assert.match(taskContext, /USER: Tell me about the Krebs cycle\./u);
+assert.match(taskContext, /VOX: It oxidizes acetyl-CoA/u);
+assert.doesNotMatch(taskContext, /with glycolysis in detail/u);
+assert.equal(formatTaskContext([{ role: "user", text: "hello" }], "hello"), "");
+
+for (const route of ["reason", "files", "reminders"]) {
+  const source = await readFile(new URL(`../app/api/${route}/route.ts`, import.meta.url), "utf8");
+  assert.match(source, /formatTaskContext|recentMessages/u, `${route} carries the conversation`);
+}
 console.log("Bounded always-on conversation context checks passed.");

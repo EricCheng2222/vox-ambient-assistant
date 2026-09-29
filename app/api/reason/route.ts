@@ -1,4 +1,5 @@
 import { requireUser } from "@/lib/auth";
+import { earlierMessages, parseRecentMessages } from "@/lib/conversation-context";
 import { formatMemoryContext } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
 import {
@@ -24,6 +25,8 @@ import {
   parseMemoryUse,
   ritualInstruction,
 } from "@/lib/social-policy";
+import type { StageContent } from "@/lib/stage";
+import { collectSources, type ResponsesPayload } from "@/lib/stage-answer";
 
 type ReasonRoute = "balanced_reasoning" | "expert_reasoning" | "live_web";
 
@@ -38,6 +41,22 @@ function readOutputText(payload: {
     .map((item) => item.text ?? "")
     .join("\n")
     .trim();
+}
+
+/**
+ * The stage for a web answer: the pages it cited. The facts pulled out of the
+ * answer come separately from /api/stage/facts, so speech never waits on them.
+ */
+function webStage(question: string, payload: ResponsesPayload): StageContent | null {
+  const sources = collectSources(payload);
+  if (!sources.length) return null;
+  return {
+    id: crypto.randomUUID(),
+    title: question.replace(/\s+/g, " ").trim().slice(0, 120),
+    sources,
+    blocks: [],
+    createdAt: Date.now(),
+  };
 }
 
 export async function POST(request: Request) {
@@ -57,6 +76,7 @@ export async function POST(request: Request) {
     responsePosture?: unknown;
     memoryUse?: unknown;
     ritual?: unknown;
+    recentMessages?: unknown;
   };
   const text = body.text?.trim().slice(0, 12000) ?? "";
   const route = body.route;
@@ -79,9 +99,18 @@ export async function POST(request: Request) {
   });
   const memoryContext = remembered.length ? `\n\n${formatMemoryContext(remembered)}` : "";
   const timeContext = `\n\n${getCurrentTimeContext()}`;
+  const recentMessages = parseRecentMessages(body.recentMessages);
   const languageInstruction = responseLanguageInstruction(
-    selectResponseLanguage(text),
+    selectResponseLanguage(text, recentMessages),
   );
+  // The model sees the conversation so far as real turns, then the request.
+  const input = [
+    ...earlierMessages(recentMessages, text).map((message) => ({
+      role: message.role,
+      content: message.text,
+    })),
+    { role: "user" as const, content: text },
+  ];
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -91,9 +120,9 @@ export async function POST(request: Request) {
     },
     body: JSON.stringify({
       model,
-      input: text,
+      input,
       instructions:
-        "Prepare an accurate answer for a voice assistant to speak aloud. Use plain language, spoken-friendly sentences, and no markdown. Do not mention model routing.\n\n" +
+        "Prepare an accurate answer for a voice assistant to speak aloud. Answer the latest user message as the next turn of the conversation you are given: resolve references to earlier turns and do not repeat what was already said. Use plain language, spoken-friendly sentences, and no markdown. Do not mention model routing.\n\n" +
         languageInstruction +
         timeContext +
         memoryContext +
@@ -126,5 +155,9 @@ export async function POST(request: Request) {
   }
 
   const answer = readOutputText(payload);
-  return Response.json({ answer, model }, { headers: { "Cache-Control": "no-store" } });
+  if (!isWeb) {
+    return Response.json({ answer, model }, { headers: { "Cache-Control": "no-store" } });
+  }
+  const stage = webStage(text, payload as ResponsesPayload);
+  return Response.json({ answer, model, stage }, { headers: { "Cache-Control": "no-store" } });
 }

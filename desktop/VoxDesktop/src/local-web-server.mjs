@@ -23,10 +23,12 @@ const cloudApiMethods = new Map([
   ["/api/device-pairing", new Set(["GET", "POST", "DELETE"])],
   ["/api/files", new Set(["GET", "POST", "DELETE"])],
   ["/api/connections/flashcards", new Set(["GET", "POST", "DELETE"])],
+  ["/api/connections/mail", new Set(["GET", "POST", "DELETE"])],
   ["/api/flashcards/study-token", new Set(["POST"])],
   ["/api/invites", new Set(["GET", "POST"])],
   ["/api/jev-presence", new Set(["POST"])],
   ["/api/jev-route", new Set(["POST"])],
+  ["/api/mail/token", new Set(["POST"])],
   ["/api/memories", new Set(["GET", "POST", "PATCH", "DELETE"])],
   ["/api/phone-assistant", new Set(["GET", "POST", "PATCH", "DELETE"])],
   ["/api/preferences", new Set(["GET", "PATCH"])],
@@ -34,6 +36,10 @@ const cloudApiMethods = new Map([
   ["/api/reason", new Set(["POST"])],
   ["/api/reminders", new Set(["GET", "POST", "PATCH", "DELETE"])],
   ["/api/reminders/due", new Set(["POST"])],
+  ["/api/speech", new Set(["POST"])],
+  ["/api/stage/facts", new Set(["POST"])],
+  ["/api/stage/page", new Set(["GET"])],
+  ["/api/today", new Set(["GET"])],
 ]);
 
 const strippedRequestHeaders = new Set([

@@ -34,7 +34,6 @@ import {
   Link2,
   ShieldCheck,
   Smartphone,
-  Sparkles,
   SwitchCamera,
   Table2,
   Trash2,
@@ -133,8 +132,10 @@ import { API_BUDGET_MESSAGE } from "@/lib/provider-error";
 import {
   boundedRecentMessages,
   formatConversationCarryover,
+  formatTaskContext,
   realtimeTruncationConfig,
 } from "@/lib/conversation-context";
+import { speakAnswer, unlockAnswerSpeech, type AnswerSpeech } from "@/lib/answer-speech";
 import {
   responseLanguageInstruction,
   selectResponseLanguage,
@@ -170,6 +171,25 @@ import {
 } from "@/lib/visual-theme";
 import { playHudCue, type HudCue, setHudVolume } from "@/lib/hud-sounds";
 import { FlashcardsConnection, openFlashcardsConnection } from "@/components/flashcards-connection";
+import { MailConnection } from "@/components/mail-connection";
+import { SettingsGroup, SettingsRow } from "@/components/settings-row";
+import { AppRail, type VoxView } from "@/components/app-rail";
+import { StageView } from "@/components/stage-view";
+import { TodayPanel } from "@/components/today-panel";
+import {
+  STAGE_TOOL,
+  STAGE_VOICE_INSTRUCTIONS,
+  stageFromToolArguments,
+} from "@/lib/stage-tool";
+import type { StageContent, StagePage } from "@/lib/stage";
+import type { TodayBriefing } from "@/lib/today";
+import {
+  MAIL_CONFIRMED_TOOLS,
+  MAIL_UNCONFIRMED_TOOLS,
+  MAIL_VOICE_INSTRUCTIONS,
+  classifyMailApproval,
+  describeMailApproval,
+} from "@/lib/mail-approval";
 import { VoiceFilterSettings } from "@/components/voice-filter-settings";
 import { detectWebsiteRequest, isOpenableWebsite, type WebsiteRequest } from "@/lib/website-route";
 import { WelcomeHomePhoneToggle } from "@/components/welcome-home";
@@ -359,6 +379,7 @@ const MIN_VOICE_CONSOLE_WIDTH = 520;
 const PANEL_DIVIDER_WIDTH = 10;
 const CONVERSATION_WIDTH_STORAGE_KEY = "vox-conversation-panel-width";
 const PERSONAL_CONVERSATION_STORAGE_KEY = "vox.personal.conversation";
+const SIDE_PANEL_STORAGE_KEY = "vox.sidePanel";
 const PERSONAL_PREFERENCES_STORAGE_KEY = "vox.personal.preferences";
 const REMOTE_MAC_PAIRING_STORAGE_KEY = "vox.remoteMac.pairing.v1";
 const WEB_ACTION_ROUTING_STORAGE_KEY = "vox.webActionRouting.v1";
@@ -399,7 +420,7 @@ type RealtimeEvent = {
   response?: {
     id?: string;
     metadata?: Record<string, string>;
-    output?: Array<{ id?: string; type?: string; name?: string }>;
+    output?: Array<{ id?: string; type?: string; name?: string; arguments?: string; server_label?: string; call_id?: string }>;
   };
 };
 
@@ -1184,6 +1205,20 @@ export default function Home() {
   const reminderBusyRef = useRef(new Set<string>());
   const macTasksRef = useRef(new Map<string, MacTask>());
   const [macTasks, setMacTasks] = useState<MacTask[]>([]);
+  // The redesign: four places (Talk, Today, Library, Settings), the Today
+  // briefing, and the stage where Vox shows what it's explaining.
+  const [view, setView] = useState<VoxView>("talk");
+  const [today, setToday] = useState<TodayBriefing | null>(null);
+  const [todayLoading, setTodayLoading] = useState(false);
+  const [stage, setStage] = useState<StageContent | null>(null);
+  const [stageSourceIndex, setStageSourceIndex] = useState(0);
+  const [stagePage, setStagePage] = useState<StagePage | null>(null);
+  const [stagePageLoading, setStagePageLoading] = useState(false);
+  const [mailApproval, setMailApproval] = useState<{ id: string; title: string; detail: string } | null>(null);
+  const [clock, setClock] = useState(() => Date.now());
+  // The right-hand panel in Talk shows the conversation or Today.
+  const [sidePanel, setSidePanel] = useState<"conversation" | "today">("conversation");
+  const [conversationSeen, setConversationSeen] = useState(0);
   const macTaskReportsRef = useRef<MacTaskReport[]>([]);
   const remoteResultPollsRef = useRef(new Set<string>());
   const flushMacTaskReportsRef = useRef<() => void>(() => undefined);
@@ -1308,6 +1343,16 @@ export default function Home() {
   const routeTurnRef = useRef(0);
   const activeRouteTurnRef = useRef<number | null>(null);
   const activeResponseIdRef = useRef<string | null>(null);
+  // A long answer from the reasoning models, spoken with text-to-speech.
+  const answerSpeechRef = useRef<AnswerSpeech | null>(null);
+  // The user's email (Vox Mail MCP) and the flash cards while studying, as
+  // tools of the live session.
+  const mailToolRef = useRef<Record<string, unknown> | null>(null);
+  const flashcardsToolRef = useRef<Record<string, unknown> | null>(null);
+  const pendingMailApprovalRef = useRef<{ id: string; requestedAt: number } | null>(null);
+  const mailAwaitingCallsRef = useRef<string[] | null>(null);
+  const mailContinuationsRef = useRef(0);
+  const sessionVoiceRef = useRef<RealtimeVoice>("marin");
   const frontVoiceWaitersRef = useRef(new Map<string, () => void>());
   const conversationItemsRef = useRef<Array<{ id: string; role: string }>>([]);
   const processedUtterancesRef = useRef(new Map<string, number>());
@@ -1513,6 +1558,7 @@ export default function Home() {
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = voxVolume / 100;
+    answerSpeechRef.current?.setVolume(voxVolume / 100);
     setHudVolume(voxVolume / 100);
   }, [voxVolume]);
 
@@ -1796,6 +1842,68 @@ export default function Home() {
     // The interval is intentionally recreated only when connection or initiative state changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, initiative, connectionMode]);
+
+  useEffect(() => {
+    if (authState !== "authenticated" || connectionMode !== "cloud") return;
+    // Today's email and flash cards: on sign-in, then every five minutes and
+    // whenever Vox comes back to the front.
+    const refresh = () => {
+      if (document.visibilityState === "visible") void loadToday();
+    };
+    queueMicrotask(refresh);
+    window.addEventListener("focus", refresh);
+    const timer = window.setInterval(refresh, 5 * 60_000);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.clearInterval(timer);
+    };
+    // loadToday reads current state; the schedule follows sign-in only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authState, connectionMode]);
+
+  useEffect(() => {
+    if (view === "today") queueMicrotask(() => void loadToday());
+    // Opening Today refreshes it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  useEffect(() => {
+    // The stage's reader view of the source being shown.
+    const source = stage?.sources[stageSourceIndex];
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setStagePage(null);
+      setStagePageLoading(Boolean(source));
+    });
+    if (!source) return () => { cancelled = true; };
+    fetch(`/api/stage/page?url=${encodeURIComponent(source.url)}`, { cache: "no-store" })
+      .then((response) => (response.ok ? (response.json() as Promise<StagePage>) : null))
+      .catch(() => null)
+      .then((page) => {
+        if (cancelled) return;
+        setStagePage(page);
+        setStagePageLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [stage, stageSourceIndex]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let saved: string | null = null;
+    try {
+      saved = window.localStorage.getItem(SIDE_PANEL_STORAGE_KEY);
+    } catch {
+      // Private windows may refuse storage; the conversation shows.
+    }
+    if (saved === "today") queueMicrotask(() => setSidePanel("today"));
+  }, []);
 
   useEffect(() => {
     return () => disconnect(false);
@@ -2505,6 +2613,8 @@ export default function Home() {
       buildVoiceInstructions(memoriesRef.current, themeRef.current),
       macTaskInstruction(),
       studyModeRef.current ? STUDY_PERSONA_INSTRUCTIONS : "",
+      mailToolRef.current ? MAIL_VOICE_INSTRUCTIONS : "",
+      STAGE_VOICE_INSTRUCTIONS,
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -2660,15 +2770,13 @@ export default function Home() {
           type: "session.update",
           session: {
             type: "realtime",
-            tools: [
-              {
-                type: "mcp",
-                server_label: "flashcards",
-                server_url: access.serverUrl,
-                authorization: access.token,
-                require_approval: "never",
-              },
-            ],
+            tools: sessionTools({
+              type: "mcp",
+              server_label: "flashcards",
+              server_url: access.serverUrl,
+              authorization: access.token,
+              require_approval: "never",
+            }),
           },
         }),
       );
@@ -2775,10 +2883,204 @@ export default function Home() {
     );
   }
 
+  /** The live session's tools; `flashcards` replaces the study tool (null removes it). */
+  function sessionTools(flashcards?: Record<string, unknown> | null) {
+    if (flashcards !== undefined) flashcardsToolRef.current = flashcards;
+    return [STAGE_TOOL, mailToolRef.current, flashcardsToolRef.current].filter(Boolean);
+  }
+
+  /** Gives the live session the user's email, when they have connected it. */
+  async function attachMailTools(channel: RTCDataChannel) {
+    try {
+      const response = await fetch("/api/mail/token", { method: "POST" });
+      if (!response.ok) return;
+      const access = (await response.json()) as { token?: string; serverUrl?: string };
+      if (!access.token || !access.serverUrl) return;
+      if (channelRef.current !== channel || channel.readyState !== "open") return;
+      mailToolRef.current = {
+        type: "mcp",
+        server_label: "email",
+        server_url: access.serverUrl,
+        authorization: access.token,
+        // Sending and trashing wait for the user's spoken yes.
+        require_approval: {
+          always: { tool_names: [...MAIL_CONFIRMED_TOOLS] },
+          never: { tool_names: [...MAIL_UNCONFIRMED_TOOLS] },
+        },
+      };
+      channel.send(JSON.stringify({ type: "session.update", session: { type: "realtime", tools: sessionTools() } }));
+      refreshRealtimeContext();
+    } catch {
+      // Email stays unavailable for this conversation.
+    }
+  }
+
+  /** After email tools run, the live model continues with their results. */
+  function continueAfterMailTools() {
+    const ids = mailAwaitingCallsRef.current;
+    if (!ids || !ids.every((id) => completedMcpCallsRef.current.has(id))) return;
+    mailAwaitingCallsRef.current = null;
+    const channel = channelRef.current;
+    if (channel?.readyState !== "open") return;
+    mailContinuationsRef.current += 1;
+    const more = mailContinuationsRef.current < 6;
+    channel.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          metadata: { vox_kind: "mail_continue" },
+          ...(more ? {} : { tool_choice: "none" }),
+          instructions: [
+            voiceInstructions(),
+            responseLanguageInstruction(selectResponseLanguage("", messagesRef.current)),
+            more
+              ? "The email tool results are now in the conversation. Continue the user's request: use another email tool only if it is still needed; otherwise answer briefly for listening. Don't repeat an action you already took."
+              : "The email tool results are now in the conversation. Answer the user now from what you have, briefly, for listening.",
+          ].join("\n\n"),
+        },
+      }),
+    );
+  }
+
+  /** Reads back a paused send or trash and waits for the user's answer. */
+  function requestMailApproval(item: { id?: string; name?: string; arguments?: string }) {
+    const channel = channelRef.current;
+    if (!item.id || channel?.readyState !== "open") return;
+    const zh = selectResponseLanguage("", messagesRef.current) === "taiwan_mandarin";
+    const prompt = describeMailApproval(item.name ?? "", item.arguments, zh ? "taiwan_mandarin" : "english");
+    if (!prompt) {
+      // Not an action Vox knows how to read back, so it is not approved.
+      resolveMailApproval(item.id, false);
+      return;
+    }
+    pendingMailApprovalRef.current = { id: item.id, requestedAt: Date.now() };
+    setMailApproval({
+      id: item.id,
+      title: item.name === "trash_email" ? (zh ? "移到垃圾桶" : "Move email to the trash") : zh ? "寄出這封信" : "Send this email",
+      detail: zh ? "說「好」確認，或說「不要」取消" : "Say yes to go ahead, or no to cancel",
+    });
+    try {
+      const args = JSON.parse(item.arguments ?? "{}") as { to?: unknown; subject?: unknown; body?: unknown; note?: unknown };
+      const text = typeof args.body === "string" ? args.body : typeof args.note === "string" ? args.note : "";
+      if (text) {
+        toast.info(zh ? "等你說「好」才會寄出" : "Waiting for your yes to send", {
+          description: [
+            args.to ? `${zh ? "收件人" : "To"}: ${Array.isArray(args.to) ? args.to.join(", ") : String(args.to)}` : "",
+            typeof args.subject === "string" ? `${zh ? "主旨" : "Subject"}: ${args.subject}` : "",
+            text,
+          ].filter(Boolean).join("\n"),
+          duration: 60_000,
+        });
+      }
+    } catch {
+      // The spoken read-back is enough.
+    }
+    channel.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          metadata: { vox_kind: "mail_confirmation" },
+          tool_choice: "none",
+          input: [],
+          instructions: `Read the following aloud exactly as written. Do not add, remove, or change anything.\n\n${speechText(prompt)}`,
+        },
+      }),
+    );
+  }
+
+  function resolveMailApproval(id: string, approve: boolean) {
+    setMailApproval((current) => (current?.id === id ? null : current));
+    const channel = channelRef.current;
+    if (channel?.readyState !== "open") return;
+    channel.send(
+      JSON.stringify({
+        type: "conversation.item.create",
+        item: { type: "mcp_approval_response", approval_request_id: id, approve },
+      }),
+    );
+    if (!approve) return;
+    mailContinuationsRef.current = 0;
+    channel.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          metadata: { vox_kind: "mail_continue" },
+          instructions: [
+            voiceInstructions(),
+            responseLanguageInstruction(selectResponseLanguage("", messagesRef.current)),
+            "The user said yes. Carry out the approved email action now, exactly as approved, then say briefly that it's done.",
+          ].join("\n\n"),
+        },
+      }),
+    );
+  }
+
+  function showSidePanel(panel: "conversation" | "today") {
+    if (panel === "today") {
+      setConversationSeen(messagesRef.current.length);
+      void loadToday();
+    }
+    setSidePanel(panel);
+    try {
+      window.localStorage.setItem(SIDE_PANEL_STORAGE_KEY, panel);
+    } catch {
+      // The choice lasts for this session only.
+    }
+  }
+
+  /** Puts what Vox is explaining on the stage (Talk view). */
+  function showStage(next: StageContent) {
+    setStage(next);
+    setStageSourceIndex(0);
+    setStagePage(null);
+    setView((current) => (current === "settings" || current === "library" ? current : "talk"));
+  }
+
+  /** The live model called show_on_stage: show it, then let it keep talking. */
+  function handleStageCalls(calls: Array<{ call_id?: string; arguments?: string }>, endedOnCall: boolean) {
+    const channel = channelRef.current;
+    for (const call of calls) {
+      const next = stageFromToolArguments(call.arguments);
+      if (next) showStage(next);
+      if (call.call_id && channel?.readyState === "open") {
+        channel.send(JSON.stringify({
+          type: "conversation.item.create",
+          item: { type: "function_call_output", call_id: call.call_id, output: next ? "It is on the screen now." : "Nothing was shown." },
+        }));
+      }
+    }
+    if (!endedOnCall || channel?.readyState !== "open") return;
+    channel.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        metadata: { vox_kind: "stage_continue" },
+        tool_choice: "none",
+        instructions: [
+          voiceInstructions(),
+          responseLanguageInstruction(selectResponseLanguage("", messagesRef.current)),
+          "The details are on the user's screen now. Continue your answer naturally, pointing to what's shown where it helps; don't read the whole screen aloud and don't repeat what you already said.",
+        ].join("\n\n"),
+      },
+    }));
+  }
+
+  async function loadToday() {
+    if (connectionMode !== "cloud" || authState !== "authenticated") return;
+    setTodayLoading(true);
+    try {
+      const response = await fetch("/api/today", { cache: "no-store" });
+      if (response.ok) setToday((await response.json()) as TodayBriefing);
+    } catch {
+      // Today keeps what it had.
+    } finally {
+      setTodayLoading(false);
+    }
+  }
+
   function detachStudyTools() {
     const channel = channelRef.current;
     if (channel?.readyState === "open" && !studyModeRef.current) {
-      channel.send(JSON.stringify({ type: "session.update", session: { type: "realtime", tools: [] } }));
+      channel.send(JSON.stringify({ type: "session.update", session: { type: "realtime", tools: sessionTools(null) } }));
       refreshRealtimeContext();
     }
   }
@@ -3550,7 +3852,7 @@ export default function Home() {
     const response = await fetch("/api/files", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, recentMessages: boundedRecentMessages(messagesRef.current) }),
     });
     const payload = (await response.json()) as {
       file?: AgentFile;
@@ -3783,7 +4085,7 @@ export default function Home() {
     const response = await fetch("/api/reminders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, recentMessages: boundedRecentMessages(messagesRef.current) }),
     });
     const payload = (await response.json()) as {
       reminder?: Reminder;
@@ -4338,6 +4640,10 @@ export default function Home() {
       messagesRef.current,
     );
     const turnLanguageInstruction = responseLanguageInstruction(turnLanguage);
+    // Every path, not only the live model, sees the conversation so far.
+    // Mac tasks accept 12,000 characters, so their context stays well below that.
+    const taskContext = formatTaskContext(boundedRecentMessages(messagesRef.current), completeText, 6_000);
+    const withTaskContext = (prompt: string) => (taskContext ? `${taskContext}\n\n${prompt}` : prompt);
 
     if (studyModeRef.current) {
       pendingUtteranceRef.current = null;
@@ -4388,7 +4694,7 @@ export default function Home() {
                 mode: "fast",
                 appId: "safari",
                 intent: "interact",
-                prompt: `${task} Only do this; nothing else. Current user request: ${completeText}`,
+                prompt: withTaskContext(`${task} Only do this; nothing else. Current user request: ${completeText}`),
               }),
             ),
         });
@@ -4439,7 +4745,10 @@ export default function Home() {
         response.instructions = exactText
           ? `Read the following answer aloud exactly as written. Do not add URLs, citations, or source labels. Do not add, remove, correct, qualify, or summarize anything.\n\n${speechText(instructions)}`
           : instructions;
-        if (exactText) response.input = [];
+        if (exactText) {
+          response.input = [];
+          response.tool_choice = "none";
+        }
       }
 
       const dispatch = (attempt = 0) => {
@@ -4463,6 +4772,91 @@ export default function Home() {
 
       dispatch();
       return true;
+    }
+
+    /**
+     * Speaks a reasoning model's answer with text-to-speech rather than having
+     * the live model read it aloud. The answer appears on screen right away,
+     * and the live conversation receives it (and where Vox was interrupted, if
+     * it was) so follow-up questions keep their context. Falls back to the
+     * live voice if speech cannot start.
+     */
+    async function speakLongAnswer(answer: string) {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        const busy =
+          speechAwaitingTranscriptRef.current ||
+          macReportSpeakingUntilRef.current > Date.now() ||
+          activeResponseIdRef.current !== null;
+        if (!busy) break;
+        await new Promise((resolve) => window.setTimeout(resolve, 100));
+      }
+      if (!isCurrentTurn()) return;
+
+      answerSpeechRef.current?.stop();
+      const spokenText = speechText(answer);
+      const speech = speakAnswer({
+        text: spokenText,
+        voice: sessionVoiceRef.current,
+        language: turnLanguage,
+        volume: audioRef.current?.volume ?? 1,
+      });
+      answerSpeechRef.current = speech;
+      try {
+        await speech.started;
+      } catch (error) {
+        if (answerSpeechRef.current === speech) answerSpeechRef.current = null;
+        const stopped = error instanceof DOMException && error.name === "AbortError";
+        if (!stopped && isCurrentTurn()) sendTurnResponse("final_answer", answer, true);
+        return;
+      }
+
+      // The live conversation gets the answer as Vox's own turn.
+      const itemId = `vox_answer_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+      const channel = channelRef.current;
+      if (channel?.readyState === "open") {
+        channel.send(JSON.stringify({
+          type: "conversation.item.create",
+          item: { id: itemId, type: "message", role: "assistant", content: [{ type: "output_text", text: answer }] },
+        }));
+      }
+      addMessage("assistant", answer);
+      lastAssistantTranscriptRef.current = spokenText;
+      assistantSpeakingSinceRef.current = performance.now();
+      assistantEchoFloorRef.current = inputRmsRef.current;
+      connectionStateRef.current = "speaking";
+      setConnectionState("speaking");
+
+      const result = await speech.done;
+      if (answerSpeechRef.current === speech) answerSpeechRef.current = null;
+      lastAssistantAtRef.current = Date.now();
+      releaseVisionItem(turnId);
+      if (activeRouteTurnRef.current === turnId) activeRouteTurnRef.current = null;
+      if ((result.interrupted || result.failed) && channelRef.current?.readyState === "open") {
+        const heard = result.spokenText.split(/\s+/).slice(-12).join(" ");
+        const noteId = `vox_note_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+        channelRef.current.send(JSON.stringify({
+          type: "conversation.item.create",
+          previous_item_id: itemId,
+          item: {
+            id: noteId,
+            type: "message",
+            role: "system",
+            content: [{
+              type: "input_text",
+              text: heard
+                ? `Vox stopped speaking the previous answer ${result.interrupted ? "because the user interrupted" : "early"}; the user heard it up to: "${heard}". The rest was only shown on screen.`
+                : `Vox stopped before speaking the previous answer${result.interrupted ? " because the user interrupted" : ""}; it was only shown on screen.`,
+            }],
+          },
+        }));
+        conversationItemsRef.current.push({ id: noteId, role: "system" });
+      }
+      if (!result.interrupted && connectionStateRef.current === "speaking") {
+        assistantSpeakingSinceRef.current = null;
+        assistantEchoFloorRef.current = 0;
+        connectionStateRef.current = "listening";
+        setConnectionState("listening");
+      }
     }
 
     async function runWithFrontVoice<T>(
@@ -4517,6 +4911,7 @@ export default function Home() {
                 input: [],
                 output_modalities: ["audio"],
                 max_output_tokens: 80,
+                tool_choice: "none",
                 metadata: {
                   vox_kind: "front_voice",
                   vox_response_id: responseId,
@@ -4539,6 +4934,30 @@ export default function Home() {
     }
 
     try {
+      const pendingMailApproval = pendingMailApprovalRef.current;
+      if (pendingMailApproval) {
+        pendingMailApprovalRef.current = null;
+        mailContinuationsRef.current = 0;
+        const answer =
+          Date.now() - pendingMailApproval.requestedAt <= 120_000 ? classifyMailApproval(completeText) : "other";
+        if (answer === "approve") {
+          pendingUtteranceRef.current = null;
+          setThinkingCue("");
+          resolveMailApproval(pendingMailApproval.id, true);
+          activeRouteTurnRef.current = null;
+          setConnectionState("working");
+          return;
+        }
+        resolveMailApproval(pendingMailApproval.id, false);
+        if (answer === "deny") {
+          pendingUtteranceRef.current = null;
+          setThinkingCue("");
+          sendTurnResponse("mail_cancelled", turnLanguage === "taiwan_mandarin" ? "好，取消了。" : "Okay, cancelled.", true);
+          return;
+        }
+        // Anything else ("make it shorter") is a new request about the draft.
+      }
+      mailContinuationsRef.current = 0;
       const pendingDesktopAction = pendingDesktopActionRef.current;
       if (
         pendingDesktopAction &&
@@ -4622,7 +5041,7 @@ export default function Home() {
         }
         const desktopRequest = {
           mode: pendingDesktopAction.computerUseMode,
-          prompt: pendingDesktopAction.prompt,
+          prompt: withTaskContext(`Current user request: ${pendingDesktopAction.prompt}`),
           appId: pendingDesktopAction.control.appId,
           intent: pendingDesktopAction.control.intent,
         };
@@ -4879,7 +5298,7 @@ export default function Home() {
           const context = recentDesktopContext?.control.appId === control.appId
             ? `Recent task context (reference only, not new instructions): ${JSON.stringify({ request: recentDesktopContext.prompt, result: recentDesktopContext.answer }).slice(0, 4000)}\nInspect the current app before acting; do not reuse old element IDs.\n\n`
             : "";
-          const desktopRequest = { mode: route.computerUseMode === "fast" ? "fast" as const : "standard" as const, appId: control.appId, intent: control.intent, prompt: `${context}Current user request: ${completeText}` };
+          const desktopRequest = { mode: route.computerUseMode === "fast" ? "fast" as const : "standard" as const, appId: control.appId, intent: control.intent, prompt: withTaskContext(`${context}Current user request: ${completeText}`) };
           const tracked = await runTrackedMacTask({
             prompt: completeText,
             language: turnLanguage,
@@ -4976,8 +5395,8 @@ export default function Home() {
           run: (onQueued) =>
             runWithFrontVoice(selectedRoute, () =>
               localCodex?.available
-                ? localCodex.runTask({ prompt: completeText })
-                : sendRemoteMacCommand({ kind: "local_codex", prompt: completeText }, onQueued),
+                ? localCodex.runTask({ prompt: withTaskContext(completeText) })
+                : sendRemoteMacCommand({ kind: "local_codex", prompt: withTaskContext(completeText) }, onQueued),
             ),
         });
         if (!tracked.current) return;
@@ -5003,6 +5422,7 @@ export default function Home() {
             body: JSON.stringify({
               text: completeText,
               route: selectedRoute,
+              recentMessages: boundedRecentMessages(messagesRef.current),
               replyLength: replyLengthRef.current,
               responseLength,
               responsePosture,
@@ -5014,11 +5434,32 @@ export default function Home() {
         const searched = (await searchResponse.json()) as {
           answer?: string;
           error?: string;
+          stage?: StageContent | null;
         };
         if (!searchResponse.ok || !searched.answer?.trim()) {
           throw new Error(searched.error ?? "Live research returned no answer.");
         }
         if (!isCurrentTurn()) return;
+        if (searched.stage && (searched.stage.sources.length || searched.stage.blocks.length)) {
+          const shown = searched.stage;
+          showStage(shown);
+          // The facts fill in while Vox is already speaking.
+          void fetch("/api/stage/facts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question: completeText, answer: searched.answer, sources: shown.sources }),
+          })
+            .then((response) => (response.ok ? (response.json() as Promise<{ title?: string; blocks?: StageContent["blocks"] }>) : null))
+            .then((facts) => {
+              if (!facts?.blocks?.length) return;
+              setStage((current) =>
+                current?.id === shown.id
+                  ? { ...current, title: facts.title || current.title, blocks: facts.blocks ?? [] }
+                  : current,
+              );
+            })
+            .catch(() => undefined);
+        }
         sendTurnResponse("final_answer", searched.answer, true);
       } else if (
         selectedRoute === "balanced_reasoning" ||
@@ -5031,6 +5472,7 @@ export default function Home() {
             body: JSON.stringify({
               text: completeText,
               route: selectedRoute,
+              recentMessages: boundedRecentMessages(messagesRef.current),
               replyLength: replyLengthRef.current,
               responseLength,
               responsePosture,
@@ -5047,7 +5489,7 @@ export default function Home() {
           throw new Error(reasoned.error ?? "Reasoning returned no answer.");
         }
         if (!isCurrentTurn()) return;
-        sendTurnResponse("final_answer", reasoned.answer, true);
+        void speakLongAnswer(reasoned.answer.trim());
       } else {
         sendTurnResponse(
           "realtime_answer",
@@ -5152,6 +5594,11 @@ export default function Home() {
     );
   }
 
+  /** Vox is producing sound: a live response or a spoken reasoning answer. */
+  function assistantAudioActive() {
+    return activeResponseIdRef.current !== null || answerSpeechRef.current !== null;
+  }
+
   function interruptActiveVoiceResponse() {
     if (bargeInTimerRef.current !== null) {
       window.clearTimeout(bargeInTimerRef.current);
@@ -5167,6 +5614,7 @@ export default function Home() {
       channelRef.current.send(JSON.stringify({ type: "output_audio_buffer.clear" }));
       activeResponseIdRef.current = null;
     }
+    answerSpeechRef.current?.stop();
     assistantSpeakingSinceRef.current = null;
     assistantEchoFloorRef.current = 0;
     lastUserActivityRef.current = Date.now();
@@ -5178,8 +5626,7 @@ export default function Home() {
     switch (event.type) {
       case "input_audio_buffer.speech_started": {
         const assistantWasSpeaking =
-          connectionStateRef.current === "speaking" &&
-          activeResponseIdRef.current !== null;
+          connectionStateRef.current === "speaking" && assistantAudioActive();
         const echoFloor = assistantEchoFloorRef.current;
         userSpeakingRef.current = true;
         speechAwaitingTranscriptRef.current = true;
@@ -5260,7 +5707,7 @@ export default function Home() {
         setConnectionState(
           echoCandidateRef.current &&
             !echoCandidateRef.current.confirmed &&
-            activeResponseIdRef.current
+            assistantAudioActive()
             ? "speaking"
             : "thinking",
         );
@@ -5304,7 +5751,7 @@ export default function Home() {
             );
           }
           interruptedWorkStateRef.current = null;
-          setConnectionState(activeResponseIdRef.current ? "speaking" : "listening");
+          setConnectionState(assistantAudioActive() ? "speaking" : "listening");
           break;
         }
         if (!claimInputTranscription(transcript, event.item_id)) {
@@ -5343,7 +5790,7 @@ export default function Home() {
             }
             interruptedWorkStateRef.current = null;
             setConnectionState(
-              activeResponseIdRef.current ? "speaking" : "listening",
+              assistantAudioActive() ? "speaking" : "listening",
             );
             break;
           }
@@ -5409,7 +5856,7 @@ export default function Home() {
             );
           }
           interruptedWorkStateRef.current = null;
-          setConnectionState(activeResponseIdRef.current ? "speaking" : "listening");
+          setConnectionState(assistantAudioActive() ? "speaking" : "listening");
           break;
         }
         echoCandidateRef.current = null;
@@ -5476,6 +5923,7 @@ export default function Home() {
           if (completedMcpCallsRef.current.size > 200) completedMcpCallsRef.current.clear();
         }
         continueStudyAfterTools();
+        continueAfterMailTools();
         break;
       }
       case "mcp_list_tools.completed": {
@@ -5531,6 +5979,23 @@ export default function Home() {
             detachStudyTools();
           }
         }
+        const stageCalls = (event.response?.output ?? []).filter(
+          (item) => item.type === "function_call" && item.name === "show_on_stage",
+        );
+        if (stageCalls.length) handleStageCalls(stageCalls, event.response?.output?.at(-1)?.type === "function_call");
+        if (!studyKind.startsWith("study_")) {
+          const output = event.response?.output ?? [];
+          const approval = output.find((item) => item.type === "mcp_approval_request" && item.id);
+          if (approval) requestMailApproval(approval);
+          // The live model stops after calling a tool; it continues once the
+          // results are in, unless it already answered after the call.
+          if (!approval && output.at(-1)?.type === "mcp_call") {
+            mailAwaitingCallsRef.current = output
+              .filter((item) => item.type === "mcp_call" && item.id)
+              .map((item) => item.id as string);
+            continueAfterMailTools();
+          }
+        }
         if (event.response?.metadata?.vox_kind === "front_voice") {
           const responseId = event.response.metadata.vox_response_id;
           frontVoiceWaitersRef.current.get(responseId)?.();
@@ -5575,6 +6040,9 @@ export default function Home() {
     setConnectionState("connecting");
     setErrorMessage("");
     setSessionFramesSent(0);
+    // Pressing connect is the gesture that lets spoken answers play later.
+    unlockAnswerSpeech();
+    sessionVoiceRef.current = voice;
     setFrameCaptureNotice(null);
 
     window.__voxActiveVoiceSession?.close();
@@ -5732,6 +6200,7 @@ export default function Home() {
         playThemeCue("online");
         refreshRealtimeContext();
         seedConversationCarryover(channel);
+        void attachMailTools(channel);
         const pendingStudy = pendingStudyRef.current;
         if (pendingStudy) void beginStudy(pendingStudy.request, pendingStudy.deck);
       };
@@ -5783,6 +6252,12 @@ export default function Home() {
     routeTurnRef.current += 1;
     activeRouteTurnRef.current = null;
     activeResponseIdRef.current = null;
+    answerSpeechRef.current?.stop();
+    answerSpeechRef.current = null;
+    mailToolRef.current = null;
+    flashcardsToolRef.current = null;
+    pendingMailApprovalRef.current = null;
+    mailAwaitingCallsRef.current = null;
     for (const finish of frontVoiceWaitersRef.current.values()) finish();
     frontVoiceWaitersRef.current.clear();
     conversationItemsRef.current = [];
@@ -5846,6 +6321,7 @@ export default function Home() {
     event.preventDefault();
     const text = input.trim();
     if (!text || channelRef.current?.readyState !== "open") return;
+    if (sidePanel === "today") showSidePanel("conversation");
     lastUserActivityRef.current = Date.now();
     setThinkingCue("");
     addMessage("user", text);
@@ -6162,9 +6638,53 @@ export default function Home() {
     );
   }
 
+  const todayWaiting = mailApproval
+    ? [{ id: mailApproval.id, title: mailApproval.title, detail: mailApproval.detail, tone: "amber" as const }]
+    : [];
+  const todayReminders = reminders
+    .filter((reminder) => reminder.status === "pending")
+    .slice(0, 8)
+    .map((reminder) => {
+      const place = isLocationReminder(reminder);
+      return {
+        id: reminder.id,
+        title: reminder.title,
+        when: place ? reminderPlaceLabel(reminder) : formatReminderTime(reminder.dueAt),
+        soon: !place && Date.parse(reminder.dueAt) - clock < 2 * 60 * 60_000,
+      };
+    });
+  const todayMacTasks = macTasks.map((task) => ({ id: task.id, title: task.label, status: "running" as const }));
+  const todayFiles = files.slice(0, 4).map((file) => ({
+    id: file.id,
+    name: file.title || file.name,
+    when: new Date(file.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+  }));
+  const todayCount = todayWaiting.length + todayReminders.filter((reminder) => reminder.soon).length;
+  const todayProps = {
+    briefing: today,
+    loading: todayLoading,
+    onRefresh: () => void loadToday(),
+    waiting: todayWaiting,
+    reminders: todayReminders,
+    macTasks: todayMacTasks,
+    files: todayFiles,
+    onStudy: () => {
+      setView("talk");
+      void startStudy("Let's go through my flash cards.", null);
+    },
+    onOpenEmail: () => setView("settings"),
+    onOpenReminders: () => setRemindersOpen(true),
+    onOpenFiles: () => setFilesOpen(true),
+  };
+  const lastAssistantText = [...messages].reverse().find((message) => message.role === "assistant")?.text ?? "";
+  const todayAvailable = connectionMode === "cloud" && authState === "authenticated";
+  const showingToday = todayAvailable && sidePanel === "today";
+  const conversationUnread = showingToday && messages.length > conversationSeen;
+
   return (
     <main
       className="vox-shell min-h-dvh overflow-x-hidden bg-background text-foreground"
+      data-vox-view={view}
       data-vox-theme={theme}
       data-vox-surface={desktopPersonalAvailable ? "desktop" : "web"}
     >
@@ -6216,6 +6736,15 @@ export default function Home() {
       <div className="ambient ambient-two" />
       <div className="holo-edge holo-edge-left" aria-hidden="true" />
       <div className="holo-edge holo-edge-right" aria-hidden="true" />
+      <div className="vox-frame relative z-10 flex min-h-dvh">
+      <AppRail
+        view={view}
+        onChange={setView}
+        todayCount={todayCount}
+        statusLabel={connected ? "Live" : desktopPersonalAvailable ? "Mac" : "Cloud"}
+        statusTone={connected ? "ok" : "off"}
+      />
+      <div className="vox-frame-main vx-tabbar-pad min-w-0 flex-1">
 
       <header className="vox-header relative z-10 flex min-h-16 items-center justify-between border-b border-white/8 px-4 py-3 sm:h-20 sm:px-8 sm:py-0 lg:px-12">
         <div className="flex items-center gap-3">
@@ -6233,935 +6762,6 @@ export default function Home() {
           </div>
         </div>
         <div className="vox-header-actions flex items-center gap-2">
-          {connectionMode === "cloud" && authState === "authenticated" && (
-            <FlashcardsConnection
-              studying={studying}
-              onStudy={() => startStudy("Let's go through my flash cards.", null)}
-              onStopStudy={() => stopStudy(true)}
-            />
-          )}
-          {connectionMode === "cloud" && <Sheet
-            open={invitesOpen}
-            onOpenChange={(open) => {
-              setInvitesOpen(open);
-              if (!open) setNewInviteCode("");
-            }}
-          >
-            <SheetTrigger asChild>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
-                aria-label="Create a share code"
-              >
-                <UserPlus />
-                <span className="hidden sm:inline">Invite</span>
-              </Button>
-            </SheetTrigger>
-            <SheetContent className="w-[min(94vw,440px)] border-white/10 bg-[#10111b] text-white sm:max-w-[440px]">
-              <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
-                <div className="flex items-center gap-2 text-[#f4ff74]">
-                  <KeyRound size={18} />
-                  <SheetTitle className="font-display text-xl text-white">
-                    Share access
-                  </SheetTitle>
-                </div>
-                <SheetDescription className="mt-2 leading-6 text-white/46">
-                  Create a private sign-in code for one person. Vox stores only a
-                  secure hash, so this code cannot be recovered later.
-                </SheetDescription>
-              </SheetHeader>
-
-              <div className="flex-1 overflow-y-auto px-5 py-5">
-                {inviteLoading ? (
-                  <p className="py-10 text-center text-sm text-white/40">
-                    Checking invitations…
-                  </p>
-                ) : inviteError && !inviteStatus ? (
-                  <div className="rounded-2xl border border-[#ff766c]/20 bg-[#ff766c]/[0.06] p-4">
-                    <p className="text-sm text-[#ffaaa4]">{inviteError}</p>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="mt-3 border-white/10 bg-white/[0.04] text-white"
-                      onClick={() => void loadInviteStatus()}
-                    >
-                      Try again
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-5">
-                    <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
-                      <p className="text-sm font-semibold text-white/82">
-                        {inviteStatus?.unlimited
-                          ? "Master invitations"
-                          : inviteStatus?.canGenerate
-                            ? "One invitation available"
-                            : "Invitation already created"}
-                      </p>
-                      <p className="mt-2 text-xs leading-5 text-white/44">
-                        {inviteStatus?.unlimited
-                          ? `You can create as many codes as needed. ${inviteStatus.generated} created so far.`
-                          : inviteStatus?.canGenerate
-                            ? "Your account may create one share code. The person who receives it will also be able to invite one person."
-                            : "Regular accounts can create one share code total."}
-                      </p>
-                    </div>
-
-                    {newInviteCode ? (
-                      <div className="rounded-2xl border border-[#f4ff74]/20 bg-[#f4ff74]/[0.06] p-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#f4ff74]/70">
-                          New share code
-                        </p>
-                        <p className="mt-3 break-all font-mono text-sm leading-6 text-white/88">
-                          {newInviteCode}
-                        </p>
-                        <Button
-                          type="button"
-                          className="mt-4 h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
-                          onClick={() => void copyInviteCode()}
-                        >
-                          <Copy /> Copy code
-                        </Button>
-                        {inviteStatus?.unlimited && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="mt-2 h-11 w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
-                            onClick={() => setNewInviteCode("")}
-                          >
-                            <UserPlus /> Create another
-                          </Button>
-                        )}
-                        <p className="mt-3 text-xs leading-5 text-white/38">
-                          Save or send it now. For privacy, Vox will not show this
-                          exact code again after you close this panel.
-                        </p>
-                      </div>
-                    ) : inviteStatus?.canGenerate ? (
-                      <div className="space-y-3">
-                        <label htmlFor="invite-name" className="text-sm text-white/68">
-                          Name or label <span className="text-white/32">(optional)</span>
-                        </label>
-                        <input
-                          id="invite-name"
-                          value={inviteName}
-                          onChange={(event) => setInviteName(event.target.value)}
-                          maxLength={80}
-                          placeholder="Friend, teammate…"
-                          className="h-12 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
-                        />
-                        <Button
-                          type="button"
-                          className="h-12 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
-                          disabled={inviteCreating}
-                          onClick={() => void createShareCode()}
-                        >
-                          <UserPlus />
-                          {inviteCreating ? "Creating…" : "Create share code"}
-                        </Button>
-                      </div>
-                    ) : null}
-
-                    {inviteError && inviteStatus && (
-                      <p className="text-sm text-[#ffaaa4]">{inviteError}</p>
-                    )}
-                  </div>
-                )}
-              </div>
-            </SheetContent>
-          </Sheet>}
-
-          {connectionMode === "cloud" && cloudUserRole === "master" && (
-            <Sheet
-              open={phoneAssistantOpen}
-              onOpenChange={(open) => {
-                setPhoneAssistantOpen(open);
-                if (open) void loadPhoneAssistantStatus();
-                else {
-                  setPhoneAssistantEditing(false);
-                  setPhoneAssistantCallbackNumber("");
-                  setPhoneAssistantPassphrase("");
-                  setPhoneAssistantError("");
-                }
-              }}
-            >
-              <SheetTrigger asChild>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
-                  aria-label="Phone assistant settings"
-                  title="Phone assistant"
-                >
-                  <PhoneCall />
-                  <span className="hidden sm:inline">Call Vox</span>
-                </Button>
-              </SheetTrigger>
-              <SheetContent className="w-[min(94vw,440px)] border-white/10 bg-[#10111b] text-white sm:max-w-[440px]">
-                <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
-                  <div className="flex items-center gap-2 text-[#f4ff74]">
-                    <PhoneCall size={18} />
-                    <SheetTitle className="font-display text-xl text-white">
-                      Phone assistant
-                    </SheetTitle>
-                  </div>
-                  <SheetDescription className="mt-2 leading-6 text-white/46">
-                    Calls begin on Vox Cloud. Say “switch to my Mac” when you
-                    want an action handled by your paired desktop, or “switch to
-                    cloud” to return. Sensitive actions still follow the Mac’s
-                    local safety policy.
-                  </SheetDescription>
-                </SheetHeader>
-                <div className="flex-1 overflow-y-auto px-5 py-5">
-                  {!phoneAssistantStatus ? (
-                    <p className="py-10 text-center text-sm text-white/40">
-                      Checking phone service…
-                    </p>
-                  ) : !phoneAssistantStatus.serviceConfigured ? (
-                    <div className="rounded-2xl border border-[#f4ff74]/14 bg-[#f4ff74]/[0.045] p-4">
-                      <p className="text-sm font-semibold text-white/82">
-                        Twilio connection required
-                      </p>
-                      <p className="mt-2 text-xs leading-5 text-white/44">
-                        The interface is ready, but the service owner still needs
-                        to add the Twilio account credentials and phone number to
-                        the server. No calls can be placed until then.
-                      </p>
-                    </div>
-                  ) : !phoneAssistantStatus.configured || phoneAssistantEditing ? (
-                    <div className="space-y-4">
-                      <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4 text-xs leading-5 text-white/44">
-                        {phoneAssistantStatus.configured
-                          ? "Enter the complete replacement setup. For security, the existing sentence and callback number cannot be revealed on this device."
-                          : "Choose a private sentence you can say naturally. Vox stores only a keyed hash—not the sentence or a voiceprint. Anyone who knows the exact sentence could authenticate, so do not reuse a familiar quote or say it where others can hear."}
-                      </div>
-                      <label className="block text-sm text-white/68" htmlFor="phone-assistant-passphrase">
-                        Private spoken sentence
-                      </label>
-                      <input
-                        id="phone-assistant-passphrase"
-                        type="password"
-                        value={phoneAssistantPassphrase}
-                        onChange={(event) => setPhoneAssistantPassphrase(event.target.value.slice(0, 160))}
-                        placeholder="An uncommon sentence, at least 12 characters"
-                        autoComplete="new-password"
-                        className="h-12 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
-                      />
-                      <label className="block text-sm text-white/68" htmlFor="phone-assistant-callback">
-                        Callback number <span className="text-white/32">(optional)</span>
-                      </label>
-                      <input
-                        id="phone-assistant-callback"
-                        type="tel"
-                        value={phoneAssistantCallbackNumber}
-                        onChange={(event) => setPhoneAssistantCallbackNumber(event.target.value)}
-                        placeholder="+886…"
-                        autoComplete="tel"
-                        className="h-12 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
-                      />
-                      <p className="text-xs leading-5 text-white/36">
-                        {phoneAssistantStatus.configured
-                          ? "Enter the full callback number again to keep or replace it. Leaving it blank removes the saved callback number."
-                          : "This number is used only when you explicitly request a call from Vox. It is never used to authenticate an incoming call."}
-                      </p>
-                      <Button
-                        type="button"
-                        disabled={phoneAssistantBusy || phoneAssistantPassphrase.trim().length < 12}
-                        onClick={() => void configurePhoneAssistant()}
-                        className="h-12 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
-                      >
-                        <PhoneCall /> {phoneAssistantBusy
-                          ? "Saving…"
-                          : phoneAssistantStatus.configured
-                            ? "Update phone setup"
-                            : "Enable phone access"}
-                      </Button>
-                      {phoneAssistantStatus.configured && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          disabled={phoneAssistantBusy}
-                          onClick={() => {
-                            setPhoneAssistantEditing(false);
-                            setPhoneAssistantCallbackNumber("");
-                            setPhoneAssistantPassphrase("");
-                            setPhoneAssistantError("");
-                          }}
-                          className="h-10 w-full rounded-full text-white/48 hover:bg-white/[0.05] hover:text-white"
-                        >
-                          Cancel
-                        </Button>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-2 rounded-2xl border border-[#c8bcff]/14 bg-[#c8bcff]/[0.045] p-3 text-xs leading-5 text-white/48">
-                        <Globe2 className="size-4 shrink-0 text-[#c8bcff]" />
-                        Vox Cloud owner setting · synced across web and desktop
-                      </div>
-                      <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
-                        <p className="text-sm font-semibold text-white/82">
-                          {phoneAssistantStatus.enabled ? "Phone access on" : "Phone access paused"}
-                        </p>
-                        <p className="mt-2 text-xs leading-5 text-white/44">
-                          Private sentence configured. Call
-                          {phoneAssistantStatus.inboundNumber
-                            ? ` ${phoneAssistantStatus.inboundNumber}`
-                            : " the Vox number"}
-                          , then say your sentence when Vox asks. No caller phone
-                          number is used as authentication.
-                        </p>
-                      </div>
-                      <div className="rounded-2xl border border-emerald-300/12 bg-emerald-300/[0.045] p-4">
-                        <p className="text-sm font-semibold text-white/82">
-                          Voice routing · Cloud by default
-                        </p>
-                        <p className="mt-2 text-xs leading-5 text-white/44">
-                          During a call, say “use my Mac” before a local task.
-                          Vox confirms the route aloud and will not claim a Mac
-                          action succeeded until the paired desktop returns it.
-                        </p>
-                        {desktopPersonalAvailable && (
-                          phoneMacRoutingConfigured ? (
-                            <p className="mt-3 flex items-center gap-2 text-xs font-medium text-emerald-200/80">
-                              <ShieldCheck className="size-3.5" /> Ready on this Mac
-                            </p>
-                          ) : (
-                            <div className="mt-4 space-y-3">
-                              <p className="text-xs leading-5 text-white/44">
-                                One-time setup: enter the same private sentence
-                                used for phone authentication. Only a derived key
-                                is stored in macOS secure storage.
-                              </p>
-                              <input
-                                type="password"
-                                value={phoneAssistantPassphrase}
-                                onChange={(event) => setPhoneAssistantPassphrase(event.target.value.slice(0, 160))}
-                                placeholder="Your existing private sentence"
-                                autoComplete="current-password"
-                                className="h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/28 focus:border-emerald-300/40 focus:ring-2 focus:ring-emerald-300/10"
-                              />
-                              <Button
-                                type="button"
-                                variant="outline"
-                                disabled={phoneAssistantBusy || phoneAssistantPassphrase.trim().length < 12}
-                                onClick={() => void configurePhoneMacRouting()}
-                                className="h-10 w-full rounded-full border-emerald-300/16 bg-emerald-300/[0.06] text-emerald-100 hover:bg-emerald-300/10 hover:text-white"
-                              >
-                                Enable call-to-Mac routing
-                              </Button>
-                            </div>
-                          )
-                        )}
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={phoneAssistantBusy}
-                        onClick={() => void updatePhoneAssistant({ enabled: !phoneAssistantStatus.enabled })}
-                        className="h-11 w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
-                      >
-                        {phoneAssistantStatus.enabled ? "Pause incoming calls" : "Enable incoming calls"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={phoneAssistantBusy}
-                        onClick={() => {
-                          setPhoneAssistantEditing(true);
-                          setPhoneAssistantError("");
-                        }}
-                        className="h-11 w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
-                      >
-                        <PhoneCall /> Change spoken sentence or callback
-                      </Button>
-                      <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
-                        <p className="text-sm font-semibold text-white/78">Calls from Vox</p>
-                        <p className="mt-2 text-xs leading-5 text-white/42">
-                          Off by default. When enabled, Vox may call only for an
-                          action you explicitly request. Autonomous check-ins and
-                          third-party calls remain disabled.
-                        </p>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={phoneAssistantBusy || !phoneAssistantStatus.callbackPhoneLabel}
-                          onClick={() => void updatePhoneAssistant({ allowOutbound: !phoneAssistantStatus.allowOutbound })}
-                          className="mt-3 h-10 w-full rounded-full border-white/10 bg-black/15 text-white hover:bg-white/10 hover:text-white"
-                        >
-                          {phoneAssistantStatus.allowOutbound
-                            ? "Disable calls from Vox"
-                            : phoneAssistantStatus.callbackPhoneLabel
-                              ? "Enable requested calls"
-                              : "Callback number not configured"}
-                        </Button>
-                        {phoneAssistantStatus.allowOutbound && phoneAssistantStatus.callbackPhoneLabel && (
-                          <Button
-                            type="button"
-                            disabled={phoneAssistantBusy}
-                            onClick={() => void requestPhoneAssistantTestCall()}
-                            className="mt-2 h-10 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
-                          >
-                            <PhoneCall /> Request a test call
-                          </Button>
-                        )}
-                        {!phoneAssistantStatus.callbackPhoneLabel && (
-                          <p className="mt-3 text-xs leading-5 text-white/36">
-                            Add a callback number by reconnecting if you want Vox to
-                            place requested calls. Incoming calls already work
-                            without one.
-                          </p>
-                        )}
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        disabled={phoneAssistantBusy}
-                        onClick={() => void disconnectPhoneAssistant()}
-                        className="h-10 w-full rounded-full text-[#ffaaa4] hover:bg-[#ff766c]/10 hover:text-[#ffc0bb]"
-                      >
-                        Disconnect phone
-                      </Button>
-                    </div>
-                  )}
-                  {phoneAssistantError && (
-                    <p className="mt-4 rounded-xl border border-[#ff766c]/16 bg-[#ff766c]/[0.055] px-3.5 py-3 text-xs leading-5 text-[#ffaaa4]">
-                      {phoneAssistantError}
-                    </p>
-                  )}
-                </div>
-              </SheetContent>
-            </Sheet>
-          )}
-
-          {desktopPersonalAvailable && connectionMode === "cloud" && (
-            <Sheet
-              open={remotePairingOpen}
-              onOpenChange={(open) => {
-                setRemotePairingOpen(open);
-                if (open) void refreshDesktopPairingStatus();
-              }}
-            >
-              <SheetTrigger asChild>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
-                  aria-label="Pair a phone with this Mac"
-                >
-                  <Smartphone />
-                  <span className="hidden sm:inline">
-                    {remotePairingStatus?.status === "active" ? "Phone paired" : "Pair phone"}
-                  </span>
-                </Button>
-              </SheetTrigger>
-              <SheetContent className="w-[min(94vw,460px)] border-white/10 bg-[#10111b] text-white sm:max-w-[460px]">
-                <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
-                  <div className="flex items-center gap-2 text-[#f4ff74]">
-                    <Smartphone size={18} />
-                    <SheetTitle className="font-display text-xl text-white">
-                      Phone control
-                    </SheetTitle>
-                  </div>
-                  <SheetDescription className="mt-2 leading-6 text-white/46">
-                    Pair your phone’s Vox web app with this Mac. The cloud relays
-                    encrypted envelopes but never receives the control key.
-                  </SheetDescription>
-                </SheetHeader>
-                <div className="flex-1 overflow-y-auto px-5 py-5">
-                  <div className="rounded-2xl border border-emerald-300/12 bg-emerald-300/[0.045] p-4 text-xs leading-5 text-white/56">
-                    <div className="flex items-start gap-2">
-                      <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-300" />
-                      <p>
-                        A database leak cannot reveal or forge the encrypted commands.
-                        Sensitive local Codex work still needs approval on this Mac.
-                      </p>
-                    </div>
-                  </div>
-
-                  {remotePairingStatus?.status === "active" ? (
-                    <div className="mt-5 space-y-4">
-                      <div className="rounded-2xl border border-[#f4ff74]/16 bg-[#f4ff74]/[0.05] p-4">
-                        <p className="flex items-center gap-2 text-sm font-semibold text-white/86">
-                          <span className={`size-2 rounded-full ${remotePairingStatus.armed ? "bg-emerald-400" : "bg-amber-300"}`} />
-                          {remotePairingStatus.armed ? "Remote control active" : "Phone paired · control paused"}
-                        </p>
-                        <p className="mt-2 text-xs leading-5 text-white/44">
-                          {remotePairingStatus.armed
-                            ? `${remotePairingStatus.phoneLabel || "Your phone browser"} may ask this Mac to use approved apps until you pause control or quit Vox.`
-                            : "Pairing alone cannot operate this Mac. Enable control only when you expect to use it."}
-                        </p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant={remotePairingStatus.armed ? "outline" : "default"}
-                        disabled={remotePairingBusy}
-                        onClick={() => void setRemoteControlArmed(!remotePairingStatus.armed)}
-                        className={remotePairingStatus.armed
-                          ? "h-11 w-full rounded-full border-amber-300/22 bg-amber-300/[0.06] text-amber-100 hover:bg-amber-300/12"
-                          : "h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"}
-                      >
-                        <ShieldCheck />
-                        {remotePairingStatus.armed ? "Pause remote control" : "Allow remote control"}
-                      </Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="h-11 w-full rounded-full border-[#ff766c]/22 bg-[#ff766c]/[0.06] text-[#ffaaa4] hover:bg-[#ff766c]/12 hover:text-[#ffc0bc]"
-                          >
-                            Disconnect phone
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent className="border-white/10 bg-[#171823] text-white">
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Disconnect the paired phone?</AlertDialogTitle>
-                            <AlertDialogDescription className="leading-6 text-white/46">
-                              Its saved key will stop working immediately. You can create a new pairing later.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel className="border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white">
-                              Keep connected
-                            </AlertDialogCancel>
-                            <AlertDialogAction
-                              variant="destructive"
-                              disabled={remotePairingBusy}
-                              onClick={() => void revokePhonePairing()}
-                            >
-                              Disconnect
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </div>
-                  ) : (
-                    <div className="mt-5 space-y-4">
-                      <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
-                        <p className="text-sm font-semibold text-white/82">
-                          {remotePairingStatus?.status === "pending"
-                            ? "Waiting for your phone"
-                            : "No phone paired"}
-                        </p>
-                        <p className="mt-2 text-xs leading-5 text-white/44">
-                          Create a short-lived private QR code, scan it with your
-                          phone, sign in to the same Vox account, and approve pairing
-                          there.
-                        </p>
-                      </div>
-                      {remotePairingUrl && (
-                        <div className="rounded-2xl border border-[#c8bcff]/16 bg-[#c8bcff]/[0.05] p-4">
-                          <div className="text-center">
-                            <p className="text-sm font-semibold text-white/80">
-                              Scan with your phone camera
-                            </p>
-                            <p className="mt-2 text-xs leading-5 text-white/42">
-                              The QR code expires shortly and works only after you
-                              sign in to the same Vox account.
-                            </p>
-                          </div>
-                          {remotePairingQr ? (
-                            <div className="mx-auto mt-4 w-fit rounded-2xl bg-white p-3 shadow-[0_0_32px_rgba(200,188,255,0.12)]">
-                              {/* Pairing QR is generated locally; no QR service receives its private key. */}
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={remotePairingQr}
-                                alt="QR code for securely pairing this phone with Vox on the Mac"
-                                className="h-52 w-52"
-                              />
-                            </div>
-                          ) : (
-                            <div className="mx-auto mt-4 flex h-52 w-52 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.035] text-xs text-white/38">
-                              Preparing QR code…
-                            </div>
-                          )}
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="mt-4 h-10 w-full rounded-full border-white/10 bg-white/[0.035] text-white/68 hover:bg-white/[0.07] hover:text-white"
-                            onClick={() => void copyPhonePairingLink()}
-                          >
-                            <Copy /> Copy link instead
-                          </Button>
-                        </div>
-                      )}
-                      <Button
-                        type="button"
-                        disabled={remotePairingBusy || remotePairingStatus?.secureStorageAvailable === false}
-                        onClick={() => void createPhonePairing()}
-                        className="h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
-                      >
-                        <Smartphone />
-                        {remotePairingBusy
-                          ? "Creating…"
-                          : remotePairingStatus?.status === "pending"
-                            ? "Create a new QR code"
-                            : "Create pairing QR code"}
-                      </Button>
-                    </div>
-                  )}
-                  {remotePairingError && (
-                    <p className="mt-4 rounded-xl border border-[#ff766c]/16 bg-[#ff766c]/[0.055] px-3.5 py-3 text-xs leading-5 text-[#ffaaa4]">
-                      {remotePairingError}
-                    </p>
-                  )}
-                </div>
-              </SheetContent>
-            </Sheet>
-          )}
-
-          {!desktopPersonalAvailable && connectionMode === "cloud" && !remoteMacPairing && nativePairingScanAvailable && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => window.voxNativeIOS?.scanPairing()}
-              className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
-              aria-label="Pair with your Mac"
-            >
-              <ScanQrCode />
-              <span className="hidden sm:inline">Pair Mac</span>
-            </Button>
-          )}
-
-          {!desktopPersonalAvailable && connectionMode === "cloud" && remoteMacPairing && (
-            <Sheet open={remoteRoutingOpen} onOpenChange={setRemoteRoutingOpen}>
-              <SheetTrigger asChild>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-10 rounded-full border-emerald-300/14 bg-emerald-300/[0.045] px-3 text-emerald-200/70 shadow-none hover:bg-emerald-300/[0.08] hover:text-emerald-100"
-                  aria-label="Choose where Vox actions run"
-                >
-                  {webActionRouting === "paired_mac" ? <Smartphone /> : <Globe2 />}
-                  <span className="hidden sm:inline">
-                    Route · {webActionRouting === "paired_mac" ? "Paired Mac" : "Web only"}
-                  </span>
-                </Button>
-              </SheetTrigger>
-              <SheetContent className="w-[min(94vw,440px)] border-white/10 bg-[#10111b] text-white sm:max-w-[440px]">
-                <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
-                  <div className="flex items-center gap-2 text-[#f4ff74]">
-                    <Link2 size={18} />
-                    <SheetTitle className="font-display text-xl text-white">
-                      Action routing
-                    </SheetTitle>
-                  </div>
-                  <SheetDescription className="mt-2 leading-6 text-white/46">
-                    Choose explicitly whether device actions stay unavailable in
-                    this browser or travel to your paired Mac.
-                  </SheetDescription>
-                </SheetHeader>
-                <div className="flex-1 space-y-3 overflow-y-auto px-5 py-5">
-                  <button
-                    type="button"
-                    onClick={() => chooseWebActionRouting("web_only")}
-                    className={`w-full rounded-2xl border p-4 text-left transition ${webActionRouting === "web_only" ? "border-[#f4ff74]/30 bg-[#f4ff74]/[0.07]" : "border-white/9 bg-white/[0.035] hover:bg-white/[0.06]"}`}
-                  >
-                    <span className="flex items-center gap-2 text-sm font-semibold text-white/86">
-                      <Globe2 className="size-4" /> Web only
-                      {webActionRouting === "web_only" && <CheckCircle2 className="ml-auto size-4 text-[#f4ff74]" />}
-                    </span>
-                    <span className="mt-2 block text-xs leading-5 text-white/44">
-                      Conversation, search, reminders, and files use Vox Cloud. No
-                      command is sent to the Mac.
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!remoteMacReady}
-                    onClick={() => chooseWebActionRouting("paired_mac")}
-                    className={`w-full rounded-2xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${webActionRouting === "paired_mac" ? "border-[#f4ff74]/30 bg-[#f4ff74]/[0.07]" : "border-white/9 bg-white/[0.035] enabled:hover:bg-white/[0.06]"}`}
-                  >
-                    <span className="flex items-center gap-2 text-sm font-semibold text-white/86">
-                      <Smartphone className="size-4" /> Paired Mac
-                      {webActionRouting === "paired_mac" && <CheckCircle2 className="ml-auto size-4 text-[#f4ff74]" />}
-                    </span>
-                    <span className="mt-2 block text-xs leading-5 text-white/44">
-                      {remoteMacReady
-                        ? "App control, smart-home commands, folder opening, and approved Codex tasks route through the encrypted Mac link."
-                        : "The Mac is offline. Open Vox Desktop on the paired Mac to make this route available."}
-                    </span>
-                  </button>
-                  <p className="px-1 pt-2 text-[0.68rem] leading-5 text-white/32">
-                    This choice is stored only in this browser and remains visible
-                    in the header. Pairing never enables Mac routing by itself.
-                  </p>
-                  <WelcomeHomePhoneToggle />
-                </div>
-              </SheetContent>
-            </Sheet>
-          )}
-
-          {desktopPersonalAvailable && <VoiceFilterSettings />}
-
-          {desktopPersonalAvailable && (
-            <Sheet open={smartHomeOpen} onOpenChange={changeSmartHomeOpen}>
-              <SheetTrigger asChild>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
-                  aria-label="Open home devices"
-                >
-                  <House />
-                  <span className="hidden sm:inline">Home</span>
-                </Button>
-              </SheetTrigger>
-              <SheetContent className="w-[min(94vw,480px)] border-white/10 bg-[#10111b] text-white sm:max-w-[480px]">
-                <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
-                  <div className="flex items-center gap-2 text-[#f4ff74]">
-                    <House size={18} />
-                    <SheetTitle className="font-display text-xl text-white">
-                      Home devices
-                    </SheetTitle>
-                  </div>
-                  <SheetDescription className="mt-2 leading-6 text-white/46">
-                    A local smart-home hub for Vox Desktop. Dyson purifier support is
-                    the first device adapter; more device types can be added later.
-                  </SheetDescription>
-                </SheetHeader>
-
-                <div className="flex-1 overflow-y-auto px-5 py-5">
-                  <div className="mb-5 flex items-start gap-2 rounded-xl border border-emerald-300/12 bg-emerald-300/[0.045] px-3.5 py-3 text-xs leading-5 text-white/56">
-                    <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-300" />
-                    Device control stays on this Mac and your Wi-Fi network. Credentials
-                    are encrypted with macOS secure storage and are never sent to Vox Cloud.
-                  </div>
-
-                  {smartHomeStatus?.devices.map((device) => (
-                    <article
-                      key={device.id}
-                      className="mb-3 rounded-2xl border border-white/9 bg-white/[0.035] p-4"
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-sky-300/15 bg-sky-300/[0.06] text-sky-200">
-                          <Wind size={18} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-semibold text-white/82">{device.name}</p>
-                          <p className="mt-1 text-xs text-white/40">Dyson purifier · local Wi-Fi</p>
-                          <p className="mt-2 truncate font-mono text-[0.66rem] text-white/28">
-                            {device.host} · {device.productType}
-                          </p>
-                        </div>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              type="button"
-                              size="icon-sm"
-                              variant="ghost"
-                              className="shrink-0 rounded-full text-white/32 hover:bg-[#ff766c]/10 hover:text-[#ff9d96]"
-                              aria-label={`Remove ${device.name}`}
-                            >
-                              <Trash2 />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent className="border-white/10 bg-[#171823] text-white">
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Remove this home device?</AlertDialogTitle>
-                              <AlertDialogDescription className="leading-6 text-white/46">
-                                Vox will delete the encrypted local credential for “{device.name}” from this Mac.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel className="border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white">
-                                Keep it
-                              </AlertDialogCancel>
-                              <AlertDialogAction
-                                variant="destructive"
-                                disabled={smartHomeBusy}
-                                onClick={() => void removeSmartHomeDevice(device.id)}
-                              >
-                                Remove
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
-                    </article>
-                  ))}
-
-                  <div className="my-5 border-t border-white/8" />
-                  <div className="mb-4 flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-white/82">Add a Dyson purifier</p>
-                      <p className="mt-1 text-xs text-white/38">The purifier must already be on the same Wi-Fi.</p>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={smartHomeBusy}
-                      onClick={() => void discoverSmartHome()}
-                      className="rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
-                    >
-                      <Wifi /> {smartHomeBusy ? "Looking…" : "Discover"}
-                    </Button>
-                  </div>
-
-                  {smartHomeDiscovery.length > 0 && (
-                    <div className="mb-4 space-y-2">
-                      {smartHomeDiscovery.map((device) => (
-                        <button
-                          key={`${device.adapter}:${device.host}`}
-                          type="button"
-                          onClick={() => selectDiscoveredSmartHomeDevice(device)}
-                          className="flex w-full items-center justify-between rounded-xl border border-sky-300/12 bg-sky-300/[0.04] px-3.5 py-3 text-left transition hover:bg-sky-300/[0.08]"
-                        >
-                          <span>
-                            <span className="block text-sm text-white/76">{device.name}</span>
-                            <span className="mt-1 block font-mono text-[0.65rem] text-white/30">{device.host}</span>
-                          </span>
-                          <span className="text-xs text-sky-200/70">Use</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  <form onSubmit={saveDysonDevice} className="space-y-3.5">
-                    <div className="grid grid-cols-2 gap-2 rounded-xl bg-black/20 p-1">
-                      <button
-                        type="button"
-                        onClick={() => setDysonSetupMethod("sticker")}
-                        className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${dysonSetupMethod === "sticker" ? "bg-white/10 text-white" : "text-white/38 hover:text-white/65"}`}
-                      >
-                        Older sticker setup
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDysonSetupMethod("manual")}
-                        className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${dysonSetupMethod === "manual" ? "bg-white/10 text-white" : "text-white/38 hover:text-white/65"}`}
-                      >
-                        Local credential
-                      </button>
-                    </div>
-
-                    <label className="block text-xs text-white/50">
-                      Device name
-                      <input
-                        value={dysonName}
-                        onChange={(event) => setDysonName(event.target.value)}
-                        maxLength={80}
-                        required
-                        className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
-                        placeholder="Living room purifier"
-                      />
-                    </label>
-                    <label className="block text-xs text-white/50">
-                      Local IP address or hostname
-                      <input
-                        value={dysonHost}
-                        onChange={(event) => setDysonHost(event.target.value)}
-                        maxLength={253}
-                        required
-                        className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 font-mono text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
-                        placeholder="192.168.1.40"
-                      />
-                    </label>
-
-                    {dysonSetupMethod === "sticker" ? (
-                      <>
-                        <label className="block text-xs text-white/50">
-                          Purifier sticker network name
-                          <input
-                            value={dysonWifiSsid}
-                            onChange={(event) => setDysonWifiSsid(event.target.value)}
-                            maxLength={100}
-                            required
-                            autoComplete="off"
-                            className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 font-mono text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
-                            placeholder="DYSON-ABC-TW-12345678-438K"
-                          />
-                        </label>
-                        <label className="block text-xs text-white/50">
-                          Purifier sticker Wi-Fi code
-                          <input
-                            type="password"
-                            value={dysonWifiPassword}
-                            onChange={(event) => setDysonWifiPassword(event.target.value)}
-                            maxLength={100}
-                            required
-                            autoComplete="new-password"
-                            className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
-                            placeholder="Code printed on the purifier label"
-                          />
-                        </label>
-                        <p className="text-[0.68rem] leading-5 text-white/34">
-                          This is the purifier’s own printed setup code—not your home Wi-Fi password. Vox derives a local credential and never stores the printed code.
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <div className="grid grid-cols-[1fr_110px] gap-2.5">
-                          <label className="block text-xs text-white/50">
-                            Serial number
-                            <input
-                              value={dysonSerial}
-                              onChange={(event) => setDysonSerial(event.target.value)}
-                              maxLength={40}
-                              required
-                              className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 font-mono text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
-                              placeholder="ABC-TW-12345678"
-                            />
-                          </label>
-                          <label className="block text-xs text-white/50">
-                            Product type
-                            <input
-                              value={dysonProductType}
-                              onChange={(event) => setDysonProductType(event.target.value)}
-                              maxLength={8}
-                              required
-                              className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 font-mono text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
-                              placeholder="438K"
-                            />
-                          </label>
-                        </div>
-                        <label className="block text-xs text-white/50">
-                          Local device credential
-                          <input
-                            type="password"
-                            value={dysonCredential}
-                            onChange={(event) => setDysonCredential(event.target.value)}
-                            maxLength={512}
-                            required
-                            autoComplete="new-password"
-                            className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
-                            placeholder="Credential exported for local Dyson control"
-                          />
-                        </label>
-                        <p className="text-[0.68rem] leading-5 text-white/34">
-                          Newer Dyson models require their local device credential. Vox does not ask for or store your MyDyson account password.
-                        </p>
-                      </>
-                    )}
-
-                    {smartHomeError && (
-                      <p className="rounded-xl border border-[#ff766c]/16 bg-[#ff766c]/[0.055] px-3.5 py-3 text-xs leading-5 text-[#ffaaa4]">
-                        {smartHomeError}
-                      </p>
-                    )}
-                    <Button
-                      type="submit"
-                      disabled={smartHomeBusy || smartHomeStatus?.secureStorageAvailable === false}
-                      className="h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
-                    >
-                      <Wind /> {smartHomeBusy ? "Connecting…" : "Save and test locally"}
-                    </Button>
-                  </form>
-                </div>
-              </SheetContent>
-            </Sheet>
-          )}
-
           {!desktopPersonalAvailable && connectionMode === "cloud" && (
             <div
               className="header-meta-chip hidden items-center gap-2 rounded-full border border-[#c8bcff]/16 bg-[#c8bcff]/[0.055] px-3 py-2 text-xs text-[#d8d1ff]/70 sm:flex"
@@ -7180,24 +6780,6 @@ export default function Home() {
             </div>
           )}
 
-          {desktopPersonalAvailable && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={openConnectionChooser}
-              className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
-              aria-label="Change Vox connection"
-            >
-              {connectionMode === "personal" ? <Code2 /> : <Globe2 />}
-              <span className="hidden sm:inline">
-                {connectionMode === "personal"
-                  ? "Device · Personal"
-                  : "Account · Cloud"}
-              </span>
-            </Button>
-          )}
-
           <div className="header-session-chip flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/58">
             <span className={connected ? "live-dot" : "idle-dot"} />
             {connected ? (
@@ -7214,6 +6796,7 @@ export default function Home() {
 
       <section
         ref={interfaceGridRef}
+        hidden={view !== "talk"}
         className="interface-grid relative z-10 mx-auto grid min-h-[calc(100dvh-5rem)] max-w-[1440px] grid-cols-1"
         style={
           {
@@ -7222,45 +6805,21 @@ export default function Home() {
         }
       >
         <div className="voice-console flex min-h-0 flex-col items-center justify-between px-4 py-7 sm:min-h-[620px] sm:px-10 sm:py-12 lg:min-h-0 lg:px-14 lg:py-16">
-          <div className="hero-copy max-w-2xl self-start">
-            {theme === "holographic" ? (
-              <>
-                <div className="holo-command-line">
-                  <span>SYS.VOX // VOICE · VISION · MEMORY</span>
-                  <span>{connected ? "ALL SYSTEMS ONLINE" : "STANDING BY"}</span>
-                </div>
-                <div className="eyebrow">
-                  <span className={connected ? "live-dot" : "idle-dot"} />
-                  {connected ? "Voice link established" : "Personal AI aide"}
-                </div>
-                <h1 className="holo-title font-display">
-                  At your
-                  <br />
-                  <span>service.</span>
-                </h1>
-                <p className="holo-lede">
-                  Speak whenever you’re ready. Interruptions are welcome, silences
-                  are respected, and nothing is reported as done until it is.
-                </p>
-              </>
-            ) : (
-              <>
-                <div className="eyebrow">
-                  <Sparkles size={14} /> Private voice · adaptive conversation
-                </div>
-                <h1 className="font-display mt-5 text-[clamp(2.5rem,13vw,6.5rem)] font-medium leading-[0.9] tracking-[-0.07em] text-balance sm:text-[clamp(2.7rem,7vw,6.5rem)] sm:leading-[0.88] sm:tracking-[-0.075em]">
-                  No turns.
-                  <br />
-                  Just <span className="text-gradient">talk.</span>
-                </h1>
-                <p className="mt-5 max-w-lg text-[0.95rem] leading-6 text-white/52 sm:mt-6 sm:text-lg sm:leading-7">
-                  Speak naturally, pause to think, or interrupt mid-sentence. Even
-                  when you say nothing, Vox can decide whether the moment calls for
-                  a useful thought—or for Vox to stay quietly present.
-                </p>
-              </>
-            )}
-          </div>
+          {stage ? (
+            <div className="talk-stage w-full self-stretch">
+              <StageView
+                stage={stage}
+                page={stagePage}
+                pageLoading={stagePageLoading}
+                activeSource={stageSourceIndex}
+                onSelectSource={setStageSourceIndex}
+                onOpenSource={(url) => window.open(url, "_blank", "noopener,noreferrer")}
+                onClose={() => setStage(null)}
+                speaking={connectionState === "speaking"}
+                caption={connectionState === "speaking" ? lastAssistantText : ""}
+              />
+            </div>
+          ) : null}
 
           <div className="voice-stage my-8 flex w-full max-w-[620px] flex-col items-center sm:my-10">
             <div className="holo-core-stage">
@@ -7505,6 +7064,1101 @@ export default function Home() {
             </div>
           </div>
 
+        </div>
+
+        <div
+          className="panel-resize-handle"
+          role="separator"
+          aria-label="Resize conversation panel"
+          aria-orientation="vertical"
+          aria-valuemin={MIN_CONVERSATION_WIDTH}
+          aria-valuemax={MAX_CONVERSATION_WIDTH}
+          aria-valuenow={conversationWidth}
+          aria-valuetext={`${conversationWidth} pixels wide`}
+          tabIndex={0}
+          onPointerDown={beginConversationResize}
+          onKeyDown={resizeConversationWithKeyboard}
+          onDoubleClick={() => {
+            const grid = interfaceGridRef.current;
+            if (!grid) return;
+            saveConversationWidth(
+              clampConversationWidth(
+                DEFAULT_CONVERSATION_WIDTH,
+                grid.clientWidth,
+              ),
+            );
+          }}
+        >
+          <span aria-hidden="true" />
+        </div>
+
+        <aside className="conversation-console transcript-panel flex flex-col border-t border-white/8 p-4 sm:min-h-[560px] sm:p-7 lg:min-h-0 lg:border-t-0 lg:p-8">
+          <div className="transcript-header flex items-start justify-between gap-3 sm:gap-5">
+            <div>
+              {todayAvailable ? (
+                <div className="side-switch" role="tablist" aria-label="Show in this panel">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={!showingToday}
+                    onClick={() => showSidePanel("conversation")}
+                    className="side-switch-tab"
+                  >
+                    {theme === "holographic" ? "Conversation stream" : "Conversation"}
+                    {conversationUnread && <span className="side-switch-dot" aria-label="New messages" />}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={showingToday}
+                    onClick={() => showSidePanel("today")}
+                    className="side-switch-tab"
+                  >
+                    Today
+                    {todayCount > 0 && <span className="side-switch-count">{todayCount}</span>}
+                  </button>
+                </div>
+              ) : (
+                <p className="font-display text-xl font-medium tracking-tight">
+                  {theme === "holographic" ? "Conversation stream" : "Conversation"}
+                </p>
+              )}
+              {!showingToday && (
+                <p className="mt-1 text-sm text-white/40">
+                  {theme === "holographic"
+                    ? `LIVE LOG / ${messages.length.toString().padStart(2, "0")} ENTRIES`
+                    : "A lightweight live transcript"}
+                </p>
+              )}
+            </div>
+            <div className="transcript-actions flex items-center gap-1.5">
+              {!showingToday && messages.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearConversation}
+                  className="transcript-clear rounded-full px-3 py-1.5 text-xs text-white/36 transition hover:bg-white/5 hover:text-white/70"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          {showingToday && (
+            <div className="side-today mt-4 min-h-0 flex-1 sm:mt-6">
+              <TodayPanel variant="compact" {...todayProps} />
+            </div>
+          )}
+          <div ref={transcriptRef} hidden={showingToday} role="region" aria-label="Conversation history" tabIndex={0} className="conversation-stream transcript-scroll mt-5 flex-1 space-y-5 overflow-y-auto pr-1 sm:mt-8 sm:space-y-6 sm:pr-2">
+            {thinkingCue && (
+              <article
+                className="message message-assistant border border-[#c8bcff]/12 bg-[#c8bcff]/[0.035]"
+                aria-live="polite"
+              >
+                <p className="message-role">Vox · text only</p>
+                <p className="mt-2 text-[0.95rem] leading-6 text-white/58">
+                  {thinkingCue}
+                </p>
+              </article>
+            )}
+            {messages.length === 0 && !thinkingCue ? (
+              <div className="empty-transcript">
+                <div className="empty-icon">
+                  <AudioLines size={22} />
+                </div>
+                <p className="mt-5 font-display text-lg font-medium">
+                  {theme === "holographic" ? "Awaiting voice input" : "The room is quiet"}
+                </p>
+                <p className="mt-2 max-w-[260px] text-sm leading-6 text-white/38">
+                  {theme === "holographic"
+                    ? "Initialize the private voice link. Conversation data will appear in this stream."
+                    : "Start a voice session and the important parts of your conversation will appear here."}
+                </p>
+              </div>
+            ) : (
+              messages.slice().reverse().map((message) => (
+                <article
+                  key={message.id}
+                  className={`message message-${message.role}${message.source === "phone" ? " message-phone" : ""}`}
+                >
+                  <div className="message-header">
+                    {message.source === "phone" ? (
+                      <div className="message-phone-header">
+                        <span className="message-phone-badge">
+                          <PhoneCall aria-hidden="true" size={12} />
+                          Phone call
+                        </span>
+                        <span className="message-role">
+                          {message.role === "assistant" ? "Vox" : "You"}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="message-role">
+                        {message.role === "assistant" ? "Vox" : "You"}
+                      </p>
+                    )}
+                    {connectionMode === "cloud" && (
+                      <button
+                        type="button"
+                        className="message-source-toggle"
+                        onClick={() => void togglePhoneCallBadge(message)}
+                        disabled={sourceEditId !== null}
+                        aria-label={message.source === "phone" ? "Remove phone call badge" : "Mark as phone call"}
+                        title={message.source === "phone" ? "Remove phone call badge" : "Mark as phone call"}
+                      >
+                        {message.source === "phone" ? "Remove badge" : "Mark as call"}
+                      </button>
+                    )}
+                  </div>
+                  <p className="message-copy mt-2 text-[0.95rem] leading-6 text-white/74">
+                    {message.text}
+                  </p>
+                </article>
+              ))
+            )}
+          </div>
+
+          <form onSubmit={sendText} className="composer-form mt-4 pb-[env(safe-area-inset-bottom)] sm:mt-6 sm:pb-0">
+            <label htmlFor="message" className="sr-only">
+              Type a message
+            </label>
+            <div className="composer">
+              <input
+                id="message"
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder={connected ? "Type if you’d rather…" : "Connect to send a message"}
+                disabled={!connected}
+                autoComplete="off"
+              />
+              <Button
+                type="submit"
+                size="icon"
+                disabled={!connected || !input.trim()}
+                className="shrink-0 rounded-full bg-white text-[#11121c] hover:bg-[#f4ff74] disabled:bg-white/8 disabled:text-white/25"
+                aria-label="Send message"
+              >
+                <ArrowUp size={18} />
+              </Button>
+            </div>
+          </form>
+        </aside>
+      </section>
+
+      <section className="vox-view vox-today-view relative z-10" hidden={view !== "today"} aria-label="Today">
+        <TodayPanel variant="full" {...todayProps} />
+      </section>
+
+      <section className="vox-view vox-settings-view relative z-10" hidden={view !== "settings"} aria-labelledby="settings-heading">
+        <div className="vox-view-heading">
+          <p className="vox-view-eyebrow">SYSTEMS</p>
+          <h1 id="settings-heading" className="font-display">Settings</h1>
+        </div>
+        <div className="settings-groups">
+          {connectionMode === "cloud" && authState === "authenticated" && (
+            <SettingsGroup title="Connected accounts">
+                {connectionMode === "cloud" && authState === "authenticated" && <MailConnection />}
+                {connectionMode === "cloud" && authState === "authenticated" && (
+                  <FlashcardsConnection
+                    studying={studying}
+                    onStudy={() => startStudy("Let's go through my flash cards.", null)}
+                    onStopStudy={() => stopStudy(true)}
+                  />
+                )}
+            </SettingsGroup>
+          )}
+          {connectionMode === "cloud" && (
+            <SettingsGroup title="Calls and people">
+                {connectionMode === "cloud" && <Sheet
+                  open={invitesOpen}
+                  onOpenChange={(open) => {
+                    setInvitesOpen(open);
+                    if (!open) setNewInviteCode("");
+                  }}
+                >
+                  <SheetTrigger asChild>
+                    <SettingsRow icon={<UserPlus />} title="Sharing" detail="Share codes for people you invite to Vox" />
+                  </SheetTrigger>
+                  <SheetContent className="w-[min(94vw,440px)] border-white/10 bg-[#10111b] text-white sm:max-w-[440px]">
+                    <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
+                      <div className="flex items-center gap-2 text-[#f4ff74]">
+                        <KeyRound size={18} />
+                        <SheetTitle className="font-display text-xl text-white">
+                          Share access
+                        </SheetTitle>
+                      </div>
+                      <SheetDescription className="mt-2 leading-6 text-white/46">
+                        Create a private sign-in code for one person. Vox stores only a
+                        secure hash, so this code cannot be recovered later.
+                      </SheetDescription>
+                    </SheetHeader>
+
+                    <div className="flex-1 overflow-y-auto px-5 py-5">
+                      {inviteLoading ? (
+                        <p className="py-10 text-center text-sm text-white/40">
+                          Checking invitations…
+                        </p>
+                      ) : inviteError && !inviteStatus ? (
+                        <div className="rounded-2xl border border-[#ff766c]/20 bg-[#ff766c]/[0.06] p-4">
+                          <p className="text-sm text-[#ffaaa4]">{inviteError}</p>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="mt-3 border-white/10 bg-white/[0.04] text-white"
+                            onClick={() => void loadInviteStatus()}
+                          >
+                            Try again
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="space-y-5">
+                          <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
+                            <p className="text-sm font-semibold text-white/82">
+                              {inviteStatus?.unlimited
+                                ? "Master invitations"
+                                : inviteStatus?.canGenerate
+                                  ? "One invitation available"
+                                  : "Invitation already created"}
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-white/44">
+                              {inviteStatus?.unlimited
+                                ? `You can create as many codes as needed. ${inviteStatus.generated} created so far.`
+                                : inviteStatus?.canGenerate
+                                  ? "Your account may create one share code. The person who receives it will also be able to invite one person."
+                                  : "Regular accounts can create one share code total."}
+                            </p>
+                          </div>
+
+                          {newInviteCode ? (
+                            <div className="rounded-2xl border border-[#f4ff74]/20 bg-[#f4ff74]/[0.06] p-4">
+                              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#f4ff74]/70">
+                                New share code
+                              </p>
+                              <p className="mt-3 break-all font-mono text-sm leading-6 text-white/88">
+                                {newInviteCode}
+                              </p>
+                              <Button
+                                type="button"
+                                className="mt-4 h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                                onClick={() => void copyInviteCode()}
+                              >
+                                <Copy /> Copy code
+                              </Button>
+                              {inviteStatus?.unlimited && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="mt-2 h-11 w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+                                  onClick={() => setNewInviteCode("")}
+                                >
+                                  <UserPlus /> Create another
+                                </Button>
+                              )}
+                              <p className="mt-3 text-xs leading-5 text-white/38">
+                                Save or send it now. For privacy, Vox will not show this
+                                exact code again after you close this panel.
+                              </p>
+                            </div>
+                          ) : inviteStatus?.canGenerate ? (
+                            <div className="space-y-3">
+                              <label htmlFor="invite-name" className="text-sm text-white/68">
+                                Name or label <span className="text-white/32">(optional)</span>
+                              </label>
+                              <input
+                                id="invite-name"
+                                value={inviteName}
+                                onChange={(event) => setInviteName(event.target.value)}
+                                maxLength={80}
+                                placeholder="Friend, teammate…"
+                                className="h-12 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
+                              />
+                              <Button
+                                type="button"
+                                className="h-12 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                                disabled={inviteCreating}
+                                onClick={() => void createShareCode()}
+                              >
+                                <UserPlus />
+                                {inviteCreating ? "Creating…" : "Create share code"}
+                              </Button>
+                            </div>
+                          ) : null}
+
+                          {inviteError && inviteStatus && (
+                            <p className="text-sm text-[#ffaaa4]">{inviteError}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </SheetContent>
+                </Sheet>}
+
+                {connectionMode === "cloud" && cloudUserRole === "master" && (
+                  <Sheet
+                    open={phoneAssistantOpen}
+                    onOpenChange={(open) => {
+                      setPhoneAssistantOpen(open);
+                      if (open) void loadPhoneAssistantStatus();
+                      else {
+                        setPhoneAssistantEditing(false);
+                        setPhoneAssistantCallbackNumber("");
+                        setPhoneAssistantPassphrase("");
+                        setPhoneAssistantError("");
+                      }
+                    }}
+                  >
+                    <SheetTrigger asChild>
+                      <SettingsRow icon={<PhoneCall />} title="Phone assistant" detail="Call Vox, and let it call you for reminders" />
+                    </SheetTrigger>
+                    <SheetContent className="w-[min(94vw,440px)] border-white/10 bg-[#10111b] text-white sm:max-w-[440px]">
+                      <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
+                        <div className="flex items-center gap-2 text-[#f4ff74]">
+                          <PhoneCall size={18} />
+                          <SheetTitle className="font-display text-xl text-white">
+                            Phone assistant
+                          </SheetTitle>
+                        </div>
+                        <SheetDescription className="mt-2 leading-6 text-white/46">
+                          Calls begin on Vox Cloud. Say “switch to my Mac” when you
+                          want an action handled by your paired desktop, or “switch to
+                          cloud” to return. Sensitive actions still follow the Mac’s
+                          local safety policy.
+                        </SheetDescription>
+                      </SheetHeader>
+                      <div className="flex-1 overflow-y-auto px-5 py-5">
+                        {!phoneAssistantStatus ? (
+                          <p className="py-10 text-center text-sm text-white/40">
+                            Checking phone service…
+                          </p>
+                        ) : !phoneAssistantStatus.serviceConfigured ? (
+                          <div className="rounded-2xl border border-[#f4ff74]/14 bg-[#f4ff74]/[0.045] p-4">
+                            <p className="text-sm font-semibold text-white/82">
+                              Twilio connection required
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-white/44">
+                              The interface is ready, but the service owner still needs
+                              to add the Twilio account credentials and phone number to
+                              the server. No calls can be placed until then.
+                            </p>
+                          </div>
+                        ) : !phoneAssistantStatus.configured || phoneAssistantEditing ? (
+                          <div className="space-y-4">
+                            <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4 text-xs leading-5 text-white/44">
+                              {phoneAssistantStatus.configured
+                                ? "Enter the complete replacement setup. For security, the existing sentence and callback number cannot be revealed on this device."
+                                : "Choose a private sentence you can say naturally. Vox stores only a keyed hash—not the sentence or a voiceprint. Anyone who knows the exact sentence could authenticate, so do not reuse a familiar quote or say it where others can hear."}
+                            </div>
+                            <label className="block text-sm text-white/68" htmlFor="phone-assistant-passphrase">
+                              Private spoken sentence
+                            </label>
+                            <input
+                              id="phone-assistant-passphrase"
+                              type="password"
+                              value={phoneAssistantPassphrase}
+                              onChange={(event) => setPhoneAssistantPassphrase(event.target.value.slice(0, 160))}
+                              placeholder="An uncommon sentence, at least 12 characters"
+                              autoComplete="new-password"
+                              className="h-12 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
+                            />
+                            <label className="block text-sm text-white/68" htmlFor="phone-assistant-callback">
+                              Callback number <span className="text-white/32">(optional)</span>
+                            </label>
+                            <input
+                              id="phone-assistant-callback"
+                              type="tel"
+                              value={phoneAssistantCallbackNumber}
+                              onChange={(event) => setPhoneAssistantCallbackNumber(event.target.value)}
+                              placeholder="+886…"
+                              autoComplete="tel"
+                              className="h-12 w-full rounded-2xl border border-white/10 bg-black/20 px-4 text-base text-white outline-none placeholder:text-white/28 focus:border-[#c8bcff]/50 focus:ring-2 focus:ring-[#c8bcff]/15"
+                            />
+                            <p className="text-xs leading-5 text-white/36">
+                              {phoneAssistantStatus.configured
+                                ? "Enter the full callback number again to keep or replace it. Leaving it blank removes the saved callback number."
+                                : "This number is used only when you explicitly request a call from Vox. It is never used to authenticate an incoming call."}
+                            </p>
+                            <Button
+                              type="button"
+                              disabled={phoneAssistantBusy || phoneAssistantPassphrase.trim().length < 12}
+                              onClick={() => void configurePhoneAssistant()}
+                              className="h-12 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                            >
+                              <PhoneCall /> {phoneAssistantBusy
+                                ? "Saving…"
+                                : phoneAssistantStatus.configured
+                                  ? "Update phone setup"
+                                  : "Enable phone access"}
+                            </Button>
+                            {phoneAssistantStatus.configured && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                disabled={phoneAssistantBusy}
+                                onClick={() => {
+                                  setPhoneAssistantEditing(false);
+                                  setPhoneAssistantCallbackNumber("");
+                                  setPhoneAssistantPassphrase("");
+                                  setPhoneAssistantError("");
+                                }}
+                                className="h-10 w-full rounded-full text-white/48 hover:bg-white/[0.05] hover:text-white"
+                              >
+                                Cancel
+                              </Button>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2 rounded-2xl border border-[#c8bcff]/14 bg-[#c8bcff]/[0.045] p-3 text-xs leading-5 text-white/48">
+                              <Globe2 className="size-4 shrink-0 text-[#c8bcff]" />
+                              Vox Cloud owner setting · synced across web and desktop
+                            </div>
+                            <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
+                              <p className="text-sm font-semibold text-white/82">
+                                {phoneAssistantStatus.enabled ? "Phone access on" : "Phone access paused"}
+                              </p>
+                              <p className="mt-2 text-xs leading-5 text-white/44">
+                                Private sentence configured. Call
+                                {phoneAssistantStatus.inboundNumber
+                                  ? ` ${phoneAssistantStatus.inboundNumber}`
+                                  : " the Vox number"}
+                                , then say your sentence when Vox asks. No caller phone
+                                number is used as authentication.
+                              </p>
+                            </div>
+                            <div className="rounded-2xl border border-emerald-300/12 bg-emerald-300/[0.045] p-4">
+                              <p className="text-sm font-semibold text-white/82">
+                                Voice routing · Cloud by default
+                              </p>
+                              <p className="mt-2 text-xs leading-5 text-white/44">
+                                During a call, say “use my Mac” before a local task.
+                                Vox confirms the route aloud and will not claim a Mac
+                                action succeeded until the paired desktop returns it.
+                              </p>
+                              {desktopPersonalAvailable && (
+                                phoneMacRoutingConfigured ? (
+                                  <p className="mt-3 flex items-center gap-2 text-xs font-medium text-emerald-200/80">
+                                    <ShieldCheck className="size-3.5" /> Ready on this Mac
+                                  </p>
+                                ) : (
+                                  <div className="mt-4 space-y-3">
+                                    <p className="text-xs leading-5 text-white/44">
+                                      One-time setup: enter the same private sentence
+                                      used for phone authentication. Only a derived key
+                                      is stored in macOS secure storage.
+                                    </p>
+                                    <input
+                                      type="password"
+                                      value={phoneAssistantPassphrase}
+                                      onChange={(event) => setPhoneAssistantPassphrase(event.target.value.slice(0, 160))}
+                                      placeholder="Your existing private sentence"
+                                      autoComplete="current-password"
+                                      className="h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white outline-none placeholder:text-white/28 focus:border-emerald-300/40 focus:ring-2 focus:ring-emerald-300/10"
+                                    />
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      disabled={phoneAssistantBusy || phoneAssistantPassphrase.trim().length < 12}
+                                      onClick={() => void configurePhoneMacRouting()}
+                                      className="h-10 w-full rounded-full border-emerald-300/16 bg-emerald-300/[0.06] text-emerald-100 hover:bg-emerald-300/10 hover:text-white"
+                                    >
+                                      Enable call-to-Mac routing
+                                    </Button>
+                                  </div>
+                                )
+                              )}
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={phoneAssistantBusy}
+                              onClick={() => void updatePhoneAssistant({ enabled: !phoneAssistantStatus.enabled })}
+                              className="h-11 w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+                            >
+                              {phoneAssistantStatus.enabled ? "Pause incoming calls" : "Enable incoming calls"}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={phoneAssistantBusy}
+                              onClick={() => {
+                                setPhoneAssistantEditing(true);
+                                setPhoneAssistantError("");
+                              }}
+                              className="h-11 w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+                            >
+                              <PhoneCall /> Change spoken sentence or callback
+                            </Button>
+                            <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
+                              <p className="text-sm font-semibold text-white/78">Calls from Vox</p>
+                              <p className="mt-2 text-xs leading-5 text-white/42">
+                                Off by default. When enabled, Vox may call only for an
+                                action you explicitly request. Autonomous check-ins and
+                                third-party calls remain disabled.
+                              </p>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                disabled={phoneAssistantBusy || !phoneAssistantStatus.callbackPhoneLabel}
+                                onClick={() => void updatePhoneAssistant({ allowOutbound: !phoneAssistantStatus.allowOutbound })}
+                                className="mt-3 h-10 w-full rounded-full border-white/10 bg-black/15 text-white hover:bg-white/10 hover:text-white"
+                              >
+                                {phoneAssistantStatus.allowOutbound
+                                  ? "Disable calls from Vox"
+                                  : phoneAssistantStatus.callbackPhoneLabel
+                                    ? "Enable requested calls"
+                                    : "Callback number not configured"}
+                              </Button>
+                              {phoneAssistantStatus.allowOutbound && phoneAssistantStatus.callbackPhoneLabel && (
+                                <Button
+                                  type="button"
+                                  disabled={phoneAssistantBusy}
+                                  onClick={() => void requestPhoneAssistantTestCall()}
+                                  className="mt-2 h-10 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                                >
+                                  <PhoneCall /> Request a test call
+                                </Button>
+                              )}
+                              {!phoneAssistantStatus.callbackPhoneLabel && (
+                                <p className="mt-3 text-xs leading-5 text-white/36">
+                                  Add a callback number by reconnecting if you want Vox to
+                                  place requested calls. Incoming calls already work
+                                  without one.
+                                </p>
+                              )}
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              disabled={phoneAssistantBusy}
+                              onClick={() => void disconnectPhoneAssistant()}
+                              className="h-10 w-full rounded-full text-[#ffaaa4] hover:bg-[#ff766c]/10 hover:text-[#ffc0bb]"
+                            >
+                              Disconnect phone
+                            </Button>
+                          </div>
+                        )}
+                        {phoneAssistantError && (
+                          <p className="mt-4 rounded-xl border border-[#ff766c]/16 bg-[#ff766c]/[0.055] px-3.5 py-3 text-xs leading-5 text-[#ffaaa4]">
+                            {phoneAssistantError}
+                          </p>
+                        )}
+                      </div>
+                    </SheetContent>
+                  </Sheet>
+                )}
+
+            </SettingsGroup>
+          )}
+          <SettingsGroup title="Devices">
+              {desktopPersonalAvailable && connectionMode === "cloud" && (
+                <Sheet
+                  open={remotePairingOpen}
+                  onOpenChange={(open) => {
+                    setRemotePairingOpen(open);
+                    if (open) void refreshDesktopPairingStatus();
+                  }}
+                >
+                  <SheetTrigger asChild>
+                    <SettingsRow
+                      icon={<Smartphone />}
+                      title="iPhone and iPad"
+                      detail={remotePairingStatus?.status === "active" ? "A phone is paired with this Mac" : "Pair a phone to control this Mac by voice"}
+                      tone={remotePairingStatus?.status === "active" ? "ok" : "default"}
+                    />
+                  </SheetTrigger>
+                  <SheetContent className="w-[min(94vw,460px)] border-white/10 bg-[#10111b] text-white sm:max-w-[460px]">
+                    <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
+                      <div className="flex items-center gap-2 text-[#f4ff74]">
+                        <Smartphone size={18} />
+                        <SheetTitle className="font-display text-xl text-white">
+                          Phone control
+                        </SheetTitle>
+                      </div>
+                      <SheetDescription className="mt-2 leading-6 text-white/46">
+                        Pair your phone’s Vox web app with this Mac. The cloud relays
+                        encrypted envelopes but never receives the control key.
+                      </SheetDescription>
+                    </SheetHeader>
+                    <div className="flex-1 overflow-y-auto px-5 py-5">
+                      <div className="rounded-2xl border border-emerald-300/12 bg-emerald-300/[0.045] p-4 text-xs leading-5 text-white/56">
+                        <div className="flex items-start gap-2">
+                          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-300" />
+                          <p>
+                            A database leak cannot reveal or forge the encrypted commands.
+                            Sensitive local Codex work still needs approval on this Mac.
+                          </p>
+                        </div>
+                      </div>
+
+                      {remotePairingStatus?.status === "active" ? (
+                        <div className="mt-5 space-y-4">
+                          <div className="rounded-2xl border border-[#f4ff74]/16 bg-[#f4ff74]/[0.05] p-4">
+                            <p className="flex items-center gap-2 text-sm font-semibold text-white/86">
+                              <span className={`size-2 rounded-full ${remotePairingStatus.armed ? "bg-emerald-400" : "bg-amber-300"}`} />
+                              {remotePairingStatus.armed ? "Remote control active" : "Phone paired · control paused"}
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-white/44">
+                              {remotePairingStatus.armed
+                                ? `${remotePairingStatus.phoneLabel || "Your phone browser"} may ask this Mac to use approved apps until you pause control or quit Vox.`
+                                : "Pairing alone cannot operate this Mac. Enable control only when you expect to use it."}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant={remotePairingStatus.armed ? "outline" : "default"}
+                            disabled={remotePairingBusy}
+                            onClick={() => void setRemoteControlArmed(!remotePairingStatus.armed)}
+                            className={remotePairingStatus.armed
+                              ? "h-11 w-full rounded-full border-amber-300/22 bg-amber-300/[0.06] text-amber-100 hover:bg-amber-300/12"
+                              : "h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"}
+                          >
+                            <ShieldCheck />
+                            {remotePairingStatus.armed ? "Pause remote control" : "Allow remote control"}
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-11 w-full rounded-full border-[#ff766c]/22 bg-[#ff766c]/[0.06] text-[#ffaaa4] hover:bg-[#ff766c]/12 hover:text-[#ffc0bc]"
+                              >
+                                Disconnect phone
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent className="border-white/10 bg-[#171823] text-white">
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Disconnect the paired phone?</AlertDialogTitle>
+                                <AlertDialogDescription className="leading-6 text-white/46">
+                                  Its saved key will stop working immediately. You can create a new pairing later.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel className="border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white">
+                                  Keep connected
+                                </AlertDialogCancel>
+                                <AlertDialogAction
+                                  variant="destructive"
+                                  disabled={remotePairingBusy}
+                                  onClick={() => void revokePhonePairing()}
+                                >
+                                  Disconnect
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
+                      ) : (
+                        <div className="mt-5 space-y-4">
+                          <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
+                            <p className="text-sm font-semibold text-white/82">
+                              {remotePairingStatus?.status === "pending"
+                                ? "Waiting for your phone"
+                                : "No phone paired"}
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-white/44">
+                              Create a short-lived private QR code, scan it with your
+                              phone, sign in to the same Vox account, and approve pairing
+                              there.
+                            </p>
+                          </div>
+                          {remotePairingUrl && (
+                            <div className="rounded-2xl border border-[#c8bcff]/16 bg-[#c8bcff]/[0.05] p-4">
+                              <div className="text-center">
+                                <p className="text-sm font-semibold text-white/80">
+                                  Scan with your phone camera
+                                </p>
+                                <p className="mt-2 text-xs leading-5 text-white/42">
+                                  The QR code expires shortly and works only after you
+                                  sign in to the same Vox account.
+                                </p>
+                              </div>
+                              {remotePairingQr ? (
+                                <div className="mx-auto mt-4 w-fit rounded-2xl bg-white p-3 shadow-[0_0_32px_rgba(200,188,255,0.12)]">
+                                  {/* Pairing QR is generated locally; no QR service receives its private key. */}
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={remotePairingQr}
+                                    alt="QR code for securely pairing this phone with Vox on the Mac"
+                                    className="h-52 w-52"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="mx-auto mt-4 flex h-52 w-52 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.035] text-xs text-white/38">
+                                  Preparing QR code…
+                                </div>
+                              )}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="mt-4 h-10 w-full rounded-full border-white/10 bg-white/[0.035] text-white/68 hover:bg-white/[0.07] hover:text-white"
+                                onClick={() => void copyPhonePairingLink()}
+                              >
+                                <Copy /> Copy link instead
+                              </Button>
+                            </div>
+                          )}
+                          <Button
+                            type="button"
+                            disabled={remotePairingBusy || remotePairingStatus?.secureStorageAvailable === false}
+                            onClick={() => void createPhonePairing()}
+                            className="h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                          >
+                            <Smartphone />
+                            {remotePairingBusy
+                              ? "Creating…"
+                              : remotePairingStatus?.status === "pending"
+                                ? "Create a new QR code"
+                                : "Create pairing QR code"}
+                          </Button>
+                        </div>
+                      )}
+                      {remotePairingError && (
+                        <p className="mt-4 rounded-xl border border-[#ff766c]/16 bg-[#ff766c]/[0.055] px-3.5 py-3 text-xs leading-5 text-[#ffaaa4]">
+                          {remotePairingError}
+                        </p>
+                      )}
+                    </div>
+                  </SheetContent>
+                </Sheet>
+              )}
+
+              {!desktopPersonalAvailable && connectionMode === "cloud" && !remoteMacPairing && nativePairingScanAvailable && (
+                <SettingsRow
+                  icon={<ScanQrCode />}
+                  title="Pair with your Mac"
+                  detail="Scan the code on your Mac to control it from here"
+                  onClick={() => window.voxNativeIOS?.scanPairing()}
+                />
+              )}
+
+              {!desktopPersonalAvailable && connectionMode === "cloud" && remoteMacPairing && (
+                <Sheet open={remoteRoutingOpen} onOpenChange={setRemoteRoutingOpen}>
+                  <SheetTrigger asChild>
+                    <SettingsRow
+                      icon={webActionRouting === "paired_mac" ? <Smartphone /> : <Globe2 />}
+                      title="Where actions run"
+                      detail={webActionRouting === "paired_mac" ? "On your paired Mac" : "In this browser only"}
+                      tone={webActionRouting === "paired_mac" ? "ok" : "default"}
+                    />
+                  </SheetTrigger>
+                  <SheetContent className="w-[min(94vw,440px)] border-white/10 bg-[#10111b] text-white sm:max-w-[440px]">
+                    <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
+                      <div className="flex items-center gap-2 text-[#f4ff74]">
+                        <Link2 size={18} />
+                        <SheetTitle className="font-display text-xl text-white">
+                          Action routing
+                        </SheetTitle>
+                      </div>
+                      <SheetDescription className="mt-2 leading-6 text-white/46">
+                        Choose explicitly whether device actions stay unavailable in
+                        this browser or travel to your paired Mac.
+                      </SheetDescription>
+                    </SheetHeader>
+                    <div className="flex-1 space-y-3 overflow-y-auto px-5 py-5">
+                      <button
+                        type="button"
+                        onClick={() => chooseWebActionRouting("web_only")}
+                        className={`w-full rounded-2xl border p-4 text-left transition ${webActionRouting === "web_only" ? "border-[#f4ff74]/30 bg-[#f4ff74]/[0.07]" : "border-white/9 bg-white/[0.035] hover:bg-white/[0.06]"}`}
+                      >
+                        <span className="flex items-center gap-2 text-sm font-semibold text-white/86">
+                          <Globe2 className="size-4" /> Web only
+                          {webActionRouting === "web_only" && <CheckCircle2 className="ml-auto size-4 text-[#f4ff74]" />}
+                        </span>
+                        <span className="mt-2 block text-xs leading-5 text-white/44">
+                          Conversation, search, reminders, and files use Vox Cloud. No
+                          command is sent to the Mac.
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!remoteMacReady}
+                        onClick={() => chooseWebActionRouting("paired_mac")}
+                        className={`w-full rounded-2xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${webActionRouting === "paired_mac" ? "border-[#f4ff74]/30 bg-[#f4ff74]/[0.07]" : "border-white/9 bg-white/[0.035] enabled:hover:bg-white/[0.06]"}`}
+                      >
+                        <span className="flex items-center gap-2 text-sm font-semibold text-white/86">
+                          <Smartphone className="size-4" /> Paired Mac
+                          {webActionRouting === "paired_mac" && <CheckCircle2 className="ml-auto size-4 text-[#f4ff74]" />}
+                        </span>
+                        <span className="mt-2 block text-xs leading-5 text-white/44">
+                          {remoteMacReady
+                            ? "App control, smart-home commands, folder opening, and approved Codex tasks route through the encrypted Mac link."
+                            : "The Mac is offline. Open Vox Desktop on the paired Mac to make this route available."}
+                        </span>
+                      </button>
+                      <p className="px-1 pt-2 text-[0.68rem] leading-5 text-white/32">
+                        This choice is stored only in this browser and remains visible
+                        in the header. Pairing never enables Mac routing by itself.
+                      </p>
+                      <WelcomeHomePhoneToggle />
+                    </div>
+                  </SheetContent>
+                </Sheet>
+              )}
+
+              {desktopPersonalAvailable && (
+                <Sheet open={smartHomeOpen} onOpenChange={changeSmartHomeOpen}>
+                  <SheetTrigger asChild>
+                    <SettingsRow icon={<House />} title="Home devices" detail="Lights and devices on your home network" />
+                  </SheetTrigger>
+                  <SheetContent className="w-[min(94vw,480px)] border-white/10 bg-[#10111b] text-white sm:max-w-[480px]">
+                    <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
+                      <div className="flex items-center gap-2 text-[#f4ff74]">
+                        <House size={18} />
+                        <SheetTitle className="font-display text-xl text-white">
+                          Home devices
+                        </SheetTitle>
+                      </div>
+                      <SheetDescription className="mt-2 leading-6 text-white/46">
+                        A local smart-home hub for Vox Desktop. Dyson purifier support is
+                        the first device adapter; more device types can be added later.
+                      </SheetDescription>
+                    </SheetHeader>
+
+                    <div className="flex-1 overflow-y-auto px-5 py-5">
+                      <div className="mb-5 flex items-start gap-2 rounded-xl border border-emerald-300/12 bg-emerald-300/[0.045] px-3.5 py-3 text-xs leading-5 text-white/56">
+                        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-300" />
+                        Device control stays on this Mac and your Wi-Fi network. Credentials
+                        are encrypted with macOS secure storage and are never sent to Vox Cloud.
+                      </div>
+
+                      {smartHomeStatus?.devices.map((device) => (
+                        <article
+                          key={device.id}
+                          className="mb-3 rounded-2xl border border-white/9 bg-white/[0.035] p-4"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-sky-300/15 bg-sky-300/[0.06] text-sky-200">
+                              <Wind size={18} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-semibold text-white/82">{device.name}</p>
+                              <p className="mt-1 text-xs text-white/40">Dyson purifier · local Wi-Fi</p>
+                              <p className="mt-2 truncate font-mono text-[0.66rem] text-white/28">
+                                {device.host} · {device.productType}
+                              </p>
+                            </div>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  type="button"
+                                  size="icon-sm"
+                                  variant="ghost"
+                                  className="shrink-0 rounded-full text-white/32 hover:bg-[#ff766c]/10 hover:text-[#ff9d96]"
+                                  aria-label={`Remove ${device.name}`}
+                                >
+                                  <Trash2 />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent className="border-white/10 bg-[#171823] text-white">
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Remove this home device?</AlertDialogTitle>
+                                  <AlertDialogDescription className="leading-6 text-white/46">
+                                    Vox will delete the encrypted local credential for “{device.name}” from this Mac.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel className="border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white">
+                                    Keep it
+                                  </AlertDialogCancel>
+                                  <AlertDialogAction
+                                    variant="destructive"
+                                    disabled={smartHomeBusy}
+                                    onClick={() => void removeSmartHomeDevice(device.id)}
+                                  >
+                                    Remove
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        </article>
+                      ))}
+
+                      <div className="my-5 border-t border-white/8" />
+                      <div className="mb-4 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-white/82">Add a Dyson purifier</p>
+                          <p className="mt-1 text-xs text-white/38">The purifier must already be on the same Wi-Fi.</p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={smartHomeBusy}
+                          onClick={() => void discoverSmartHome()}
+                          className="rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+                        >
+                          <Wifi /> {smartHomeBusy ? "Looking…" : "Discover"}
+                        </Button>
+                      </div>
+
+                      {smartHomeDiscovery.length > 0 && (
+                        <div className="mb-4 space-y-2">
+                          {smartHomeDiscovery.map((device) => (
+                            <button
+                              key={`${device.adapter}:${device.host}`}
+                              type="button"
+                              onClick={() => selectDiscoveredSmartHomeDevice(device)}
+                              className="flex w-full items-center justify-between rounded-xl border border-sky-300/12 bg-sky-300/[0.04] px-3.5 py-3 text-left transition hover:bg-sky-300/[0.08]"
+                            >
+                              <span>
+                                <span className="block text-sm text-white/76">{device.name}</span>
+                                <span className="mt-1 block font-mono text-[0.65rem] text-white/30">{device.host}</span>
+                              </span>
+                              <span className="text-xs text-sky-200/70">Use</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      <form onSubmit={saveDysonDevice} className="space-y-3.5">
+                        <div className="grid grid-cols-2 gap-2 rounded-xl bg-black/20 p-1">
+                          <button
+                            type="button"
+                            onClick={() => setDysonSetupMethod("sticker")}
+                            className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${dysonSetupMethod === "sticker" ? "bg-white/10 text-white" : "text-white/38 hover:text-white/65"}`}
+                          >
+                            Older sticker setup
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDysonSetupMethod("manual")}
+                            className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${dysonSetupMethod === "manual" ? "bg-white/10 text-white" : "text-white/38 hover:text-white/65"}`}
+                          >
+                            Local credential
+                          </button>
+                        </div>
+
+                        <label className="block text-xs text-white/50">
+                          Device name
+                          <input
+                            value={dysonName}
+                            onChange={(event) => setDysonName(event.target.value)}
+                            maxLength={80}
+                            required
+                            className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                            placeholder="Living room purifier"
+                          />
+                        </label>
+                        <label className="block text-xs text-white/50">
+                          Local IP address or hostname
+                          <input
+                            value={dysonHost}
+                            onChange={(event) => setDysonHost(event.target.value)}
+                            maxLength={253}
+                            required
+                            className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 font-mono text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                            placeholder="192.168.1.40"
+                          />
+                        </label>
+
+                        {dysonSetupMethod === "sticker" ? (
+                          <>
+                            <label className="block text-xs text-white/50">
+                              Purifier sticker network name
+                              <input
+                                value={dysonWifiSsid}
+                                onChange={(event) => setDysonWifiSsid(event.target.value)}
+                                maxLength={100}
+                                required
+                                autoComplete="off"
+                                className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 font-mono text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                                placeholder="DYSON-ABC-TW-12345678-438K"
+                              />
+                            </label>
+                            <label className="block text-xs text-white/50">
+                              Purifier sticker Wi-Fi code
+                              <input
+                                type="password"
+                                value={dysonWifiPassword}
+                                onChange={(event) => setDysonWifiPassword(event.target.value)}
+                                maxLength={100}
+                                required
+                                autoComplete="new-password"
+                                className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                                placeholder="Code printed on the purifier label"
+                              />
+                            </label>
+                            <p className="text-[0.68rem] leading-5 text-white/34">
+                              This is the purifier’s own printed setup code—not your home Wi-Fi password. Vox derives a local credential and never stores the printed code.
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <div className="grid grid-cols-[1fr_110px] gap-2.5">
+                              <label className="block text-xs text-white/50">
+                                Serial number
+                                <input
+                                  value={dysonSerial}
+                                  onChange={(event) => setDysonSerial(event.target.value)}
+                                  maxLength={40}
+                                  required
+                                  className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 font-mono text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                                  placeholder="ABC-TW-12345678"
+                                />
+                              </label>
+                              <label className="block text-xs text-white/50">
+                                Product type
+                                <input
+                                  value={dysonProductType}
+                                  onChange={(event) => setDysonProductType(event.target.value)}
+                                  maxLength={8}
+                                  required
+                                  className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 font-mono text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                                  placeholder="438K"
+                                />
+                              </label>
+                            </div>
+                            <label className="block text-xs text-white/50">
+                              Local device credential
+                              <input
+                                type="password"
+                                value={dysonCredential}
+                                onChange={(event) => setDysonCredential(event.target.value)}
+                                maxLength={512}
+                                required
+                                autoComplete="new-password"
+                                className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none placeholder:text-white/25 focus:border-sky-300/40"
+                                placeholder="Credential exported for local Dyson control"
+                              />
+                            </label>
+                            <p className="text-[0.68rem] leading-5 text-white/34">
+                              Newer Dyson models require their local device credential. Vox does not ask for or store your MyDyson account password.
+                            </p>
+                          </>
+                        )}
+
+                        {smartHomeError && (
+                          <p className="rounded-xl border border-[#ff766c]/16 bg-[#ff766c]/[0.055] px-3.5 py-3 text-xs leading-5 text-[#ffaaa4]">
+                            {smartHomeError}
+                          </p>
+                        )}
+                        <Button
+                          type="submit"
+                          disabled={smartHomeBusy || smartHomeStatus?.secureStorageAvailable === false}
+                          className="h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
+                        >
+                          <Wind /> {smartHomeBusy ? "Connecting…" : "Save and test locally"}
+                        </Button>
+                      </form>
+                    </div>
+                  </SheetContent>
+                </Sheet>
+              )}
+
+              {desktopPersonalAvailable && (
+                <SettingsRow
+                  icon={connectionMode === "personal" ? <Code2 /> : <Globe2 />}
+                  title="Connection"
+                  detail={connectionMode === "personal" ? "Personal: runs on this Mac with your own key" : "Cloud: your Vox account, synced across devices"}
+                  onClick={openConnectionChooser}
+                />
+              )}
+
+          </SettingsGroup>
+          <SettingsGroup title="Voice">
+              {desktopPersonalAvailable && <VoiceFilterSettings />}
           <div className="control-deck flex w-full flex-col items-stretch gap-4 border-t border-white/8 pt-5 text-xs text-white/36 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <span className="control-deck-title flex items-center gap-2">
               <Volume2 size={14} /> Headphones recommended
@@ -7633,56 +8287,19 @@ export default function Home() {
               </span>
             </div>
           </div>
-        </div>
 
-        <div
-          className="panel-resize-handle"
-          role="separator"
-          aria-label="Resize conversation panel"
-          aria-orientation="vertical"
-          aria-valuemin={MIN_CONVERSATION_WIDTH}
-          aria-valuemax={MAX_CONVERSATION_WIDTH}
-          aria-valuenow={conversationWidth}
-          aria-valuetext={`${conversationWidth} pixels wide`}
-          tabIndex={0}
-          onPointerDown={beginConversationResize}
-          onKeyDown={resizeConversationWithKeyboard}
-          onDoubleClick={() => {
-            const grid = interfaceGridRef.current;
-            if (!grid) return;
-            saveConversationWidth(
-              clampConversationWidth(
-                DEFAULT_CONVERSATION_WIDTH,
-                grid.clientWidth,
-              ),
-            );
-          }}
-        >
-          <span aria-hidden="true" />
+          </SettingsGroup>
         </div>
+      </section>
 
-        <aside className="conversation-console transcript-panel flex flex-col border-t border-white/8 p-4 sm:min-h-[560px] sm:p-7 lg:min-h-0 lg:border-t-0 lg:p-8">
-          <div className="transcript-header flex items-start justify-between gap-3 sm:gap-5">
-            <div>
-              <p className="font-display text-xl font-medium tracking-tight">
-                {theme === "holographic" ? "Conversation stream" : "Conversation"}
-              </p>
-              <p className="mt-1 text-sm text-white/40">
-                {theme === "holographic"
-                  ? `LIVE LOG / ${messages.length.toString().padStart(2, "0")} ENTRIES`
-                  : "A lightweight live transcript"}
-              </p>
-            </div>
-            <div className="transcript-actions flex items-center gap-1.5">
-              {messages.length > 0 && (
-                <button
-                  type="button"
-                  onClick={clearConversation}
-                  className="transcript-clear rounded-full px-3 py-1.5 text-xs text-white/36 transition hover:bg-white/5 hover:text-white/70"
-                >
-                  Clear
-                </button>
-              )}
+      <section className="vox-view vox-library-view relative z-10" hidden={view !== "library"} aria-labelledby="library-heading">
+        <div className="vox-view-heading">
+          <p className="vox-view-eyebrow">ARCHIVE</p>
+          <h1 id="library-heading" className="font-display">Library</h1>
+        </div>
+        <div className="settings-groups">
+          {connectionMode === "cloud" ? (
+            <SettingsGroup title="Kept by Vox">
               {connectionMode === "cloud" && <>
               <Sheet
                 open={remindersOpen}
@@ -7695,16 +8312,11 @@ export default function Home() {
                 }}
               >
                 <SheetTrigger asChild>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="rounded-full border-white/10 bg-white/[0.04] text-white/66 shadow-none hover:bg-white/10 hover:text-white"
-                    aria-label={`Open reminders, ${reminders.filter((reminder) => reminder.status === "pending").length} pending`}
-                  >
-                    <Bell />
-                    {reminders.filter((reminder) => reminder.status === "pending").length}
-                  </Button>
+                  <SettingsRow
+                    icon={<Bell />}
+                    title="Reminders"
+                    detail={`${reminders.filter((reminder) => reminder.status === "pending").length} coming up`}
+                  />
                 </SheetTrigger>
                 <SheetContent className="w-[min(92vw,460px)] border-white/10 bg-[#10111b] text-white sm:max-w-[460px]">
                   <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
@@ -8129,16 +8741,7 @@ export default function Home() {
               </Sheet>
               <Sheet open={filesOpen} onOpenChange={setFilesOpen}>
                 <SheetTrigger asChild>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="rounded-full border-white/10 bg-white/[0.04] text-white/66 shadow-none hover:bg-white/10 hover:text-white"
-                    aria-label={`Open files, ${files.length} saved`}
-                  >
-                    <FolderOpen />
-                    {files.length}
-                  </Button>
+                  <SettingsRow icon={<FolderOpen />} title="Files" detail={`${files.length} made by Vox`} />
                 </SheetTrigger>
                 <SheetContent className="w-[min(92vw,460px)] border-white/10 bg-[#10111b] text-white sm:max-w-[460px]">
                   <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
@@ -8268,16 +8871,7 @@ export default function Home() {
               </Sheet>
               <Sheet>
                 <SheetTrigger asChild>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="rounded-full border-white/10 bg-white/[0.04] text-white/66 shadow-none hover:bg-white/10 hover:text-white"
-                    aria-label={`Open memory, ${memories.length} saved`}
-                  >
-                    <Brain />
-                    {memories.length}
-                  </Button>
+                  <SettingsRow icon={<Brain />} title="Memory" detail={`${memories.length} things Vox remembers about you`} />
                 </SheetTrigger>
                 <SheetContent className="w-[min(92vw,430px)] border-white/10 bg-[#10111b] text-white sm:max-w-[430px]">
                   <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
@@ -8392,104 +8986,14 @@ export default function Home() {
                 </SheetContent>
               </Sheet>
               </>}
-            </div>
-          </div>
-
-          <div ref={transcriptRef} role="region" aria-label="Conversation history" tabIndex={0} className="conversation-stream transcript-scroll mt-5 flex-1 space-y-5 overflow-y-auto pr-1 sm:mt-8 sm:space-y-6 sm:pr-2">
-            {thinkingCue && (
-              <article
-                className="message message-assistant border border-[#c8bcff]/12 bg-[#c8bcff]/[0.035]"
-                aria-live="polite"
-              >
-                <p className="message-role">Vox · text only</p>
-                <p className="mt-2 text-[0.95rem] leading-6 text-white/58">
-                  {thinkingCue}
-                </p>
-              </article>
-            )}
-            {messages.length === 0 && !thinkingCue ? (
-              <div className="empty-transcript">
-                <div className="empty-icon">
-                  <AudioLines size={22} />
-                </div>
-                <p className="mt-5 font-display text-lg font-medium">
-                  {theme === "holographic" ? "Awaiting voice input" : "The room is quiet"}
-                </p>
-                <p className="mt-2 max-w-[260px] text-sm leading-6 text-white/38">
-                  {theme === "holographic"
-                    ? "Initialize the private voice link. Conversation data will appear in this stream."
-                    : "Start a voice session and the important parts of your conversation will appear here."}
-                </p>
-              </div>
-            ) : (
-              messages.slice().reverse().map((message) => (
-                <article
-                  key={message.id}
-                  className={`message message-${message.role}${message.source === "phone" ? " message-phone" : ""}`}
-                >
-                  <div className="message-header">
-                    {message.source === "phone" ? (
-                      <div className="message-phone-header">
-                        <span className="message-phone-badge">
-                          <PhoneCall aria-hidden="true" size={12} />
-                          Phone call
-                        </span>
-                        <span className="message-role">
-                          {message.role === "assistant" ? "Vox" : "You"}
-                        </span>
-                      </div>
-                    ) : (
-                      <p className="message-role">
-                        {message.role === "assistant" ? "Vox" : "You"}
-                      </p>
-                    )}
-                    {connectionMode === "cloud" && (
-                      <button
-                        type="button"
-                        className="message-source-toggle"
-                        onClick={() => void togglePhoneCallBadge(message)}
-                        disabled={sourceEditId !== null}
-                        aria-label={message.source === "phone" ? "Remove phone call badge" : "Mark as phone call"}
-                        title={message.source === "phone" ? "Remove phone call badge" : "Mark as phone call"}
-                      >
-                        {message.source === "phone" ? "Remove badge" : "Mark as call"}
-                      </button>
-                    )}
-                  </div>
-                  <p className="message-copy mt-2 text-[0.95rem] leading-6 text-white/74">
-                    {message.text}
-                  </p>
-                </article>
-              ))
-            )}
-          </div>
-
-          <form onSubmit={sendText} className="composer-form mt-4 pb-[env(safe-area-inset-bottom)] sm:mt-6 sm:pb-0">
-            <label htmlFor="message" className="sr-only">
-              Type a message
-            </label>
-            <div className="composer">
-              <input
-                id="message"
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                placeholder={connected ? "Type if you’d rather…" : "Connect to send a message"}
-                disabled={!connected}
-                autoComplete="off"
-              />
-              <Button
-                type="submit"
-                size="icon"
-                disabled={!connected || !input.trim()}
-                className="shrink-0 rounded-full bg-white text-[#11121c] hover:bg-[#f4ff74] disabled:bg-white/8 disabled:text-white/25"
-                aria-label="Send message"
-              >
-                <ArrowUp size={18} />
-              </Button>
-            </div>
-          </form>
-        </aside>
+            </SettingsGroup>
+          ) : (
+            <p className="vox-view-empty">Files, reminders, and memory need a Vox account. Switch to Cloud in Settings to use them.</p>
+          )}
+        </div>
       </section>
+      </div>
+      </div>
     </main>
   );
 }

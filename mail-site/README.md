@@ -1,0 +1,123 @@
+# Vox Mail
+
+A remote MCP server that gives Vox access to the owner's email. People sign in with their **Vox account** (“Sign in with Vox”), add one or more email accounts, and approve MCP clients. Vox connects the same way it connects to Vox Flash Cards.
+
+Three kinds of account sit behind one interface (`src/providers/`):
+
+- **Google** (Gmail, Google Workspace): Gmail REST API, OAuth.
+- **Microsoft** (Outlook.com, Hotmail, Live, Microsoft 365): Microsoft Graph, OAuth. Microsoft has turned off password sign-in for IMAP on Outlook.com, so these addresses always use this path.
+- **Other (IMAP)** (iCloud, Yahoo, Fastmail, Zoho, Gmail with an app password, or any IMAP + SMTP server): the site's own IMAP and SMTP clients over Workers TCP sockets (`src/imap.ts`, `src/smtp.ts`), signing in with an app password.
+
+Google and Microsoft appear only when their client secrets are set. IMAP needs only `MAIL_TOKEN_SECRET`.
+
+## Endpoints
+
+- `GET /`: the user's email accounts (Reconnect, Make primary, Remove) and connected apps
+- `GET /accounts/add`: choose Google, Microsoft, or Other (IMAP)
+- `/google/connect`, `/google/callback`, `/microsoft/connect`, `/microsoft/callback`, `/imap/connect` (GET form, POST check and save)
+- `POST /mcp`: the MCP server (Streamable HTTP, stateless JSON)
+- OAuth for MCP clients: `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/token`
+- Sign in with Vox: `/auth/login`, `/auth/callback`
+
+When an app asks for access and the user has no working account, `/oauth/authorize` parks the request in D1 behind a random nonce and sends them to "Add an email account". Once an account is connected, they come back to the approval page.
+
+## Tools
+
+`list_accounts`, `search_email`, `read_email`, `read_thread`, `list_labels`, `unread_summary`, `create_draft`, `send_email`, `reply_email`, `forward_email`, `send_draft`, `modify_email`, `trash_email`, and `untrash_email`. There is no permanent delete.
+
+- `search_email`, `unread_summary`, `list_labels`, `send_email`, and `create_draft` take an optional `account` (the email address).
+  - Search and unread cover every account, merged by date.
+  - Sending uses the primary account, which you can change on the home page.
+- Message, thread, and draft ids carry their account (`m.<account>.<id>`, `t.…`, `d.…`), so reading, replying, forwarding, labelling, and trashing go to the right account automatically.
+- `modify_email` keeps Gmail's label words in every account:
+  - UNREAD maps to the read state.
+  - STARRED maps to the flag.
+  - Removing INBOX archives.
+  - The account's own labels are Gmail labels, Outlook folders or categories, and IMAP folders.
+- Sending, replying, forwarding, sending drafts, and trashing say in their tool descriptions that they need the user's spoken confirmation. Vox enforces that as well, with MCP `require_approval`.
+
+## Setup (once)
+
+### Encryption secret (required)
+
+```bash
+openssl rand -base64 32 | npx wrangler secret put MAIL_TOKEN_SECRET --config mail-site/wrangler.jsonc
+```
+
+It encrypts every OAuth refresh token and IMAP app password in D1 (AES-GCM, bound to the user and the account). If you change it, stored accounts can no longer be read and must be connected again.
+
+### Google (Gmail)
+
+1. In [console.cloud.google.com](https://console.cloud.google.com), create a project (for example “Vox Mail”), then open **APIs & Services → Library** and enable the **Gmail API**.
+2. Open **Google Auth Platform** (the OAuth consent screen):
+   - **Audience:** External. Under **Test users**, add your own Gmail address.
+   - **Data access:** add `openid`, `.../auth/userinfo.email`, and `https://www.googleapis.com/auth/gmail.modify`.
+   - Then, under **Audience**, click **Publish app** so it is **In production**.
+     - In Testing mode Google expires refresh tokens after 7 days, and Vox would lose Gmail every week.
+     - An unverified app in production shows a “Google hasn’t verified this app” warning. As the owner, click **Advanced → Go to Vox Mail (unsafe)** and it works. Verification is only needed for other people.
+3. Open **Clients → Create client**, choose **Web application**, and add the redirect URI `https://vox-mail.ericcheng306.workers.dev/google/callback`.
+4. Set the secrets:
+
+   ```bash
+   npx wrangler secret put GOOGLE_CLIENT_ID --config mail-site/wrangler.jsonc
+   npx wrangler secret put GOOGLE_CLIENT_SECRET --config mail-site/wrangler.jsonc
+   ```
+
+`gmail.modify` covers reading, composing, sending, labels, and Trash, but not permanent deletion.
+
+### Microsoft (Outlook.com and Microsoft 365)
+
+1. In [entra.microsoft.com](https://entra.microsoft.com), open **Identity → Applications → App registrations → New registration**.
+   - **Name:** Vox Mail.
+   - **Supported account types:** *Accounts in any organizational directory and personal Microsoft accounts*. That is the `common` tenant, which covers Outlook.com, Hotmail, and work or school accounts.
+   - **Redirect URI:** platform **Web**, `https://vox-mail.ericcheng306.workers.dev/microsoft/callback`.
+2. On the app's **Overview**, copy the **Application (client) ID**.
+3. **Certificates & secrets → New client secret**. Copy its **Value** (not the ID). Secrets expire (at most 24 months), so put a reminder in your calendar to renew it.
+4. **API permissions → Add a permission → Microsoft Graph → Delegated**: `offline_access`, `Mail.ReadWrite`, `Mail.Send`, `User.Read`. None needs admin consent for personal accounts. A work tenant's admin may still have to approve the app.
+5. Set the secrets:
+
+   ```bash
+   npx wrangler secret put MS_CLIENT_ID --config mail-site/wrangler.jsonc
+   npx wrangler secret put MS_CLIENT_SECRET --config mail-site/wrangler.jsonc
+   ```
+
+### Other email (IMAP): app passwords
+
+Nothing to set up on the server. The owner picks a provider on the IMAP form, types their address and an **app password** (never their normal password), and Vox Mail signs in to both IMAP and SMTP before saving anything. Only ports 993/143 (IMAP) and 465/587 (SMTP) are allowed, always with TLS or STARTTLS.
+
+- **iCloud:** needs two-factor authentication on the Apple Account. Go to [account.apple.com](https://account.apple.com) → **Sign-In and Security → App-Specific Passwords**, and create one named “Vox Mail”. Use your @icloud.com (or @me.com) address. iCloud files sent mail in Sent itself.
+- **Yahoo:** go to [login.yahoo.com](https://login.yahoo.com) → **Account Info → Account Security → Generate app password**. Vox Mail saves a copy of sent mail in Sent.
+- **Gmail with an app password** (instead of Sign in with Google): turn on 2-Step Verification, then create one at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords). IMAP is always on for Gmail. Google Workspace admins can turn app passwords off.
+- **Fastmail:** Settings → Privacy & Security → **Manage app passwords**, with IMAP and SMTP access.
+- **Zoho:** turn on IMAP in Zoho Mail settings, then create an app-specific password at accounts.zoho.com → Security.
+- **Outlook.com, Hotmail, Live:** not possible with a password. Use Sign in with Microsoft.
+
+If the password is revoked, the next tool call marks the account “needs reconnecting” and the home page offers **Reconnect**. Reconnecting keeps the account id, so earlier message ids keep working.
+
+## Deploy
+
+```bash
+npx wrangler d1 create vox-mail          # once; copy the database id
+export MAIL_D1_DATABASE_ID=<that id>
+npm run mail:deploy                      # applies migrations and deploys
+```
+
+`npm run mail:deploy -- --help` only prints help.
+
+- The site's `VOX_URL` (in `mail-site/wrangler.jsonc`, or `MAIL_VOX_URL` at deploy time) must point to your Vox deployment.
+- The deploy adds a `VOX` service binding to the Vox Worker (`CLOUDFLARE_WORKER_NAME`, default `vox-assistant`), because Workers on one account cannot fetch each other's workers.dev URLs.
+
+## Develop
+
+```bash
+npx wrangler d1 migrations apply DB --local --config mail-site/wrangler.jsonc
+npm run mail:dev
+npm run mail:typecheck
+npm run test:mail
+```
+
+- Set `VOX_URL` to your Vox instance, for example `--var VOX_URL:http://127.0.0.1:8799` when both run locally.
+- Put local secrets in `mail-site/.dev.vars`, and add `http://127.0.0.1:8787/google/callback` and `/microsoft/callback` to the OAuth clients' redirect URIs.
+- The tests fake everything external:
+  - Google and Graph through a mocked `fetch`.
+  - IMAP and SMTP through in-memory servers behind a scripted socket (`test/fake-mail-server.mjs`).

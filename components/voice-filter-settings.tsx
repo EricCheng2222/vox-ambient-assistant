@@ -14,6 +14,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { SettingsRow } from "@/components/settings-row";
 import { Switch } from "@/components/ui/switch";
 import { WelcomeHomeDesktopSection } from "@/components/welcome-home";
 import {
@@ -152,16 +153,11 @@ export function VoiceFilterSettings() {
       }}
     >
       <SheetTrigger asChild>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-10 rounded-full border-white/10 bg-white/[0.04] px-3 text-white/66 shadow-none hover:bg-white/10 hover:text-white"
-          aria-label="Open voice filter settings"
-        >
-          <AudioLines />
-          <span className="hidden sm:inline">Voice</span>
-        </Button>
+        <SettingsRow
+          icon={<AudioLines />}
+          title="Listening"
+          detail="Noise remover, only my voice, and the welcome-home sound"
+        />
       </SheetTrigger>
       <SheetContent className="w-[min(94vw,460px)] border-white/10 bg-[#10111b] text-white sm:max-w-[460px]">
         <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">

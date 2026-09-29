@@ -5,7 +5,7 @@ import { getDb } from "@/db";
 import { mcpAuthStates, mcpClientRegistrations, mcpConnections } from "@/db/schema";
 
 // Vox as an MCP client. A user connects Vox to a remote MCP server (such as
-// Vox Flash Cards) once through the server's OAuth sign-in; Vox keeps the
+// Vox Flash Cards or Vox Mail) once through the server's OAuth sign-in; Vox keeps the
 // resulting tokens encrypted and refreshes them so voice sessions can use the
 // server's tools.
 
@@ -15,6 +15,12 @@ const REFRESH_MARGIN_MS = 2 * 60_000;
 
 export function flashcardsServerUrl() {
   return process.env.FLASHCARDS_MCP_URL?.trim() || DEFAULT_FLASHCARDS_MCP_URL;
+}
+
+const DEFAULT_MAIL_MCP_URL = "https://vox-mail.ericcheng306.workers.dev/mcp";
+
+export function mailServerUrl() {
+  return process.env.MAIL_MCP_URL?.trim() || DEFAULT_MAIL_MCP_URL;
 }
 
 export class McpConnectionError extends Error {}
@@ -68,11 +74,17 @@ async function decrypt(ciphertext: string, iv: string) {
  * Server-to-server requests to the flash-card site go through its service
  * binding when deployed on the same Cloudflare account; otherwise over HTTPS.
  */
-function serverFetch(url: string, init?: RequestInit) {
-  const binding = (env as { FLASHCARDS?: Fetcher }).FLASHCARDS;
-  if (binding && new URL(url).host === new URL(flashcardsServerUrl()).host) {
-    return binding.fetch(new Request(url, init));
-  }
+// Workers on the same account reach each other through service bindings.
+export function serverFetch(url: string, init?: RequestInit) {
+  const bindings = env as { FLASHCARDS?: Fetcher; MAIL?: Fetcher };
+  const host = new URL(url).host;
+  const binding =
+    host === new URL(flashcardsServerUrl()).host
+      ? bindings.FLASHCARDS
+      : host === new URL(mailServerUrl()).host
+        ? bindings.MAIL
+        : undefined;
+  if (binding) return binding.fetch(new Request(url, init));
   return fetch(url, init);
 }
 
@@ -181,7 +193,7 @@ export async function beginConnection(ownerId: string, serverUrl: string, voxOri
     code_challenge: await sha256(verifier),
     code_challenge_method: "S256",
     resource: metadata.resource,
-    scope: "flashcards",
+    scope: serverUrl === mailServerUrl() ? "mail" : "flashcards",
   }).toString();
   return url.toString();
 }

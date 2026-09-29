@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ExternalLink, GraduationCap, Layers, Link2, Unlink } from "lucide-react";
 import { toast } from "sonner";
 
+import { SettingsRow } from "@/components/settings-row";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -80,18 +81,12 @@ export function FlashcardsConnection({
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className={`rounded-full border-white/10 bg-white/[0.04] text-white/66 shadow-none hover:bg-white/10 hover:text-white ${
-            studying ? "border-[#f4ff74]/40 text-[#f4ff74]" : ""
-          }`}
-          aria-label={studying ? "Flash cards, studying now" : "Flash cards"}
-        >
-          <Layers />
-          {studying ? "Studying" : null}
-        </Button>
+        <SettingsRow
+          icon={<Layers />}
+          title="Flash cards"
+          detail={studying ? "Studying now" : "Vox Flash Cards: study decks by voice"}
+          tone={studying ? "ok" : "default"}
+        />
       </SheetTrigger>
       <SheetContent className="w-[min(94vw,420px)] border-white/10 bg-[#10111b] text-white sm:max-w-[420px]">
         <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">

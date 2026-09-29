@@ -1505,3 +1505,169 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* ---- Redesign: views, Settings and Library lists ---- */
+.vox-view {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 2rem 1rem 7rem;
+}
+@media (min-width: 640px) { .vox-view { padding: 2.5rem 2rem 7rem; } }
+@media (min-width: 1024px) { .vox-view { padding: 3rem 3rem 4rem; } }
+.vox-view-heading { margin-bottom: 1.75rem; }
+.vox-view-heading h1 { margin: 0.2rem 0 0; font-size: 1.9rem; font-weight: 600; letter-spacing: -0.02em; }
+.vox-view-eyebrow {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+}
+.vox-view-empty { color: var(--muted-foreground); font-size: 0.95rem; line-height: 1.6; }
+.settings-groups { display: grid; gap: 1.75rem; }
+@media (min-width: 1100px) { .settings-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }
+.settings-group-title {
+  margin: 0 0 0.6rem 0.25rem;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.settings-group-rows {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  border-radius: calc(var(--radius) + 4px);
+  background: color-mix(in oklab, var(--card) 88%, transparent);
+}
+.settings-group-rows > :not(:last-child) { border-bottom: 1px solid color-mix(in oklab, var(--border) 45%, transparent); }
+.settings-row {
+  display: flex;
+  width: 100%;
+  min-height: 4rem;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.8rem 1rem;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+.settings-row:hover { background: color-mix(in oklab, var(--primary) 7%, transparent); }
+.settings-row:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.settings-row-icon {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-shrink: 0;
+  place-items: center;
+  border: 1px solid color-mix(in oklab, var(--primary) 30%, transparent);
+  border-radius: 999px;
+  color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 8%, transparent);
+}
+.settings-row-icon svg { width: 1.05rem; height: 1.05rem; }
+.settings-row[data-tone="ok"] .settings-row-icon { box-shadow: 0 0 14px color-mix(in oklab, var(--primary) 30%, transparent); }
+.settings-row[data-tone="warn"] .settings-row-icon { border-color: #f0b95e66; color: #f0b95e; background: #f0b95e14; }
+.settings-row-text { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 0.1rem; }
+.settings-row-title { font-size: 0.95rem; font-weight: 600; }
+.settings-row-detail { overflow: hidden; color: var(--muted-foreground); font-size: 0.82rem; text-overflow: ellipsis; white-space: nowrap; }
+.settings-row-chevron { width: 1rem; height: 1rem; flex-shrink: 0; color: var(--muted-foreground); }
+/* The voice controls, moved from the old control deck into Settings. */
+.vox-settings-view .control-deck {
+  margin: 0;
+  padding: 1rem;
+  border-top: 0;
+  color: var(--muted-foreground);
+}
+.vox-settings-view .control-deck-title { display: none; }
+.vox-settings-view .control-grid { display: grid; width: 100%; gap: 0.75rem; }
+.vox-settings-view .control-module { justify-content: space-between; }
+.vox-settings-view .control-save { text-align: left; }
+.vox-shell[data-vox-theme="holographic"] .settings-group-title {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.vox-shell[data-vox-theme="holographic"] .settings-group-rows {
+  border-color: rgb(120 235 255 / 18%);
+  background: linear-gradient(180deg, rgb(7 28 41 / 82%), rgb(3 13 22 / 94%));
+  box-shadow: inset 0 0 24px rgb(120 235 255 / 4%);
+}
+.vox-shell[data-vox-theme="holographic"] .vox-view-heading h1 { color: #eafcff; }
+/* Talk view: the stage or the compact briefing sits above Vox's reactor. */
+.talk-stage { margin-bottom: 1.5rem; }
+.vox-shell .voice-console:has(.talk-stage) .voice-stage { transform: scale(0.62); margin-top: -3rem; margin-bottom: -3rem; }
+@media (prefers-reduced-motion: no-preference) {
+  .vox-shell .voice-stage { transition: transform 300ms ease, margin 300ms ease; }
+}
+.talk-stage { height: min(64vh, 660px); }
+@media (max-width: 1023px) { .talk-stage { height: auto; } }
+/* Talk view: the right-hand panel switches between the conversation and Today. */
+.side-switch {
+  display: inline-flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--card) 70%, transparent);
+}
+.side-switch-tab {
+  position: relative;
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.9rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.side-switch-tab[aria-selected="true"] {
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+.side-switch-tab:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.side-switch-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: #f0b95e;
+  box-shadow: 0 0 8px rgb(240 185 94 / 70%);
+}
+.side-switch-count {
+  min-width: 1.2rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: #f0b95e;
+  color: #1a1204;
+  font-size: 0.7rem;
+  line-height: 1.2rem;
+  text-align: center;
+}
+.vox-shell[data-vox-theme="holographic"] .side-switch {
+  border-color: rgb(120 235 255 / 20%);
+  background: rgb(4 24 37 / 70%);
+}
+.vox-shell[data-vox-theme="holographic"] .side-switch-tab[aria-selected="true"] {
+  color: #00151b;
+  background: #78ebff;
+  box-shadow: 0 0 14px rgb(120 235 255 / 35%);
+}
+/* Inside the conversation panel, Today drops its own column chrome. */
+.side-today { overflow: hidden; }
+.side-today .vx-today[data-variant="compact"],
+.vox-shell[data-vox-theme="holographic"] .side-today .vx-today[data-variant="compact"] {
+  border-left: 0;
+  padding: 0 0.25rem 0.5rem 0;
+  background: transparent;
+}
+.side-today .vx-today-bracket { display: none; }

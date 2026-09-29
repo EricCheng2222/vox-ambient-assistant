@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { finishConnection, McpConnectionError } from "@/lib/mcp-client";
+import { finishConnection, mailServerUrl, McpConnectionError } from "@/lib/mcp-client";
 
 // The MCP server's sign-in returns here. The connection is completed only from
 // a browser signed in to the Vox account that started it: the page submits the
@@ -27,7 +27,7 @@ export async function GET(request: Request) {
   .error { color: #ffaaa4; } [hidden] { display: none !important; }
 </style></head>
 <body><main>
-  <section id="working"><h1>Connecting…</h1><p>Finishing the connection to Vox Flash Cards.</p></section>
+  <section id="working"><h1>Connecting…</h1><p>Finishing the connection to Vox.</p></section>
   <section id="signin" hidden>
     <h1>Sign in to Vox</h1>
     <p>Sign in with the Vox account you’re connecting.</p>
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
       <p class="error" id="signin-error" role="alert"></p>
     </form>
   </section>
-  <section id="done" hidden><h1>Connected</h1><p>Vox can now study your flash cards with you. You can close this tab and return to Vox, then say “let’s review my flash cards.”</p><a class="button" href="/">Open Vox</a></section>
+  <section id="done" hidden><h1>Connected</h1><p id="done-text">Vox can now study your flash cards with you. You can close this tab and return to Vox, then say “let’s review my flash cards.”</p><a class="button" href="/">Open Vox</a></section>
   <section id="failed" hidden><h1>Not connected</h1><p id="failure"></p><a class="button" href="/">Back to Vox</a></section>
 </main>
 <script type="application/json" id="request">${data}</script>
@@ -55,6 +55,9 @@ export async function GET(request: Request) {
       body: JSON.stringify({ code: request.code, state: request.state }),
     });
     const result = await response.json().catch(() => ({}));
+    if (response.ok && result.service === "mail") {
+      document.getElementById("done-text").textContent = "Vox can now read and manage your email. It asks you out loud before it sends or deletes anything. Close this tab and start a new conversation in Vox, then ask “any new email?”";
+    }
     if (response.ok) show("done"); else fail(result.error || "The connection could not be completed.");
   }
   document.getElementById("signin-form").addEventListener("submit", async (event) => {
@@ -88,8 +91,11 @@ export async function POST(request: Request) {
   const state = typeof body.state === "string" ? body.state : "";
   if (!code || !state) return Response.json({ error: "This link is incomplete." }, { status: 400 });
   try {
-    await finishConnection(auth.user.id, state, code);
-    return Response.json({ connected: true }, { headers: { "Cache-Control": "no-store" } });
+    const serverUrl = await finishConnection(auth.user.id, state, code);
+    return Response.json(
+      { connected: true, service: serverUrl === mailServerUrl() ? "mail" : "flashcards" },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     if (!(error instanceof McpConnectionError)) console.error("Finishing a connection failed", error);
     return Response.json(

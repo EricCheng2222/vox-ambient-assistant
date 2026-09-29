@@ -28,6 +28,7 @@
     "test:remote-control": "node --experimental-strip-types scripts/test-remote-control.mjs",
     "test:phone-assistant": "node --experimental-strip-types scripts/test-phone-assistant.mjs",
     "test:flashcards": "node --experimental-strip-types scripts/test-flashcards.mjs",
+    "test:mail": "node --experimental-strip-types mail-site/test/mail.test.mjs",
     "test:conversation-context": "node --experimental-strip-types scripts/test-conversation-context.mjs",
     "db:generate": "drizzle-kit generate",
     "deploy:prepare": "node scripts/prepare-cloudflare-deploy.mjs",
@@ -37,7 +38,15 @@
     "flashcards:dev": "wrangler dev --config flashcards-site/wrangler.jsonc --local --persist-to .wrangler/flashcards",
     "flashcards:deploy": "node scripts/deploy-flashcards.mjs",
     "flashcards:typecheck": "tsc -p flashcards-site",
-    "test:website-route": "node --experimental-strip-types scripts/test-website-route.mjs"
+    "mail:dev": "wrangler dev --config mail-site/wrangler.jsonc --local --persist-to .wrangler/mail",
+    "mail:deploy": "node scripts/deploy-mail.mjs",
+    "mail:typecheck": "tsc -p mail-site",
+    "test:website-route": "node --experimental-strip-types scripts/test-website-route.mjs",
+    "test:answer-speech": "node --experimental-strip-types scripts/test-answer-speech.mjs",
+    "test:mail-approval": "node --experimental-strip-types scripts/test-mail-approval.mjs",
+    "test:stage-tool": "node --experimental-strip-types scripts/test-stage-tool.mjs",
+    "test:stage-page": "node --experimental-strip-types scripts/test-stage-page.mjs",
+    "test:today": "node --experimental-strip-types scripts/test-today.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { formatMemoryContext } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
+import { formatTaskContext, parseRecentMessages } from "@/lib/conversation-context";
 import { getCurrentTimeContext } from "@/lib/time-context";
 import {
   API_BUDGET_MESSAGE,
@@ -174,9 +175,10 @@ export async function POST(request: Request) {
   const auth = await requireUser(request);
   if ("response" in auth) return auth.response;
 
-  const body = (await request.json().catch(() => ({}))) as { text?: string };
+  const body = (await request.json().catch(() => ({}))) as { text?: string; recentMessages?: unknown };
   const text = body.text?.trim().slice(0, 12000) ?? "";
   if (!text) return Response.json({ error: "A file request is required." }, { status: 400 });
+  const conversationContext = formatTaskContext(parseRecentMessages(body.recentMessages), text);
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return Response.json({ error: "File creation is not configured." }, { status: 503 });
@@ -198,8 +200,10 @@ export async function POST(request: Request) {
         input: text,
         instructions:
           `Create the complete content for a downloadable ${config.purpose} file with extension .${config.extension}. Follow the user's requested language; use Traditional Chinese and natural Taiwan wording for Chinese. Return a short human title, a concise lowercase ASCII filename base without an extension, and the exact complete file content. Do not wrap the content in an extra Markdown code fence. Do not claim the file was saved; the application handles saving. For code, make it complete and include helpful comments only when useful. For CSV, include a header row. For JSON, output valid JSON as the content string. For HTML, create a self-contained accessible document without external scripts.` +
+          " When the request refers to earlier discussion (for example 'put what we discussed into a file'), build the file from that conversation." +
           `\n\n${getCurrentTimeContext()}` +
-          memoryContext,
+          memoryContext +
+          (conversationContext ? `\n\n${conversationContext}` : ""),
         reasoning: { effort: "low" },
         max_output_tokens: 7000,
         store: false,
