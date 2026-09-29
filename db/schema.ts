@@ -154,6 +154,8 @@ export const conversationMessages = sqliteTable(
     ciphertext: text("ciphertext").notNull(),
     iv: text("iv").notNull(),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    // When the owner marked an incoming text or answered call as read, on any device.
+    readAt: text("read_at"),
   },
   (table) => [
     uniqueIndex("conversation_messages_id_unique").on(table.id),
@@ -315,4 +317,38 @@ export const mcpConnections = sqliteTable(
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [uniqueIndex("idx_mcp_connections_owner_server").on(table.ownerId, table.serverUrl)],
+);
+
+// Devices that share their location with Vox (the iPhone app today; any
+// device later). Each pings with its own token, stored only as a hash.
+export const locationDevices = sqliteTable(
+  "location_devices",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    name: text("name").notNull(),
+    kind: text("kind").notNull().default("other"),
+    tokenHash: text("token_hash").notNull(),
+    createdAt: text("created_at").notNull(),
+    lastSeenAt: text("last_seen_at"),
+  },
+  (table) => [
+    uniqueIndex("location_devices_token_hash_unique").on(table.tokenHash),
+    index("idx_location_devices_owner").on(table.ownerId),
+  ],
+);
+
+// Recent positions per device, encrypted (coordinates, accuracy, place name).
+export const locationPings = sqliteTable(
+  "location_pings",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    deviceId: text("device_id").notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    iv: text("iv").notNull(),
+    capturedAt: text("captured_at").notNull(),
+    receivedAt: text("received_at").notNull(),
+  },
+  (table) => [index("idx_location_pings_device_captured").on(table.deviceId, table.capturedAt)],
 );

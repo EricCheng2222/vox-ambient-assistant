@@ -27,9 +27,9 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Vox uses the camera to scan your Mac's pairing code and for a private local preview. It sends a still frame only when you ask Vox to look.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>For place reminders that phone you, Vox needs to notice when you arrive or leave, even while it’s closed. Only the fact that the reminder went off is sent to Vox, never your location.</string>
+	<string>Vox uses your location in the background for two things you turn on: place reminders that phone you, which need to notice when you arrive or leave even while Vox is closed (only the fact that a reminder went off is sent to Vox), and, if you turn on location sharing, showing where this iPhone last was on your map in Vox.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Vox uses your location on this iPhone to save places like Home and to find nearby stores for place-based reminders. Your location stays on this iPhone.</string>
+	<string>Vox uses your location to save places like Home and find nearby stores for place reminders, which stay on this iPhone. If you turn on location sharing, Vox also shows where this iPhone last was on your map in Vox.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Vox uses the microphone so you can have a live voice conversation.</string>
 	<key>UIBackgroundModes</key>

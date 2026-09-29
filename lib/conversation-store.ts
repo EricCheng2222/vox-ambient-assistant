@@ -85,18 +85,33 @@ export async function getConversation(ownerId: string) {
       source: conversationMessages.source,
       ciphertext: conversationMessages.ciphertext,
       iv: conversationMessages.iv,
+      readAt: conversationMessages.readAt,
     })
     .from(conversationMessages)
     .where(eq(conversationMessages.ownerId, ownerId))
     .orderBy(asc(conversationMessages.sequence));
 
   const messages = await Promise.all(
-    records.map(async (record) => ({
-      id: record.id,
-      role: record.role as ConversationMessage["role"],
-      source: record.source === "phone" ? "phone" as const : "local" as const,
-      text: await decryptText(record.ciphertext, record.iv),
-    })),
+    records.map(async (record): Promise<ConversationMessage> => {
+      const text = await decryptText(record.ciphertext, record.iv);
+      if (record.source === "sms" || record.source === "caller") {
+        const incoming = parseIncomingText(text);
+        return {
+          id: record.id,
+          role: record.source === "sms" ? "assistant" : (record.role as ConversationMessage["role"]),
+          source: record.source,
+          sender: incoming.from,
+          text: incoming.body,
+          read: Boolean(record.readAt),
+        };
+      }
+      return {
+        id: record.id,
+        role: record.role as ConversationMessage["role"],
+        source: record.source === "phone" ? "phone" : "local",
+        text,
+      };
+    }),
   );
   return { generation, messages };
 }
@@ -150,6 +165,7 @@ export async function setConversationMessageSource(
     SET source = ${source}
     WHERE owner_id = ${ownerId}
       AND id = ${id}
+      AND source NOT IN ('sms', 'caller')
       AND EXISTS (
         SELECT 1 FROM conversation_threads
         WHERE owner_id = ${ownerId} AND generation = ${generation}
@@ -172,4 +188,65 @@ export async function clearConversation(ownerId: string) {
     .delete(conversationMessages)
     .where(eq(conversationMessages.ownerId, ownerId));
   return ensureThread(ownerId);
+}
+
+function parseIncomingText(stored: string) {
+  try {
+    const parsed = JSON.parse(stored) as { from?: unknown; body?: unknown };
+    return {
+      from: typeof parsed.from === "string" ? parsed.from : "Unknown sender",
+      body: typeof parsed.body === "string" ? parsed.body : "",
+    };
+  } catch {
+    return { from: "Unknown sender", body: stored };
+  }
+}
+
+/**
+ * Adds something from another person to the owner's conversation: a text to
+ * the Vox phone number, or a line from a call Vox answered for an unverified
+ * caller. Encrypted like everything else there, with the other person's
+ * number stored alongside. Retries carry the same id, so each is kept once.
+ */
+export async function appendIncomingText(
+  ownerId: string,
+  text: { id: string; from: string; body: string; source?: "sms" | "caller"; role?: "user" | "assistant" },
+) {
+  await ensureThread(ownerId);
+  const source = text.source ?? "sms";
+  const role = source === "caller" ? (text.role ?? "user") : "assistant";
+  const encrypted = await encryptText(JSON.stringify({ from: text.from, body: text.body }));
+  await getDb().run(sql`
+    INSERT INTO conversation_messages (id, owner_id, role, source, ciphertext, iv)
+    VALUES (${text.id}, ${ownerId}, ${role}, ${source}, ${encrypted.ciphertext}, ${encrypted.iv})
+    ON CONFLICT(id) DO NOTHING
+  `);
+  await getDb().run(sql`
+    DELETE FROM conversation_messages
+    WHERE owner_id = ${ownerId}
+      AND sequence NOT IN (
+        SELECT sequence FROM conversation_messages
+        WHERE owner_id = ${ownerId}
+        ORDER BY sequence DESC
+        LIMIT ${MAX_STORED_MESSAGES}
+      )
+  `);
+}
+
+/**
+ * Marks incoming texts and answered-call lines as read. Only those, and only
+ * in the owner's own conversation; the read state then shows on every device.
+ */
+export async function markConversationRead(ownerId: string, ids: string[]) {
+  const unique = [...new Set(ids)].filter((id) => /^[A-Za-z0-9_-]{1,180}$/u.test(id)).slice(0, 200);
+  if (!unique.length) return 0;
+  const result = await getDb().run(sql`
+    UPDATE conversation_messages
+    SET read_at = ${new Date().toISOString()}
+    WHERE owner_id = ${ownerId}
+      AND source IN ('sms', 'caller')
+      AND read_at IS NULL
+      AND id IN (${sql.join(unique.map((id) => sql`${id}`), sql`, `)})
+  `);
+  return Number(result.meta.changes ?? 0);
 }

@@ -146,7 +146,7 @@ const [icloudAccount, yahooAccount] = await accounts.listAccounts(db, USER);
   assert.equal(await accounts.openSecret(env, icloudAccount, icloudAccount.secret, icloudAccount.iv), "app-pass-1");
   assert.deepEqual(JSON.parse(icloudAccount.config), { preset: "icloud", username: "me@icloud.com", imapHost: "imap.mail.me.com", imapPort: 993, imapSecurity: "tls", smtpHost: "smtp.mail.me.com", smtpPort: 587, smtpSecurity: "starttls", saveSent: false });
   const home = await (await worker.fetch(new Request(`${ORIGIN}/`, { headers: { Cookie: sessionCookie } }), env)).text();
-  assert.match(home, /me@icloud\.com[\s\S]*iCloud Mail \(IMAP\)[\s\S]*primary[\s\S]*me@yahoo\.com[\s\S]*Make primary/u);
+  assert.match(home, /me@icloud\.com[\s\S]*>Primary<[\s\S]*iCloud Mail \(IMAP\) · app password[\s\S]*me@yahoo\.com[\s\S]*Make primary/u);
   assert.doesNotMatch(home, /app-pass-1/u);
 }
 

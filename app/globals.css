@@ -1671,3 +1671,127 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
   background: transparent;
 }
 .side-today .vx-today-bracket { display: none; }
+
+/* A text someone sent to Vox's phone number, in the conversation stream. */
+.message-text-in {
+  border: 1px solid rgb(120 235 255 / 22%);
+  background: rgb(120 235 255 / 5%);
+}
+.message-text-badge { color: #9bf2ff; border-color: rgb(120 235 255 / 30%); background: rgb(120 235 255 / 8%); }
+.message-caller { border: 1px solid rgb(240 185 94 / 22%); background: rgb(240 185 94 / 5%); }
+.message-caller .message-text-badge { color: #f0c887; border-color: rgb(240 185 94 / 32%); background: rgb(240 185 94 / 8%); }
+.message-caller-assistant { margin-left: 1.25rem; }
+
+/* The Mac app's built-in browser inside the stage. The page itself is a native
+   view laid over .vx-browser-slot. */
+.vx-reader-live { display: flex; min-height: 0; flex-direction: column; padding: 0; overflow: hidden; }
+.vx-browser { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.vx-browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+}
+.vx-browser-button {
+  display: inline-flex;
+  min-width: 2.25rem;
+  height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0 0.5rem;
+  border: 0;
+  border-radius: 0.6rem;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.vx-browser-button svg { width: 1rem; height: 1rem; }
+.vx-browser-button:hover:not(:disabled) { background: color-mix(in oklab, var(--primary) 10%, transparent); }
+.vx-browser-button:disabled { opacity: 0.35; cursor: default; }
+.vx-browser-button:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.vx-browser-address {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--card) 80%, transparent);
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vx-browser-slot { position: relative; min-height: 18rem; flex: 1; background: rgb(255 255 255 / 3%); }
+.vx-browser-paused {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.85rem;
+}
+
+/* Device map (Leaflet), web and Mac only. */
+.vox-map { position: relative; z-index: 0; width: 100%; height: 22rem; overflow: hidden; border: 1px solid rgb(120 235 255 / 18%); border-radius: calc(var(--radius) + 2px); background: #0b1620; }
+.vx-block-map .vox-map { height: 18rem; }
+.vox-map .leaflet-control-attribution { background: rgb(2 10 18 / 72%); color: #83aab5; font-size: 10px; }
+.vox-map .leaflet-control-attribution a { color: #9bf2ff; }
+.vox-map .leaflet-popup-content-wrapper, .vox-map .leaflet-popup-tip { background: #06131e; color: #eafcff; box-shadow: 0 0 18px rgb(120 235 255 / 20%); }
+.vox-tiles-dark { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6); }
+.vox-map-marker { position: relative; }
+.vox-map-dot { position: absolute; inset: 0; border: 2px solid #eafcff; border-radius: 50%; background: #78ebff; box-shadow: 0 0 14px rgb(120 235 255 / 90%); }
+.vox-map-marker.is-stale .vox-map-dot { background: #83aab5; box-shadow: none; opacity: 0.8; }
+.vox-map-label { position: absolute; top: -1.6rem; left: 50%; transform: translateX(-50%); padding: 0.1rem 0.45rem; border-radius: 999px; background: rgb(2 10 18 / 85%); color: #eafcff; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.vox-devices-card { margin: 0 auto 1.5rem; width: 100%; max-width: 44rem; display: flex; flex-direction: column; gap: 0.9rem; }
+.vox-devices-head h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+.vox-devices-head p { margin: 0.15rem 0 0; color: var(--muted-foreground); font-size: 0.8rem; }
+.vox-devices-list { display: flex; flex-direction: column; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
+.vox-devices-list li { display: flex; align-items: center; gap: 0.6rem; font-size: 0.88rem; }
+.vox-devices-list svg { width: 1rem; height: 1rem; color: var(--primary); flex-shrink: 0; }
+.vox-devices-name { font-weight: 600; }
+.vox-devices-detail { min-width: 0; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
+.vox-shell[data-vox-theme="holographic"] .vox-devices-head h2 { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: rgb(120 235 255 / 75%); }
+
+/* iPhone app, Today: the location sharing button. */
+.vox-share-card {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  width: 100%;
+  max-width: 44rem;
+  margin: 0 auto 1.25rem;
+  padding: 1rem;
+  border: 1px solid rgb(120 235 255 / 24%);
+  border-radius: calc(var(--radius) + 4px);
+  background: linear-gradient(180deg, rgb(7 28 41 / 82%), rgb(3 13 22 / 94%));
+}
+.vox-share-card > svg { width: 1.4rem; height: 1.4rem; flex-shrink: 0; color: #78ebff; }
+.vox-share-card[data-state="partial"] > svg, .vox-share-card[data-state="denied"] > svg { color: #f0b95e; }
+.vox-share-card > div { min-width: 0; flex: 1; }
+.vox-share-title { margin: 0; font-size: 0.95rem; font-weight: 600; }
+.vox-share-detail { margin: 0.2rem 0 0; color: var(--muted-foreground); font-size: 0.8rem; line-height: 1.45; }
+.vox-share-button {
+  min-height: 2.75rem;
+  flex-shrink: 0;
+  padding: 0 1rem;
+  border: 0;
+  border-radius: 999px;
+  background: #78ebff;
+  color: #00151b;
+  font-size: 0.85rem;
+  font-weight: 700;
+  box-shadow: 0 0 16px rgb(120 235 255 / 30%);
+}
+.vox-share-card[data-state="partial"] .vox-share-button, .vox-share-card[data-state="denied"] .vox-share-button { background: #f0b95e; color: #1a1204; box-shadow: none; }
+.vox-share-button.is-quiet { background: transparent; color: #9bf2ff; border: 1px solid rgb(120 235 255 / 35%); box-shadow: none; }
+.vox-share-button:disabled { opacity: 0.5; }
+.vox-share-button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+@media (max-width: 420px) {
+  .vox-share-card { flex-wrap: wrap; }
+  .vox-share-button { width: 100%; }
+}

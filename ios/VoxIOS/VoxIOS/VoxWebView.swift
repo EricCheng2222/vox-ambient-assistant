@@ -24,6 +24,11 @@ struct VoxWebView: UIViewRepresentable {
             contentWorld: .page,
             name: ReminderNotificationBridge.handlerName
         )
+        contentController.addScriptMessageHandler(
+            context.coordinator.locationSharingBridge,
+            contentWorld: .page,
+            name: LocationSharingBridge.handlerName
+        )
         configuration.userContentController = contentController
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -79,6 +84,10 @@ struct VoxWebView: UIViewRepresentable {
             forName: ReminderNotificationBridge.handlerName,
             contentWorld: .page
         )
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: LocationSharingBridge.handlerName,
+            contentWorld: .page
+        )
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
@@ -88,6 +97,7 @@ struct VoxWebView: UIViewRepresentable {
         weak var webView: WKWebView?
         let pairingBridge = PairingBridge()
         let reminderBridge = ReminderNotificationBridge()
+        let locationSharingBridge = LocationSharingBridge()
         private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
         private let loadingProgress: Binding<Double>

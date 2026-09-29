@@ -45,8 +45,17 @@ const STRICTNESS: Array<{ value: VoiceFilterStrictness; label: string; hint: str
  * Settings for the Vox desktop app's voice filter (Mac only): removing
  * background noise and music, and optionally only listening to the owner.
  */
-export function VoiceFilterSettings() {
+/**
+ * `onRecordingChange` tells the page when the voiceprint recording starts and
+ * stops, so the live conversation stops listening meanwhile: reading the
+ * sample sentences must not reach Vox as a request.
+ */
+export function VoiceFilterSettings({ onRecordingChange }: { onRecordingChange?: (recording: boolean) => void } = {}) {
   const [bridge] = useState(() => voiceFilterBridge());
+  const onRecordingChangeRef = useRef(onRecordingChange);
+  useEffect(() => {
+    onRecordingChangeRef.current = onRecordingChange;
+  }, [onRecordingChange]);
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<VoiceFilterStatus | null>(null);
   const [busy, setBusy] = useState(false);
@@ -69,6 +78,7 @@ export function VoiceFilterSettings() {
     recordingRef.current = null;
     setRecording(false);
     setLevel(0);
+    onRecordingChangeRef.current?.(false);
   }, []);
 
   useEffect(() => {
@@ -92,6 +102,8 @@ export function VoiceFilterSettings() {
   }
 
   async function startSetup() {
+    // Pause the conversation before the microphone opens for the recording.
+    onRecordingChangeRef.current?.(true);
     try {
       const raw = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: true },
@@ -104,6 +116,7 @@ export function VoiceFilterSettings() {
       setElapsed(0);
       setRecording(true);
     } catch (error) {
+      onRecordingChangeRef.current?.(false);
       toast.error("Couldn’t use the microphone", { description: error instanceof Error ? error.message : undefined });
     }
   }

@@ -7,9 +7,12 @@ import UserNotifications
 
 /// Arms Vox's place-based reminders as iOS location notifications.
 ///
-/// Location stays on this iPhone: saved places live in the Keychain, store
-/// names are searched with MapKit on the device, and iOS itself watches the
-/// geofences. The server only ever learns whether a reminder was armed.
+/// For reminders, location stays on this iPhone: saved places live in the
+/// Keychain, store names are searched with MapKit on the device, and iOS
+/// itself watches the geofences. The server only ever learns whether a
+/// reminder was armed. (Location sharing, which sends this iPhone's last
+/// location to Vox for your map, is a separate opt-in feature in
+/// LocationSharing.swift; it reuses this class's permission requests.)
 @MainActor
 final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
     static let shared = LocationReminderScheduler()
@@ -27,11 +30,33 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     private var authorizationWaiters: [(CLAuthorizationStatus) -> Void] = []
     private var locationWaiters: [(CLLocation?) -> Void] = []
+    /// Set while waiting on the "Always" prompt; see `requestAlwaysPermission`.
+    private var alwaysPromptDismissed: (() -> Void)?
+    private var alwaysPromptShowing = false
+    private var appStateObservers: [NSObjectProtocol] = []
 
     override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        let center = NotificationCenter.default
+        appStateObservers = [
+            center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) {
+                [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.alwaysPromptDismissed != nil else { return }
+                    self.alwaysPromptShowing = true
+                }
+            },
+            center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) {
+                [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.alwaysPromptShowing else { return }
+                    self.alwaysPromptShowing = false
+                    self.alwaysPromptDismissed?()
+                }
+            },
+        ]
     }
 
     // MARK: Permission
@@ -56,9 +81,10 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
     }
 
     /// Place reminders that phone you need "Always": iOS wakes Vox in the
-    /// background at the place so it can ask the server for the call. iOS
-    /// shows this upgrade prompt only once, so it's requested at most once.
-    private func requestAlwaysPermission() async -> Bool {
+    /// background at the place so it can ask the server for the call.
+    /// Location sharing uses it too. iOS shows this upgrade prompt only once,
+    /// so it's requested at most once, by whichever feature asks first.
+    func requestAlwaysPermission() async -> Bool {
         if manager.authorizationStatus == .authorizedAlways { return true }
         guard manager.authorizationStatus == .authorizedWhenInUse,
               !UserDefaults.standard.bool(forKey: Self.askedAlwaysKey) else { return false }
@@ -68,11 +94,21 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
             let finish: (CLAuthorizationStatus) -> Void = { status in
                 guard !finished else { return }
                 finished = true
+                self.alwaysPromptDismissed = nil
+                self.alwaysPromptShowing = false
                 continuation.resume(returning: status)
             }
             authorizationWaiters.append(finish)
             manager.requestAlwaysAuthorization()
-            // Keeping "While Using" may not report a change; don't wait forever.
+            // Keeping "While Using" may not report a change. The prompt makes
+            // the app inactive, so becoming active again after that ends the
+            // wait; so does a timeout.
+            alwaysPromptDismissed = {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(1))
+                    finish(self.manager.authorizationStatus)
+                }
+            }
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(30))
                 finish(self.manager.authorizationStatus)

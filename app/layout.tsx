@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./redesign.css";
+import "leaflet/dist/leaflet.css";
 
 export const metadata: Metadata = {
   title: "Vox — Ambient AI Voice Assistant",

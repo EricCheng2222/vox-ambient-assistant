@@ -19,6 +19,7 @@ const contentTypes = new Map([
 const cloudApiMethods = new Map([
   ["/api/auth", new Set(["GET", "POST", "DELETE"])],
   ["/api/conversation", new Set(["GET", "POST", "PATCH", "DELETE"])],
+  ["/api/conversation/read", new Set(["POST"])],
   ["/api/device-commands", new Set(["GET", "POST", "PATCH"])],
   ["/api/device-pairing", new Set(["GET", "POST", "DELETE"])],
   ["/api/files", new Set(["GET", "POST", "DELETE"])],
@@ -28,9 +29,12 @@ const cloudApiMethods = new Map([
   ["/api/invites", new Set(["GET", "POST"])],
   ["/api/jev-presence", new Set(["POST"])],
   ["/api/jev-route", new Set(["POST"])],
+  ["/api/locations", new Set(["GET"])],
+  ["/api/locations/devices", new Set(["POST", "DELETE"])],
   ["/api/mail/token", new Set(["POST"])],
   ["/api/memories", new Set(["GET", "POST", "PATCH", "DELETE"])],
   ["/api/phone-assistant", new Set(["GET", "POST", "PATCH", "DELETE"])],
+  ["/api/phone-assistant/texts", new Set(["GET", "POST"])],
   ["/api/preferences", new Set(["GET", "PATCH"])],
   ["/api/realtime-token", new Set(["POST"])],
   ["/api/reason", new Set(["POST"])],
@@ -200,6 +204,7 @@ export async function startLocalVoxServer(webRoot, options = {}) {
     cloudFetch,
     desktopSessionHeader = { name: "x-vox-desktop-session", value: "" },
     getConnectionMode = () => "personal",
+    preferredPort = 0,
   } = options;
   const serverModule = await import(pathToFileURL(path.join(webRoot, "server", "index.js")).href);
   const worker = serverModule.default;
@@ -261,10 +266,24 @@ export async function startLocalVoxServer(webRoot, options = {}) {
       await writeResponse(new Response("Vox Desktop could not load its local interface.", { status: 500 }), response);
     }
   });
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
+  // A fixed port keeps the page's origin, and so everything it saves in the
+  // browser (panel choices, sizes), the same across launches. If another app
+  // holds the port, any free port works; only those saved choices reset.
+  const listen = (port) =>
+    new Promise((resolve, reject) => {
+      const onError = (error) => reject(error);
+      server.once("error", onError);
+      server.listen(port, "127.0.0.1", () => {
+        server.off("error", onError);
+        resolve();
+      });
+    });
+  try {
+    await listen(preferredPort);
+  } catch (error) {
+    if (preferredPort === 0 || error?.code !== "EADDRINUSE") throw error;
+    await listen(0);
+  }
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("The local Vox interface could not start.");
   origin = `http://127.0.0.1:${address.port}`;

@@ -8,6 +8,10 @@ struct VoxIOSApp: App {
         // When iOS relaunches Vox in the background because you reached or
         // left a watched place, the location manager must exist to hear it.
         _ = LocationReminderScheduler.shared
+        // Same for opt-in location sharing: when iOS relaunches Vox in the
+        // background for a significant location change, the pinger resumes
+        // from its Keychain state, with no web view.
+        LocationSharing.resumeAtLaunch()
         // Resumes the "welcome home" Bluetooth watch, including when iOS
         // relaunches Vox in the background because the Mac came in range.
         ProximityGreeter.shared.start()

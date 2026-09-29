@@ -38,6 +38,7 @@ import {
 import { startLocalVoxServer } from "./local-web-server.mjs";
 import { registerVoiceFilter } from "./voice-filter.mjs";
 import { registerWelcomeHome } from "./welcome-home.mjs";
+import { registerStageBrowser } from "./stage-browser.mjs";
 import {
   availableSmartHomeAdapters,
   configureSmartHomeDevice,
@@ -64,6 +65,7 @@ const developmentUrl = process.env.VOX_DESKTOP_DEV_URL;
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 let voiceFilter = null;
 let welcomeHome = null;
+let stageBrowser = null;
 const shellFile = path.join(currentDirectory, "shell.html");
 const shellUrl = pathToFileURL(shellFile).href;
 const settingsFileName = "desktop-settings.json";
@@ -974,6 +976,7 @@ function layoutVoxView() {
     width: Math.max(1, width - reservedDrawer),
     height: Math.max(1, height - toolbarHeight),
   });
+  stageBrowser?.relayout();
 }
 
 function registerIpcHandlers() {
@@ -1650,6 +1653,7 @@ async function createWindow() {
   mainWindow.on("resize", layoutVoxView);
   mainWindow.on("closed", () => {
     activeTask?.abortController.abort();
+    stageBrowser?.close();
     if (voxView && !voxView.webContents.isDestroyed()) voxView.webContents.close();
     voxView = null;
     mainWindow = null;
@@ -1676,6 +1680,7 @@ app.whenReady().then(async () => {
       unlockedRemotePairing(startupSettings)?.status === "active",
   );
   localVoxServer = await startLocalVoxServer(localWebRoot(), {
+    preferredPort: 47_318,
     cloudOrigin: productionUrl,
     desktopSessionHeader,
     getConnectionMode: () => activeConnectionMode,
@@ -1687,6 +1692,7 @@ app.whenReady().then(async () => {
   registerIpcHandlers();
   voiceFilter = registerVoiceFilter({ requireTrustedVoxSender, readSettings, saveSettings, secureStorageAvailable });
   welcomeHome = registerWelcomeHome({ requireTrustedVoxSender, readSettings, saveSettings, pairing: unlockedRemotePairing });
+  stageBrowser = registerStageBrowser({ requireTrustedVoxSender, getWindow: () => mainWindow, getVoxView: () => voxView });
   // Installed-app discovery is useful for voice routing, but it must never sit
   // on the first conversational turn's latency path.
   void installedApps().catch(() => undefined);

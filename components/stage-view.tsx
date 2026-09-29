@@ -1,8 +1,9 @@
 "use client";
 
-import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ExternalLink, X } from "lucide-react";
 
+import { DeviceMap } from "@/components/device-map";
 import type { StageBlock, StageContent, StagePage } from "@/lib/stage";
 
 export type StageAction = { label: string; onClick: () => void; primary?: boolean };
@@ -23,6 +24,8 @@ export type StageViewProps = {
   /** The words Vox is currently saying; the caption bar is hidden when empty. */
   caption?: string | null;
   actions?: StageAction[];
+  /** A live page for the active source (the Mac app's built-in browser), shown instead of the reader. */
+  browser?: ReactNode;
 };
 
 // --- Untrusted text ---------------------------------------------------------
@@ -80,6 +83,14 @@ function pad(count: number) {
 // --- Blocks -----------------------------------------------------------------
 
 function Block({ block, id }: { block: StageBlock; id: string }) {
+  if (block.kind === "map") {
+    return (
+      <div className="vx-block vx-block-map" aria-labelledby={id}>
+        <h3 id={id} className="vx-hud">{plain(block.title, 120)}</h3>
+        <DeviceMap points={block.points} label={plain(block.title, 120) || "Map"} />
+      </div>
+    );
+  }
   if (block.kind === "quote") {
     return (
       <div className="vx-block">
@@ -244,6 +255,7 @@ export function StageView({
   speaking,
   caption,
   actions = [],
+  browser,
 }: StageViewProps) {
   const baseId = useId();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -339,7 +351,11 @@ export function StageView({
       ) : null}
 
       <div className="vx-stage-body">
-        {source ? (
+        {source && browser ? (
+          <section className="vx-reader vx-reader-live" id={panelId} role="tabpanel" aria-labelledby={tabId(activeIndex)}>
+            {browser}
+          </section>
+        ) : source ? (
           <section className="vx-reader" id={panelId} role="tabpanel" aria-labelledby={tabId(activeIndex)}>
             <span className="vx-bracket vx-bracket-tl" aria-hidden="true" />
             <span className="vx-bracket vx-bracket-br" aria-hidden="true" />

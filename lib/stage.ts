@@ -17,7 +17,12 @@ export type StageBlock =
   | { kind: "table"; title: string; columns: string[]; rows: string[][] }
   | { kind: "steps"; title: string; items: string[] }
   | { kind: "list"; title: string; items: string[] }
-  | { kind: "quote"; text: string; source?: string };
+  | { kind: "quote"; text: string; source?: string }
+  | {
+      kind: "map";
+      title: string;
+      points: Array<{ id: string; label: string; detail?: string; lat: number; lon: number; accuracy?: number; stale?: boolean }>;
+    };
 
 export type StageContent = {
   id: string;

@@ -1,9 +1,11 @@
-import { appendConversationMessage, getConversation } from "@/lib/conversation-store";
+import { appendConversationMessage, appendIncomingText, getConversation } from "@/lib/conversation-store";
 import { listMemories } from "@/lib/memory-store";
 import { getUserPreferences } from "@/lib/preference-store";
 import {
   authenticatedPhoneCallOwner,
   endPhoneCall,
+  getPhoneAssistantSettings,
+  PHONE_ASSISTANT_OWNER_ID,
   getPhoneAssistantDestination,
   verifyPhoneCallPassphrase,
 } from "@/lib/phone-assistant-store";
@@ -28,6 +30,7 @@ type InternalRequest = {
   messageId?: unknown;
   toolName?: unknown;
   arguments?: unknown;
+  caller?: unknown;
 };
 
 function internalSecret() {
@@ -68,7 +71,12 @@ export async function POST(request: Request) {
     const ownerId = transcript
       ? await verifyPhoneCallPassphrase(callId, transcript)
       : null;
-    if (!ownerId) return Response.json({ authenticated: false }, { status: 401 });
+    if (!ownerId) {
+      // Not the owner: while the phone assistant is on, Vox answers as the
+      // owner's assistant instead of hanging up.
+      const settings = await getPhoneAssistantSettings(PHONE_ASSISTANT_OWNER_ID).catch(() => null);
+      return Response.json({ authenticated: false, guest: settings?.enabled === true }, { status: 401 });
+    }
 
     const [preferences, memories, conversation] = await Promise.all([
       getUserPreferences(ownerId),
@@ -83,6 +91,26 @@ export async function POST(request: Request) {
       ),
       carryover: phoneRealtimeCarryover(conversation.messages),
     });
+  }
+
+  if (body.action === "guest_sync") {
+    // A line from a call Vox answered for an unverified caller. It is stored as
+    // the other person's words, never as the owner's.
+    const role = body.role === "assistant" ? "assistant" : body.role === "user" ? "user" : null;
+    const text = typeof body.transcript === "string" ? body.transcript.trim().slice(0, 4_000) : "";
+    const messageId = typeof body.messageId === "string" && /^guest_[A-Za-z0-9_-]{8,170}$/u.test(body.messageId)
+      ? body.messageId
+      : null;
+    if (!role || !text || !messageId) return new Response("Invalid message", { status: 400 });
+    const caller = typeof body.caller === "string" ? body.caller.replace(/[^\d+]/gu, "").slice(0, 20) : "";
+    await appendIncomingText(PHONE_ASSISTANT_OWNER_ID, {
+      id: messageId,
+      source: "caller",
+      role,
+      from: caller || "Unknown caller",
+      body: text,
+    });
+    return Response.json({ saved: true });
   }
 
   const ownerId = await authenticatedPhoneCallOwner(callId);

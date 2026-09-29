@@ -502,7 +502,7 @@ const ref = (native) => `m.${gmailAccount.id}.${Buffer.from(native).toString("ba
   // Consent lists the account, then the code goes to Vox.
   const consent = await get(authorizePath, { Cookie: sessionCookie });
   assert.equal(consent.status, 200);
-  assert.match(await consent.text(), /Allow Vox to use your email\?[\s\S]*<b>me@gmail\.com<\/b>/u);
+  assert.match(await consent.text(), /Vox wants to use your email[\s\S]*<b>me@gmail\.com<\/b>[\s\S]*only after your spoken confirmation/u);
   const decide = (origin) =>
     worker.fetch(new Request(authorize, { method: "POST", headers: { Cookie: sessionCookie, Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ approve: true }) }), flowEnv);
   assert.equal((await decide("https://evil.example")).status, 403);

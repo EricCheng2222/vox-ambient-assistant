@@ -61,6 +61,7 @@ export async function POST(request: Request) {
         callId,
         origin: new URL(request.url).origin,
         voice: preferences.voice,
+        caller,
       }),
     });
     if (!response.ok) {

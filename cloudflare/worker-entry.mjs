@@ -10,7 +10,8 @@ const contentSecurityPolicy = [
   "form-action 'self'",
   "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  // https: for map tiles and pictures from the pages Vox shows on the stage.
+  "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   "media-src 'self' blob:",
   "worker-src 'self' blob:",

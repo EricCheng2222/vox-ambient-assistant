@@ -25,6 +25,8 @@ type Preset = {
   saveSent: boolean;
   domains: string[];
   help: string;
+  /** Where to create an app password, as short numbered steps for the form. */
+  steps: string[];
 };
 
 export const IMAP_PRESETS: Record<string, Preset> = {
@@ -40,6 +42,12 @@ export const IMAP_PRESETS: Record<string, Preset> = {
     saveSent: false,
     domains: ["icloud.com", "me.com", "mac.com"],
     help: "Create an app-specific password at account.apple.com → Sign-In and Security → App-Specific Passwords. Your Apple Account needs two-factor authentication.",
+    steps: [
+      "Make sure two-factor authentication is on for your Apple Account.",
+      "Sign in at account.apple.com and open Sign-In and Security.",
+      "Choose App-Specific Passwords, add one, and name it “Vox Mail”.",
+      "Copy the password Apple shows into the App password field.",
+    ],
   },
   yahoo: {
     name: "Yahoo Mail",
@@ -52,6 +60,12 @@ export const IMAP_PRESETS: Record<string, Preset> = {
     saveSent: true,
     domains: ["yahoo.com", "ymail.com", "rocketmail.com"],
     help: "Create an app password at login.yahoo.com → Account Info → Account Security → Generate app password.",
+    steps: [
+      "Sign in at login.yahoo.com and open Account Info → Account Security.",
+      "Choose Generate app password.",
+      "Name it “Vox Mail” and generate it.",
+      "Copy the password Yahoo shows into the App password field.",
+    ],
   },
   fastmail: {
     name: "Fastmail",
@@ -64,6 +78,12 @@ export const IMAP_PRESETS: Record<string, Preset> = {
     saveSent: true,
     domains: ["fastmail.com", "fastmail.fm"],
     help: "Create an app password in Fastmail → Settings → Privacy & Security → Manage app passwords, with IMAP and SMTP access.",
+    steps: [
+      "In Fastmail, open Settings → Privacy & Security.",
+      "Find App passwords (Manage app passwords and access) and create a new one.",
+      "Give it mail access (IMAP and SMTP) and name it “Vox Mail”.",
+      "Copy the password Fastmail shows into the App password field.",
+    ],
   },
   gmail: {
     name: "Gmail (app password)",
@@ -77,6 +97,12 @@ export const IMAP_PRESETS: Record<string, Preset> = {
     saveSent: false,
     domains: [],
     help: "Turn on 2-Step Verification, then create an app password at myaccount.google.com/apppasswords. Signing in with Google instead needs no password.",
+    steps: [
+      "Turn on 2-Step Verification in your Google Account (myaccount.google.com/security).",
+      "Open myaccount.google.com/apppasswords.",
+      "Name it “Vox Mail” and create it.",
+      "Copy the 16-letter password into the App password field. (Sign in with Google needs no password at all.)",
+    ],
   },
   zoho: {
     name: "Zoho Mail",
@@ -89,6 +115,12 @@ export const IMAP_PRESETS: Record<string, Preset> = {
     saveSent: true,
     domains: ["zoho.com", "zohomail.com"],
     help: "Turn on IMAP access in Zoho Mail settings, then create an app-specific password at accounts.zoho.com → Security → App Passwords.",
+    steps: [
+      "In Zoho Mail, turn on IMAP access (Settings → Mail Accounts → IMAP).",
+      "Open accounts.zoho.com → Security → App Passwords.",
+      "Generate a new password named “Vox Mail”.",
+      "Copy the password Zoho shows into the App password field.",
+    ],
   },
 };
 

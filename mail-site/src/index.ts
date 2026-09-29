@@ -355,6 +355,7 @@ async function route(request: Request, env: Env) {
         accounts: accounts.map((account) => ({
           id: account.id,
           email: account.email,
+          provider: account.provider,
           label: accountLabel(account),
           status: account.status,
           isPrimary: Boolean(account.isPrimary),

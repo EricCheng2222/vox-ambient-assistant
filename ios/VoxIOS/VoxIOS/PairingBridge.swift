@@ -21,6 +21,7 @@ final class PairingBridge: NSObject, WKScriptMessageHandler {
           if (location.protocol !== "https:" || location.host !== \(host)) return;
           const handler = window.webkit?.messageHandlers?.\(handlerName);
           if (!handler) return;
+          const sharing = window.webkit?.messageHandlers?.\(LocationSharingBridge.handlerName);
           const KEY = \(key);
           Object.defineProperty(window, "voxNativeIOS", {
             value: Object.freeze({
@@ -37,6 +38,22 @@ final class PairingBridge: NSObject, WKScriptMessageHandler {
                 setEnabled: (on) => handler.postMessage({ type: "welcomeHome", enabled: on === true }),
                 test: () => handler.postMessage({ type: "welcomeHomeTest" }),
               }),
+              // Opt-in: lets Vox show where this iPhone last was on your map.
+              // Every method returns a promise.
+              ...(sharing ? {
+                locationSharing: Object.freeze({
+                  status: () => sharing.postMessage({ type: "status" }),
+                  enable: (options) => sharing.postMessage({
+                    type: "enable",
+                    deviceId: String(options?.deviceId ?? ""),
+                    token: String(options?.token ?? ""),
+                  }),
+                  disable: () => sharing.postMessage({ type: "disable" }),
+                  pingNow: () => sharing.postMessage({ type: "pingNow" }),
+                  requestAlways: () => sharing.postMessage({ type: "requestAlways" }),
+                  openSettings: () => sharing.postMessage({ type: "openSettings" }),
+                }),
+              } : {}),
             }),
           });
           const store = window.sessionStorage;

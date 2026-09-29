@@ -80,6 +80,29 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
     cancelEnrollment: () => ipcRenderer.invoke("vox-voice-filter:enroll-cancel"),
     forget: () => ipcRenderer.invoke("vox-voice-filter:forget"),
   },
+  // The stage's built-in browser: a real web page shown inside Vox.
+  browser: {
+    open: (url) => ipcRenderer.invoke("vox-browser:open", typeof url === "string" ? url.slice(0, 4_000) : ""),
+    layout: (visible, bounds) =>
+      ipcRenderer.invoke("vox-browser:layout", {
+        visible: visible === true,
+        bounds: {
+          x: Number(bounds?.x) || 0,
+          y: Number(bounds?.y) || 0,
+          width: Number(bounds?.width) || 0,
+          height: Number(bounds?.height) || 0,
+        },
+      }),
+    command: (action) =>
+      ipcRenderer.invoke("vox-browser:command", ["back", "forward", "reload", "stop", "external"].includes(action) ? action : ""),
+    read: () => ipcRenderer.invoke("vox-browser:read"),
+    onState: (listener) => {
+      if (typeof listener !== "function") return () => undefined;
+      const handler = (_event, state) => listener(state ?? null);
+      ipcRenderer.on("vox-browser:state", handler);
+      return () => ipcRenderer.removeListener("vox-browser:state", handler);
+    },
+  },
   // "Welcome home" greeting when the paired iPhone comes near.
   welcomeHome: {
     status: () => ipcRenderer.invoke("vox-welcome-home:status"),
