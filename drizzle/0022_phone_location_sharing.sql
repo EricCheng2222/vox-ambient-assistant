@@ -1,0 +1,1 @@
+ALTER TABLE `phone_assistant_settings` ADD `share_location_with_callers` integer DEFAULT false NOT NULL;

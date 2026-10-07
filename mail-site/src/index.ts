@@ -16,6 +16,7 @@ import { requireAddresses } from "./mime.ts";
 import {
   authorizationServerMetadata,
   isAllowedRedirectUri,
+  isFirstParty,
   isOurResource,
   mcpResourceUrl,
   OAuthServer,
@@ -164,13 +165,18 @@ async function route(request: Request, env: Env) {
       if (result.kind === "redirect") return redirect(result.url);
       const user = await currentUser(env.DB, request);
       if (!user) return redirect(`/auth/login?return_to=${encodeURIComponent(path + url.search)}`);
-      // One flow from the app: without a working email account, add one
-      // first. The pending request waits in D1 behind a nonce and comes back
-      // here afterwards.
       const usable = await usableAccounts(env, user, origin);
-      if (!usable.length) {
-        const nonce = await rememberReturn(env.DB, user.id, path + url.search);
-        return redirect(`/accounts/add?r=${encodeURIComponent(nonce)}`);
+      // One flow from the app: without a working email account (or when the
+      // app asks to add another), connect one first. The pending request
+      // waits in D1 and comes back here afterwards.
+      if (!usable.length || url.searchParams.get("add") === "1") {
+        return connectFirst(env, user, origin, url);
+      }
+      // Vox itself asking, for the person signed in with Vox: nothing to
+      // approve, so the code goes straight back.
+      if (isFirstParty(env.VOX_URL, result.redirectUri)) {
+        const code = await oauth.createCode({ clientId: result.client.id, ownerId: user.id, redirectUri: result.redirectUri, codeChallenge: result.codeChallenge });
+        return redirect(withQuery(result.redirectUri, { code, state: result.state, iss: origin }));
       }
       let returnHost = result.redirectUri;
       try {
@@ -372,6 +378,48 @@ async function route(request: Request, env: Env) {
   return html(messagePage("Not found", "There’s nothing here.", { href: "/", label: "Go to Vox Mail" }), 404);
 }
 
+const PROVIDER_HINTS: Record<string, OAuthKind | "imap"> = { google: "gmail", microsoft: "microsoft", imap: "imap" };
+const LOGIN_HINT = /^[^\s@<>"'&]{1,64}@[^\s@<>"'&]{1,189}\.[^\s@<>"'&]{2,63}$/u;
+
+/**
+ * Sends the user to connect an account before an app's request continues.
+ * `provider` (google, microsoft, imap) skips the chooser; `login_hint`
+ * preselects the address; `add=1` is dropped from the parked request so the
+ * user comes back to continue rather than to add again.
+ */
+async function connectFirst(env: Env, user: SiteUser, origin: string, url: URL) {
+  const params = new URLSearchParams(url.searchParams);
+  params.delete("add");
+  const returnTo = `${url.pathname}?${params}`;
+  const hint = PROVIDER_HINTS[url.searchParams.get("provider") ?? ""];
+  const email = url.searchParams.get("login_hint")?.trim() ?? "";
+  const loginHint = LOGIN_HINT.test(email) && email.length <= 254 ? email : "";
+  const nonce = await rememberReturn(env.DB, user.id, returnTo);
+  const withNonce = (page: string, extra = "") => `${page}?r=${encodeURIComponent(nonce)}${extra}`;
+  if (hint === "imap") return redirect(withNonce("/imap/connect", loginHint ? `&email=${encodeURIComponent(loginHint)}` : ""));
+  if (hint && oauthConfigured(env, hint)) {
+    const connect = await beginOAuthConnect(env, hint, origin, user.id, returnTo, loginHint);
+    return redirect(connect.location, { "Set-Cookie": connect.cookie });
+  }
+  if (hint) {
+    // The app asked for a provider this site can't sign in to: say so, with a way forward.
+    const name = hint === "gmail" ? "Gmail" : "Outlook";
+    return html(
+      messagePage(
+        `${name} sign-in isn’t set up yet`,
+        `This Vox Mail site can’t sign in with ${hint === "gmail" ? "Google" : "Microsoft"} yet. ${
+          hint === "gmail" ? "You can still connect Gmail with an app password." : "You can connect another kind of account for now."
+        }`,
+        hint === "gmail"
+          ? { href: withNonce("/imap/connect", `&preset=gmail${loginHint ? `&email=${encodeURIComponent(loginHint)}` : ""}`), label: "Connect with an app password instead" }
+          : { href: withNonce("/accounts/add"), label: "Choose another account" },
+      ),
+      503,
+    );
+  }
+  return redirect(withNonce("/accounts/add"));
+}
+
 /**
  * Connected accounts the user can use now. OAuth accounts are checked with
  * one cheap call (which notices a revoked grant); IMAP accounts are trusted
@@ -396,7 +444,9 @@ async function handleImapConnect(request: Request, env: Env, url: URL) {
   if (request.method === "GET") {
     const email = url.searchParams.get("email") ?? "";
     const nonce = url.searchParams.get("r");
-    return render({ email, preset: email ? presetForEmail(email) : "icloud" }, (await recallReturn(env.DB, user.id, nonce)) ? nonce : null);
+    const wanted = url.searchParams.get("preset") ?? "";
+    const preset = presets[wanted] ? wanted : email ? presetForEmail(email) : "icloud";
+    return render({ email, preset }, (await recallReturn(env.DB, user.id, nonce)) ? nonce : null);
   }
   if (request.method !== "POST") return new Response(null, { status: 405 });
   if (!isSameOrigin(request, url.origin)) return json({ error: "Request not allowed." }, 403);

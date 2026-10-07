@@ -386,7 +386,7 @@ const ref = (native) => `m.${gmailAccount.id}.${Buffer.from(native).toString("ba
   await accounts.removeAccount(db, USER, outlook);
 }
 
-// ---- The OAuth flow Vox's MCP client (lib/mcp-client.ts) runs, with no accounts yet ----
+// ---- The OAuth flow an MCP client runs (as lib/mcp-client.ts does), with no accounts yet ----
 {
   const flowEnv = makeEnv();
   const flowDb = flowEnv.DB;
@@ -405,12 +405,13 @@ const ref = (native) => `m.${gmailAccount.id}.${Buffer.from(native).toString("ba
   assert.deepEqual(metadata.token_endpoint_auth_methods_supported, ["none"]);
   assert.ok(metadata.grant_types_supported.includes("refresh_token"));
 
-  const redirectUri = "https://vox.example/api/connections/callback";
+  // A third-party app here; Vox's own (auto-approved) flow is checked further down.
+  const redirectUri = "https://claude.ai/api/mcp/auth_callback";
   const registered = await worker.fetch(
     new Request(metadata.registration_endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ client_name: "Vox", redirect_uris: [redirectUri], grant_types: ["authorization_code", "refresh_token"] }),
+      body: JSON.stringify({ client_name: "Claude", redirect_uris: [redirectUri], grant_types: ["authorization_code", "refresh_token"] }),
     }),
     flowEnv,
   );
@@ -499,10 +500,10 @@ const ref = (native) => `m.${gmailAccount.id}.${Buffer.from(native).toString("ba
   assert.notEqual(saved.secret, "1//refresh");
   assert.equal(await accounts.openSecret(flowEnv, saved, saved.secret, saved.iv), "1//refresh");
 
-  // Consent lists the account, then the code goes to Vox.
+  // A third-party app always gets the consent page, then the code.
   const consent = await get(authorizePath, { Cookie: sessionCookie });
   assert.equal(consent.status, 200);
-  assert.match(await consent.text(), /Vox wants to use your email[\s\S]*<b>me@gmail\.com<\/b>[\s\S]*only after your spoken confirmation/u);
+  assert.match(await consent.text(), /Claude wants to use your email[\s\S]*<b>me@gmail\.com<\/b>[\s\S]*only after your spoken confirmation/u);
   const decide = (origin) =>
     worker.fetch(new Request(authorize, { method: "POST", headers: { Cookie: sessionCookie, Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ approve: true }) }), flowEnv);
   assert.equal((await decide("https://evil.example")).status, 403);
@@ -550,4 +551,153 @@ const ref = (native) => `m.${gmailAccount.id}.${Buffer.from(native).toString("ba
   assert.equal(new URLSearchParams(callsTo("https://oauth2.googleapis.com/revoke")[0].body).get("token"), "1//refresh");
   assert.deepEqual((await accounts.listAccounts(flowDb, USER)).map((account) => [account.email, account.isPrimary]), [["me@outlook.com", 1]]);
   assert.match(await (await get("/")).text(), /Sign in with Vox/u);
+}
+
+// ---- Connecting from Vox: provider hints, first-party auto-approval, and the sign-in handoff ----
+{
+  const { isFirstParty } = await import("../src/oauth.ts");
+  const VOX = "https://vox-assistant.ericcheng306.workers.dev";
+  // Only the exact Vox origin counts.
+  assert.equal(isFirstParty(VOX, `${VOX}/api/connections/callback`), true);
+  for (const uri of [
+    `${VOX}.evil.test/api/connections/callback`,
+    `http://vox-assistant.ericcheng306.workers.dev/api/connections/callback`,
+    `${VOX}@evil.test/api/connections/callback`,
+    `https://user:pass@vox-assistant.ericcheng306.workers.dev/api/connections/callback`,
+    `https://evil.test/${VOX}/api/connections/callback`,
+    `https://evil.test/?next=${VOX}/api/connections/callback`,
+    `${VOX}:8443/api/connections/callback`,
+    "https://sub.vox-assistant.ericcheng306.workers.dev/cb",
+    "voxassistant://callback",
+    "not a url",
+  ]) {
+    assert.equal(isFirstParty(VOX, uri), false, uri);
+  }
+  assert.equal(isFirstParty("http://127.0.0.1:8799", "http://127.0.0.1:8799/api/connections/callback"), true, "local development");
+
+  const voxEnv = makeEnv({ VOX_URL: VOX });
+  const get = (path, headers = {}, env = voxEnv) => worker.fetch(new Request(`${ORIGIN}${path}`, { headers }), env);
+  const register = async (name, redirectUri, env = voxEnv) =>
+    (await (await worker.fetch(new Request(`${ORIGIN}/oauth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_name: name, redirect_uris: [redirectUri] }) }), env)).json()).client_id;
+  const verifier = "w".repeat(50);
+  const challenge = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))).toString("base64url");
+  const authorizePath = (clientId, redirectUri, extra = {}) =>
+    `/oauth/authorize?${new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: redirectUri, state: "s-1", code_challenge: challenge, code_challenge_method: "S256", resource: `${ORIGIN}/mcp`, scope: "mail", ...extra })}`;
+  const voxRedirect = `${VOX}/api/connections/callback`;
+  const voxClient = await register("Vox", voxRedirect);
+
+  // Sign-in handoff: not signed in here, the browser is bounced through Vox's own OAuth with no page in between.
+  route("GET", `${VOX}/.well-known/oauth-authorization-server`, () =>
+    Response.json({ authorization_endpoint: `${VOX}/oauth/authorize`, token_endpoint: `${VOX}/api/oauth/token`, registration_endpoint: `${VOX}/api/oauth/register`, userinfo_endpoint: `${VOX}/api/oauth/userinfo` }),
+  );
+  route("POST", `${VOX}/api/oauth/register`, () => Response.json({ client_id: "mail-site-client" }, { status: 201 }));
+  route("POST", `${VOX}/api/oauth/token`, () => Response.json({ access_token: "vox-access" }));
+  route("GET", `${VOX}/api/oauth/userinfo`, () => Response.json({ sub: "pairwise-eric", name: "Eric" }));
+  const start = authorizePath(voxClient, voxRedirect, { provider: "google", login_hint: "eric@gmail.com" });
+  const hop1 = await get(start);
+  assert.equal(hop1.status, 302);
+  assert.equal(hop1.headers.get("location"), `/auth/login?return_to=${encodeURIComponent(start)}`);
+  const hop2 = await get(hop1.headers.get("location"));
+  assert.equal(hop2.status, 302, "straight on to Vox, no intermediate page");
+  const voxAuthorize = new URL(hop2.headers.get("location"));
+  assert.equal(voxAuthorize.origin + voxAuthorize.pathname, `${VOX}/oauth/authorize`);
+  assert.equal(voxAuthorize.searchParams.get("redirect_uri"), `${ORIGIN}/auth/callback`);
+  const loginCookie = hop2.headers.get("set-cookie").split(";")[0];
+  const hop3 = await get(`/auth/callback?code=vox-code&state=${voxAuthorize.searchParams.get("state")}`, { Cookie: loginCookie });
+  assert.equal(hop3.status, 302);
+  assert.equal(hop3.headers.get("location"), start, "back to the app's request, hints intact");
+  const session = hop3.headers.getSetCookie().find((cookie) => cookie.startsWith("vm_session=")).split(";")[0];
+
+  // provider=google with no accounts: straight to Google (no chooser), with the address preselected.
+  const toGoogle = await get(start, { Cookie: session });
+  assert.equal(toGoogle.status, 302);
+  const googleUrl = new URL(toGoogle.headers.get("location"));
+  assert.equal(googleUrl.hostname, "accounts.google.com");
+  assert.equal(googleUrl.searchParams.get("login_hint"), "eric@gmail.com");
+  assert.equal(googleUrl.searchParams.get("code_challenge_method"), "S256");
+  assert.doesNotMatch(toGoogle.headers.get("location"), new RegExp(voxClient, "u"), "the app's request stays in D1, behind Google's state");
+  const connectCookie = toGoogle.headers.get("set-cookie").split(";")[0];
+
+  // Back from Google: the account is saved, and Vox gets its code without an approval page.
+  const fromGoogle = await get(`/google/callback?code=google-code&state=${googleUrl.searchParams.get("state")}`, { Cookie: `${session}; ${connectCookie}` });
+  assert.equal(fromGoogle.headers.get("location"), start);
+  const approved = await get(start, { Cookie: session });
+  assert.equal(approved.status, 302);
+  const back = new URL(approved.headers.get("location"));
+  assert.equal(back.origin + back.pathname, voxRedirect);
+  assert.deepEqual([back.searchParams.get("state"), back.searchParams.get("iss")], ["s-1", ORIGIN]);
+  const tokenRequest = (params) =>
+    worker.fetch(new Request(`${ORIGIN}/oauth/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(params) }), voxEnv);
+  // PKCE still decides who can use the code.
+  assert.equal((await tokenRequest({ grant_type: "authorization_code", code: back.searchParams.get("code"), redirect_uri: voxRedirect, client_id: voxClient, code_verifier: "x".repeat(50) })).status, 400);
+  const again = new URL((await get(start, { Cookie: session })).headers.get("location"));
+  const tokens = await (await tokenRequest({ grant_type: "authorization_code", code: again.searchParams.get("code"), redirect_uri: voxRedirect, client_id: voxClient, code_verifier: verifier })).json();
+  assert.ok(tokens.access_token.startsWith("vm_at_"));
+
+  // Auto-approval is only for a signed-in GET with valid PKCE and Vox's exact redirect.
+  assert.equal(new URL((await get(authorizePath(voxClient, voxRedirect))).headers.get("location"), ORIGIN).pathname, "/auth/login", "signed out: sign in first");
+  const noPkce = new URL((await get(authorizePath(voxClient, voxRedirect, { code_challenge_method: "plain" }), { Cookie: session })).headers.get("location"));
+  assert.deepEqual([noPkce.searchParams.get("error"), noPkce.searchParams.get("code")], ["invalid_request", null]);
+  assert.equal((await get(authorizePath(voxClient, `${VOX}.evil.test/api/connections/callback`), { Cookie: session })).status, 400, "an unregistered redirect is refused outright");
+  const post = (path, body, origin = ORIGIN) =>
+    worker.fetch(new Request(`${ORIGIN}${path}`, { method: "POST", headers: { Cookie: session, Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify(body) }), voxEnv);
+  assert.equal((await post(authorizePath(voxClient, voxRedirect), { approve: true }, "https://evil.example")).status, 403);
+  assert.match((await (await post(authorizePath(voxClient, voxRedirect), {})).json()).redirect, /error=access_denied/u, "a POST never approves by itself");
+
+  // Third parties and look-alike origins still get the approval page.
+  for (const [name, redirectUri] of [
+    ["Claude", "https://claude.ai/api/mcp/auth_callback"],
+    ["Vox", `${VOX}.evil.test/api/connections/callback`],
+    ["Vox", "http://vox-assistant.ericcheng306.workers.dev/api/connections/callback"],
+    ["Vox", `${VOX}@evil.test/api/connections/callback`],
+    ["Vox", "voxassistant://callback"],
+  ]) {
+    const response = await worker.fetch(new Request(`${ORIGIN}/oauth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_name: name, redirect_uris: [redirectUri] }) }), voxEnv);
+    // Plain-http redirects to other hosts can't even be registered.
+    if (response.status !== 201) {
+      assert.match(redirectUri, /^http:/u);
+      continue;
+    }
+    const page = await get(authorizePath((await response.json()).client_id, redirectUri), { Cookie: session });
+    assert.equal(page.status, 200, redirectUri);
+    assert.equal(page.headers.get("location"), null);
+    assert.match(await page.text(), /wants to use your email[\s\S]*id="allow"/u, redirectUri);
+  }
+
+  // add=1: connect another account first even though one works, then continue without adding again.
+  const addMore = await get(authorizePath(voxClient, voxRedirect, { provider: "google", add: "1", login_hint: "not an address" }), { Cookie: session });
+  const addUrl = new URL(addMore.headers.get("location"));
+  assert.equal(addUrl.hostname, "accounts.google.com");
+  assert.equal(addUrl.searchParams.get("login_hint"), null, "an invalid login_hint is dropped");
+  const resumed = await get(`/google/callback?code=google-code&state=${addUrl.searchParams.get("state")}`, { Cookie: `${session}; ${addMore.headers.get("set-cookie").split(";")[0]}` });
+  assert.doesNotMatch(resumed.headers.get("location"), /add=1/u);
+  assert.equal(new URL((await get(resumed.headers.get("location"), { Cookie: session })).headers.get("location")).origin, VOX);
+  const addMicrosoft = await get(authorizePath(voxClient, voxRedirect, { provider: "microsoft", add: "1", login_hint: "me@outlook.com" }), { Cookie: session });
+  const microsoftUrl = new URL(addMicrosoft.headers.get("location"));
+  assert.equal(microsoftUrl.hostname, "login.microsoftonline.com");
+  assert.equal(microsoftUrl.searchParams.get("login_hint"), "me@outlook.com");
+  // provider=imap goes to the form; an unknown hint (or none) goes to the chooser.
+  const toImap = new URL((await get(authorizePath(voxClient, voxRedirect, { provider: "imap", add: "1", login_hint: "me@icloud.com" }), { Cookie: session })).headers.get("location"), ORIGIN);
+  assert.equal(toImap.pathname, "/imap/connect");
+  assert.equal(toImap.searchParams.get("email"), "me@icloud.com");
+  assert.equal(toImap.searchParams.get("r").length, 43);
+  for (const extra of [{ provider: "aol", add: "1" }, { add: "1" }]) {
+    assert.equal(new URL((await get(authorizePath(voxClient, voxRedirect, extra), { Cookie: session })).headers.get("location"), ORIGIN).pathname, "/accounts/add");
+  }
+  // A working account and no add=1: the hint is ignored and Vox is approved at once.
+  assert.equal(new URL((await get(authorizePath(voxClient, voxRedirect, { provider: "imap" }), { Cookie: session })).headers.get("location")).origin, VOX);
+
+  // provider=google where Google isn't configured: a clear page with a way forward, not a dead end.
+  const bare = makeEnv({ VOX_URL: VOX, GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" });
+  const bareSession = (await startSession(bare.DB, { id: USER, name: "Eric" })).split(";")[0];
+  const bareClient = await register("Vox", voxRedirect, bare);
+  const notSetUp = await get(authorizePath(bareClient, voxRedirect, { provider: "google", login_hint: "eric@gmail.com" }), { Cookie: bareSession }, bare);
+  assert.equal(notSetUp.status, 503);
+  const notSetUpPage = await notSetUp.text();
+  assert.match(notSetUpPage, /Gmail sign-in isn’t set up yet/u);
+  const instead = /href="(\/imap\/connect\?r=[^"]+)"[^>]*>Connect with an app password instead/u.exec(notSetUpPage)[1].replace(/&#38;/gu, "&");
+  const form = await (await get(instead, { Cookie: bareSession }, bare)).text();
+  assert.match(form, /<option value="gmail" selected>/u);
+  assert.match(form, /name="email" type="email" required maxlength="254" value="eric@gmail\.com"/u);
+  assert.match(form, /name="r" value="/u, "the app's request is still parked for after the form");
 }

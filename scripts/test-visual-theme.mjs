@@ -13,7 +13,7 @@ const {
 assert.equal(defaultVisualTheme, "ambient");
 assert.deepEqual(
   visualThemeOptions.map((option) => option.id),
-  ["ambient", "holographic"],
+  ["ambient", "holographic", "daylight"],
 );
 assert.equal(isVisualTheme("ambient"), true);
 assert.equal(isVisualTheme("holographic"), true);

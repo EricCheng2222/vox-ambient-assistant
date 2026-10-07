@@ -33,6 +33,7 @@ const cloudApiMethods = new Map([
   ["/api/locations/devices", new Set(["POST", "DELETE"])],
   ["/api/mail/token", new Set(["POST"])],
   ["/api/memories", new Set(["GET", "POST", "PATCH", "DELETE"])],
+  ["/api/panels", new Set(["GET", "POST", "PATCH", "DELETE"])],
   ["/api/phone-assistant", new Set(["GET", "POST", "PATCH", "DELETE"])],
   ["/api/phone-assistant/texts", new Set(["GET", "POST"])],
   ["/api/preferences", new Set(["GET", "PATCH"])],
@@ -44,6 +45,7 @@ const cloudApiMethods = new Map([
   ["/api/stage/facts", new Set(["POST"])],
   ["/api/stage/page", new Set(["GET"])],
   ["/api/today", new Set(["GET"])],
+  ["/api/weather", new Set(["GET"])],
 ]);
 
 const strippedRequestHeaders = new Set([

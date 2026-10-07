@@ -49,8 +49,12 @@
     "test:incoming-texts": "node scripts/test-incoming-texts.mjs",
     "test:guest-calls": "node scripts/test-guest-calls.mjs",
     "test:device-locations": "node --experimental-strip-types scripts/test-device-locations.mjs",
+    "test:place-reminders": "node scripts/test-place-reminders.mjs",
+    "test:phone-location": "node --experimental-strip-types scripts/test-phone-location.mjs",
+    "test:daylight": "node --experimental-strip-types scripts/test-daylight.mjs",
     "test:stage-page": "node --experimental-strip-types scripts/test-stage-page.mjs",
-    "test:today": "node --experimental-strip-types scripts/test-today.mjs"
+    "test:today": "node --experimental-strip-types scripts/test-today.mjs",
+    "test:dashboard": "node --experimental-strip-types scripts/test-dashboard.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

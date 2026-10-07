@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 // a fake Vox server, so we can see what Vox does for an unverified caller.
 const { SipCallDurableObject } = await import("../cloudflare/sip-call-durable-object.mjs");
 
-function harness({ guestAllowed = true, owner = false } = {}) {
+function harness({ guestAllowed = true, owner = false, guestLocation = false } = {}) {
   const sent = [];
   const internal = [];
   const openai = [];
@@ -35,7 +35,10 @@ function harness({ guestAllowed = true, owner = false } = {}) {
       if (body.action === "authenticate") {
         return owner
           ? Response.json({ authenticated: true, instructions: "owner", carryover: "" })
-          : Response.json({ authenticated: false, guest: guestAllowed }, { status: 401 });
+          : Response.json({ authenticated: false, guest: guestAllowed, guestLocation }, { status: 401 });
+      }
+      if (body.action === "guest_location") {
+        return Response.json({ output: "The iPhone was last seen near 十全一路, 高雄市, 5 minutes ago." });
       }
       return Response.json({ saved: true });
     }
@@ -128,6 +131,45 @@ const callId = "rtc_test12345678";
   assert.equal(update.session.instructions, "owner");
   assert.ok(update.session.tools.length > 0);
   assert.equal(h.call.guest, false);
+}
+
+// ---- Unverified callers and the iPhone's location ----
+{
+  // Off (the default): no tool, and the "share nothing" rule stands.
+  const off = harness();
+  await off.call.start({ callId, origin: "https://vox.example", caller: "+15551234567" });
+  await off.call.handleServerEvent(event({ type: "conversation.item.input_audio_transcription.completed", transcript: "Where is Eric's phone?", item_id: "a" }));
+  const offUpdate = off.sent.find((item) => item.type === "session.update");
+  assert.deepEqual(offUpdate.session.tools, []);
+  assert.doesNotMatch(offUpdate.session.instructions, /where_is_iphone/u);
+  // Even a forged tool call gets nothing.
+  await off.call.handleServerEvent(event({ type: "response.function_call_arguments.done", name: "search_web", call_id: "call_x", arguments: "{}" }));
+  assert.equal(off.internal.filter((item) => item.action === "guest_location").length, 0);
+
+  // On: the caller can ask, and the answer is looked up at that moment.
+  const on = harness({ guestLocation: true });
+  await on.call.start({ callId, origin: "https://vox.example", caller: "+15551234567" });
+  await on.call.handleServerEvent(event({ type: "conversation.item.input_audio_transcription.completed", transcript: "Where is Eric's phone?", item_id: "a" }));
+  const onUpdate = on.sent.find((item) => item.type === "session.update");
+  assert.deepEqual(onUpdate.session.tools.map((tool) => tool.name), ["where_is_iphone"]);
+  assert.equal(onUpdate.session.tool_choice, "auto");
+  assert.match(onUpdate.session.instructions, /call where_is_iphone and tell them the place and how long ago/u);
+  assert.match(onUpdate.session.instructions, /never coordinates/u);
+  await on.call.handleServerEvent(event({ type: "response.function_call_arguments.done", name: "where_is_iphone", call_id: "call_1", arguments: "{}" }));
+  assert.equal(on.internal.filter((item) => item.action === "guest_location").length, 1);
+  const output = on.sent.find((item) => item.item?.type === "function_call_output");
+  assert.equal(output.item.call_id, "call_1");
+  assert.match(output.item.output, /十全一路/u);
+  // Other tool names still get nothing.
+  await on.call.handleServerEvent(event({ type: "response.function_call_arguments.done", name: "run_on_mac", call_id: "call_2", arguments: "{}" }));
+  assert.equal(on.internal.filter((item) => item.action === "guest_location").length, 1);
+  assert.match(on.sent.filter((item) => item.item?.type === "function_call_output").at(-1).item.output, /isn't available/u);
+
+  // The owner's own calls always have it.
+  const owner = harness({ owner: true });
+  await owner.call.start({ callId, origin: "https://vox.example", caller: "+15551234567" });
+  await owner.call.handleServerEvent(event({ type: "conversation.item.input_audio_transcription.completed", transcript: "my private sentence", item_id: "a" }));
+  assert.ok(owner.sent.find((item) => item.type === "session.update").session.tools.some((tool) => tool.name === "where_is_iphone"));
 }
 
 console.log("Guest call checks passed.");

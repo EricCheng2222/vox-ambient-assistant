@@ -130,6 +130,7 @@ export async function savePhoneAssistantSettings(
       phoneLastFour: normalizedPhone?.slice(-4) ?? null,
       enabled: true,
       allowOutbound: false,
+      shareLocationWithCallers: false,
       createdAt: now,
       updatedAt: now,
     })
@@ -144,6 +145,7 @@ export async function savePhoneAssistantSettings(
         phoneLastFour: normalizedPhone?.slice(-4) ?? null,
         enabled: true,
         allowOutbound: false,
+        shareLocationWithCallers: false,
         updatedAt: now,
       },
     });
@@ -159,6 +161,7 @@ export async function getPhoneAssistantSettings(ownerId: string) {
       passphraseLength: phoneAssistantSettings.passphraseLength,
       enabled: phoneAssistantSettings.enabled,
       allowOutbound: phoneAssistantSettings.allowOutbound,
+      shareLocationWithCallers: phoneAssistantSettings.shareLocationWithCallers,
     })
     .from(phoneAssistantSettings)
     .where(eq(phoneAssistantSettings.ownerId, ownerId))
@@ -174,6 +177,7 @@ export async function getPhoneAssistantDestination(ownerId: string) {
       phoneIv: phoneAssistantSettings.phoneIv,
       enabled: phoneAssistantSettings.enabled,
       allowOutbound: phoneAssistantSettings.allowOutbound,
+      shareLocationWithCallers: phoneAssistantSettings.shareLocationWithCallers,
     })
     .from(phoneAssistantSettings)
     .where(eq(phoneAssistantSettings.ownerId, ownerId))
@@ -189,7 +193,7 @@ export async function getPhoneAssistantDestination(ownerId: string) {
 
 export async function updatePhoneAssistantOptions(
   ownerId: string,
-  patch: { enabled?: boolean; allowOutbound?: boolean },
+  patch: { enabled?: boolean; allowOutbound?: boolean; shareLocationWithCallers?: boolean },
 ) {
   if (!isPhoneAssistantOwner(ownerId)) return null;
   await getDb()

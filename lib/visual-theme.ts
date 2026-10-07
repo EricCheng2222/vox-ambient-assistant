@@ -1,6 +1,6 @@
 import type { RealtimeVoice } from "@/lib/realtime-voice";
 
-export type VisualTheme = "ambient" | "holographic";
+export type VisualTheme = "ambient" | "holographic" | "daylight";
 
 export const visualThemeOptions: Array<{
   id: VisualTheme;
@@ -8,6 +8,8 @@ export const visualThemeOptions: Array<{
 }> = [
   { id: "ambient", label: "Ambient" },
   { id: "holographic", label: "Holographic" },
+  // Light and calm: a soft sky, glass panels beside the conversation.
+  { id: "daylight", label: "Daylight" },
 ];
 
 const visualThemes = new Set<VisualTheme>(
@@ -20,6 +22,7 @@ export const defaultVisualTheme: VisualTheme = "ambient";
 export const themeVoices: Record<VisualTheme, RealtimeVoice> = {
   ambient: "marin",
   holographic: "verse",
+  daylight: "marin",
 };
 
 const HOLOGRAPHIC_PERSONA_INSTRUCTIONS =

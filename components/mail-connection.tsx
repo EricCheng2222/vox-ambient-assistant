@@ -21,8 +21,12 @@ type ConnectionStatus = { connected: boolean; siteUrl: string };
  * Starts connecting Vox to Vox Mail. The user signs in with their Vox account
  * and then connects their email accounts, in a separate tab.
  */
-export async function openMailConnection() {
-  const response = await fetch("/api/connections/mail", { method: "POST" });
+export async function openMailConnection(options: { provider?: "google" | "microsoft" | "imap"; add?: boolean } = {}) {
+  const response = await fetch("/api/connections/mail", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options),
+  });
   const payload = (await response.json().catch(() => ({}))) as { authorizeUrl?: string; error?: string };
   if (!response.ok || !payload.authorizeUrl) {
     toast.error("Couldn’t connect your email", { description: payload.error });
@@ -30,7 +34,7 @@ export async function openMailConnection() {
   }
   window.open(payload.authorizeUrl, "_blank", "noopener");
   toast.info("Finish connecting in the new tab", {
-    description: "Sign in with your Vox account, then add your email accounts.",
+    description: "Allow access there and you’ll come straight back.",
   });
 }
 
@@ -123,16 +127,31 @@ export function MailConnection() {
           ) : (
             <>
               <p className="text-sm leading-6 text-white/60">
-                You’ll sign in with your Vox account, then add your email accounts: Gmail and
-                Outlook sign in with Google or Microsoft; iCloud and others use an app password.
-                Start a new conversation afterwards.
+                Pick your account, allow access, and you’re back here connected. Start a new
+                conversation afterwards.
               </p>
               <Button
                 type="button"
                 className="w-full rounded-full bg-[#f4ff74] text-[#10111b] hover:bg-[#f4ff74]/90"
-                onClick={() => void openMailConnection()}
+                onClick={() => void openMailConnection({ provider: "google" })}
               >
-                <Link2 /> Connect email
+                <Link2 /> Connect Gmail
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+                onClick={() => void openMailConnection({ provider: "microsoft" })}
+              >
+                Connect Outlook
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+                onClick={() => void openMailConnection({ provider: "imap" })}
+              >
+                iCloud, Yahoo, or another account
               </Button>
             </>
           )}

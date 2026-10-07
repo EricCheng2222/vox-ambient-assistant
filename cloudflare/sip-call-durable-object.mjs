@@ -36,6 +36,20 @@ const guestInstructions = [
   "The call is limited to about a minute and a half. Near the end, briefly read back the message and say goodbye.",
 ].join(" ");
 
+// Where the owner's iPhone was last seen (place and how long ago). Verified
+// calls always have it; unverified callers only when the owner turned on
+// "Let any caller ask where my iPhone is".
+const whereIsIphoneTool = {
+  type: "function",
+  name: "where_is_iphone",
+  description:
+    "Look up where the owner's iPhone was last seen: the place and how long ago. Use only when the caller asks where the phone (or the owner's phone) is.",
+  parameters: { type: "object", properties: {}, required: [], additionalProperties: false },
+};
+
+const guestLocationInstruction =
+  "Exception set by the person you answer for: if the caller asks where their phone is (or where the phone is), call where_is_iphone and tell them the place and how long ago, exactly as it says. Share nothing else about their whereabouts: no home address, schedule, or guesses beyond what the tool returns, and never coordinates.";
+
 const guestWrapUpInstruction =
   "Time is almost up. In the caller's language, in one or two short sentences, confirm you'll pass their message along and say goodbye.";
 
@@ -148,6 +162,7 @@ async function decryptMacResult(secret, deviceId, commandId, ciphertext, iv) {
 }
 
 const phoneTools = [
+  whereIsIphoneTool,
   {
     type: "function",
     name: "search_web",
@@ -443,6 +458,11 @@ export class SipCallDurableObject {
       this.pendingToolReport = false;
     }
 
+    if (event.type === "response.function_call_arguments.done" && this.guest) {
+      await this.executeGuestTool(event);
+      return;
+    }
+
     if (event.type === "response.function_call_arguments.done" && this.authenticated) {
       await this.executeTool(event);
       return;
@@ -482,7 +502,7 @@ export class SipCallDurableObject {
       response = null;
     }
     if (!response?.authenticated && response?.guest === true) {
-      await this.beginGuestCall(transcript, itemId);
+      await this.beginGuestCall(transcript, itemId, response.guestLocation === true);
       return;
     }
     if (!response?.authenticated) {
@@ -546,7 +566,7 @@ export class SipCallDurableObject {
   }
 
   /** The caller isn't the owner: answer as the owner's assistant, briefly. */
-  async beginGuestCall(firstWords, itemId) {
+  async beginGuestCall(firstWords, itemId, allowLocation = false) {
     this.guest = true;
     this.guestDeadline = Date.now() + guestCallLimitMs;
     await this.saveState({ closed: false });
@@ -554,9 +574,9 @@ export class SipCallDurableObject {
       type: "session.update",
       session: {
         type: "realtime",
-        instructions: guestInstructions,
-        tools: [],
-        tool_choice: "none",
+        instructions: allowLocation ? `${guestInstructions} ${guestLocationInstruction}` : guestInstructions,
+        tools: allowLocation ? [whereIsIphoneTool] : [],
+        tool_choice: allowLocation ? "auto" : "none",
         audio: {
           input: {
             transcription: { model: "gpt-4o-mini-transcribe", prompt: transcriptionPrompt },
@@ -575,6 +595,23 @@ export class SipCallDurableObject {
     if (this.greeting) await this.syncGuestLine("assistant", this.greeting, "greeting");
     await this.syncGuestLine("user", firstWords, itemId);
     await this.state.storage.setAlarm(Math.min(this.guestDeadline, Date.now() + guestWrapUpMs));
+  }
+
+  /** An unverified caller's only tool: where the iPhone is, if the owner allows it. */
+  async executeGuestTool(event) {
+    const callId = String(event.call_id ?? "");
+    if (!callId || this.pendingToolCalls.has(callId)) return;
+    this.pendingToolCalls.add(callId);
+    try {
+      const result = event.name === "where_is_iphone"
+        ? await this.internalRequest({ action: "guest_location", callId: this.callId })
+        : { output: "That isn't available on this call." };
+      this.reportToolResult(callId, result);
+    } catch {
+      this.reportToolResult(callId, { output: "Say you can't check that right now." });
+    } finally {
+      this.pendingToolCalls.delete(callId);
+    }
   }
 
   sendGuestWrapUp() {

@@ -1,0 +1,389 @@
+/* Daylight: Vox's light theme. A soft sky behind everything, glass panels
+   beside the conversation, white chat bubbles, a pill message box, and a
+   small switch at the top in place of the side rail. */
+
+html[data-vox-theme="daylight"] {
+  --dl-ink: #18212e;
+  --dl-ink-2: rgb(24 33 46 / 72%);
+  --dl-ink-3: rgb(24 33 46 / 62%);
+  --dl-line: rgb(24 33 46 / 12%);
+  --dl-glass: rgb(255 255 255 / 56%);
+  --dl-glass-strong: rgb(255 255 255 / 78%);
+  --dl-accent: #2457d6;
+  --background: #cfdcee;
+  --foreground: #18212e;
+  --card: rgb(255 255 255 / 62%);
+  --card-foreground: #18212e;
+  --popover: #f6f8fb;
+  --popover-foreground: #18212e;
+  --primary: #18212e;
+  --primary-foreground: #ffffff;
+  --secondary: rgb(24 33 46 / 6%);
+  --secondary-foreground: #18212e;
+  --muted: rgb(24 33 46 / 6%);
+  --muted-foreground: #556173;
+  --accent: rgb(24 33 46 / 8%);
+  --accent-foreground: #18212e;
+  --border: rgb(24 33 46 / 14%);
+  --input: rgb(24 33 46 / 18%);
+  --ring: #2457d6;
+  --radius: 1rem;
+  color-scheme: light;
+}
+
+/* ---- The sky ---- */
+.vox-shell[data-vox-theme="daylight"] {
+  position: relative;
+  isolation: isolate;
+  color: var(--dl-ink);
+  background:
+    radial-gradient(120% 70% at 18% 8%, rgb(255 255 255 / 55%), transparent 60%),
+    radial-gradient(90% 60% at 82% 30%, rgb(214 226 245 / 80%), transparent 65%),
+    radial-gradient(110% 55% at 60% 105%, rgb(233 226 214 / 85%), transparent 62%),
+    linear-gradient(180deg, #8fb0df 0%, #aec6e8 38%, #cdd9ea 70%, #d9d6cf 100%);
+  background-attachment: fixed;
+}
+.vox-shell[data-vox-theme="daylight"]::before {
+  position: fixed;
+  inset: -20%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38% 22% at 30% 34%, rgb(255 255 255 / 60%), transparent 70%),
+    radial-gradient(46% 20% at 68% 52%, rgb(255 255 255 / 45%), transparent 72%),
+    radial-gradient(30% 16% at 52% 18%, rgb(255 255 255 / 38%), transparent 70%);
+  filter: blur(40px);
+  content: "";
+}
+@media (prefers-reduced-motion: no-preference) {
+  .vox-shell[data-vox-theme="daylight"]::before { animation: daylight-drift 90s ease-in-out infinite alternate; }
+}
+@keyframes daylight-drift {
+  from { transform: translate3d(-3%, 0, 0); }
+  to { transform: translate3d(4%, -2%, 0); }
+}
+.vox-shell[data-vox-theme="daylight"] .ambient,
+.vox-shell[data-vox-theme="daylight"] .holo-edge { display: none; }
+
+/* ---- Hard-coded dark-theme colours, translated ---- */
+html[data-vox-theme="daylight"] :is([class^="text-white"], [class*=" text-white"]) { color: var(--dl-ink); }
+html[data-vox-theme="daylight"] :is([class*=" text-white/7"], [class*=" text-white/8"], [class*=" text-white/9"], [class^="text-white/7"], [class^="text-white/8"]) { color: rgb(24 33 46 / 88%); }
+html[data-vox-theme="daylight"] :is([class*=" text-white/5"], [class*=" text-white/6"], [class^="text-white/5"], [class^="text-white/6"]) { color: var(--dl-ink-2); }
+html[data-vox-theme="daylight"] :is([class*=" text-white/2"], [class*=" text-white/3"], [class*=" text-white/4"], [class^="text-white/2"], [class^="text-white/3"], [class^="text-white/4"]) { color: var(--dl-ink-3); }
+html[data-vox-theme="daylight"] [class*="hover:text-white"]:hover { color: var(--dl-ink); }
+html[data-vox-theme="daylight"] :is([class^="bg-white/"], [class*=" bg-white/"]) { background-color: rgb(24 33 46 / 5%); }
+html[data-vox-theme="daylight"] [class*="hover:bg-white/"]:hover { background-color: rgb(24 33 46 / 9%); }
+html[data-vox-theme="daylight"] :is([class^="bg-black/"], [class*=" bg-black/"]) { background-color: rgb(24 33 46 / 5%); }
+html[data-vox-theme="daylight"] :is([class^="border-white/"], [class*=" border-white/"]) { border-color: var(--dl-line); }
+/* Vox's yellow accent becomes ink (buttons) and blue (text). */
+html[data-vox-theme="daylight"] :is([class^="bg-[#f4ff74]"], [class*=" bg-[#f4ff74]"], [class*=" bg-[#ebf969]"]) { background-color: var(--dl-ink); color: #fff; }
+html[data-vox-theme="daylight"] [class*="hover:bg-[#ebf969]"]:hover,
+html[data-vox-theme="daylight"] [class*="hover:bg-[#f4ff74]"]:hover { background-color: #2a3647; color: #fff; }
+html[data-vox-theme="daylight"] :is([class*=" bg-[#f4ff74]"], [class^="bg-[#f4ff74]"]) :is(svg, span) { color: inherit; }
+html[data-vox-theme="daylight"] :is([class^="text-[#f4ff74]"], [class*=" text-[#f4ff74]"], [class*=" text-[#78ebff]"], [class^="text-[#78ebff]"], [class*=" text-[#c8bcff]"], [class*=" text-[#d8d1ff]"]) { color: var(--dl-accent); }
+html[data-vox-theme="daylight"] :is([class*=" text-[#10111b]"], [class^="text-[#10111b]"]) { color: #fff; }
+html[data-vox-theme="daylight"] :is([class*=" text-[#ffaaa4]"], [class*=" text-[#ff9d96]"], [class*=" text-[#ffb3ad]"], [class^="text-[#ffaaa4]"], [class^="text-[#ff9d96]"]) { color: #b3261e; }
+html[data-vox-theme="daylight"] :is([class*=" text-[#f0c887]"], [class^="text-[#f0c887]"], [class*=" text-[#f0b95e]"]) { color: #8a5a00; }
+html[data-vox-theme="daylight"] :is([class*="text-emerald-"]) { color: #0f6b46; }
+/* Panels, sheets, and dialogs that hard-code a dark surface. */
+html[data-vox-theme="daylight"] :is([class*=" bg-[#10111b]"], [class*=" bg-[#171823]"], [class^="bg-[#10111b]"], [class^="bg-[#171823]"]) {
+  background-color: rgb(246 248 251 / 94%);
+  color: var(--dl-ink);
+  backdrop-filter: blur(24px);
+}
+html[data-vox-theme="daylight"] [data-slot="select-content"],
+html[data-vox-theme="daylight"] .theme-select-content { border-color: var(--dl-line); background: #f6f8fb; color: var(--dl-ink); }
+html[data-vox-theme="daylight"] [data-slot="sheet-overlay"],
+html[data-vox-theme="daylight"] [data-slot="alert-dialog-overlay"] { background: rgb(24 33 46 / 22%); }
+html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
+
+/* ---- Header and the switch at the top ---- */
+.vox-shell[data-vox-theme="daylight"] .vox-header {
+  border-color: transparent;
+  background: transparent;
+  backdrop-filter: none;
+}
+.vox-shell[data-vox-theme="daylight"] .brand-mark {
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--dl-ink);
+  box-shadow: none;
+}
+.vox-shell[data-vox-theme="daylight"] .vox-tagline,
+.vox-shell[data-vox-theme="daylight"] .holo-version { display: none; }
+.vox-shell[data-vox-theme="daylight"] :is(.header-meta-chip, .header-session-chip) {
+  border-color: transparent;
+  color: var(--dl-ink-2);
+  background: var(--dl-glass);
+  backdrop-filter: blur(18px);
+}
+.vox-shell[data-vox-theme="daylight"] .vx-rail,
+.vox-shell[data-vox-theme="daylight"] .vx-tabbar {
+  --vx-accent: var(--dl-ink);
+  --vx-accent-text: var(--dl-ink);
+  --vx-accent-soft: rgb(24 33 46 / 6%);
+  --vx-accent-line: rgb(24 33 46 / 18%);
+  --vx-warn-text: #8a5a00;
+  --vx-warn-soft: rgb(240 185 94 / 20%);
+}
+.vox-shell[data-vox-theme="daylight"] :is(.vx-today, .vx-stage) {
+  --vx-accent-text: var(--dl-accent);
+  --vx-accent-soft: rgb(36 87 214 / 8%);
+  --vx-accent-line: rgb(36 87 214 / 30%);
+  --vx-warn-text: #8a5a00;
+  --vx-warn-soft: rgb(240 185 94 / 20%);
+  --vx-warn-line: rgb(190 130 20 / 45%);
+  --vx-surface: var(--dl-glass);
+  --vx-panel: var(--dl-glass-strong);
+  --vx-line: var(--dl-line);
+  --vx-line-soft: rgb(24 33 46 / 7%);
+  --vx-radius: 1rem;
+}
+.vox-shell[data-vox-theme="daylight"] .vx-tabbar {
+  border-top-color: var(--dl-line);
+  background: rgb(255 255 255 / 72%);
+}
+
+@media (min-width: 1024px) {
+  /* The rail becomes a small switch, top centre. */
+  .vox-shell[data-vox-theme="daylight"] .vx-rail {
+    position: fixed;
+    top: 0.95rem;
+    left: 50%;
+    z-index: 30;
+    width: auto;
+    height: auto;
+    flex-direction: row;
+    gap: 0;
+    border: 0;
+    border-radius: 999px;
+    padding: 0.25rem;
+    background: var(--dl-glass);
+    backdrop-filter: blur(22px) saturate(1.2);
+    transform: translateX(-50%);
+  }
+  .vox-shell[data-vox-theme="daylight"] .vx-rail :is(.brand-mark, .vx-rail-spacer, .vx-rail-status) { display: none; }
+  .vox-shell[data-vox-theme="daylight"] .vx-rail-list { flex-direction: row; gap: 0.15rem; }
+  .vox-shell[data-vox-theme="daylight"] .vx-rail-item {
+    width: auto;
+    height: 2.3rem;
+    flex-direction: row;
+    gap: 0.4rem;
+    border: 0;
+    border-radius: 999px;
+    padding: 0 1rem;
+    color: var(--dl-ink-2);
+    font-size: 0.86rem;
+    font-weight: 600;
+    box-shadow: none;
+  }
+  .vox-shell[data-vox-theme="daylight"] .vx-rail-item svg { display: none; }
+  .vox-shell[data-vox-theme="daylight"] .vx-rail-item:hover { background: rgb(24 33 46 / 7%); color: var(--dl-ink); }
+  .vox-shell[data-vox-theme="daylight"] .vx-rail-item[aria-current="page"] { background: var(--dl-ink); color: #fff; }
+
+  /* Talk: panels, conversation, voice. */
+  .vox-shell[data-vox-theme="daylight"] .interface-grid,
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="daylight"] .interface-grid {
+    max-width: none;
+    grid-template-columns: minmax(0, 1fr) 21rem;
+    gap: 0;
+    border: 0;
+    padding: 0 0.9rem 0.9rem;
+  }
+  .vox-shell[data-vox-theme="daylight"] .interface-grid:has(> .dash),
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="daylight"] .interface-grid:has(> .dash) {
+    grid-template-columns: 19rem minmax(0, 1fr) 21rem;
+  }
+  /* While Vox shows something on the stage, it gets the room. */
+  .vox-shell[data-vox-theme="daylight"] .interface-grid:has(.talk-stage),
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="daylight"] .interface-grid:has(.talk-stage) {
+    grid-template-columns: 17rem minmax(0, 0.8fr) minmax(0, 1.25fr);
+  }
+  .vox-shell[data-vox-theme="daylight"] .interface-grid > .dash { order: 1; }
+  .vox-shell[data-vox-theme="daylight"] .interface-grid > .conversation-console { order: 2; }
+  .vox-shell[data-vox-theme="daylight"] .interface-grid > .voice-console { order: 3; }
+  .vox-shell[data-vox-theme="daylight"] .panel-resize-handle { display: none; }
+}
+
+/* ---- Dashboard panels ---- */
+.dash { display: none; }
+.vox-shell[data-vox-theme="daylight"] .dash {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0.6rem;
+  overflow-y: auto;
+  padding: 0.25rem 0.5rem 1rem 0;
+  scrollbar-width: none;
+}
+@media (max-width: 1023px) {
+  .vox-shell[data-vox-theme="daylight"] .dash { padding: 0.75rem 1rem 0; }
+}
+.dash-panel,
+.dash-create {
+  border: 0;
+  border-radius: 1.1rem;
+  background: var(--dl-glass);
+  backdrop-filter: blur(22px) saturate(1.2);
+  color: var(--dl-ink);
+}
+.dash-panel { display: flex; flex-direction: column; gap: 0.55rem; padding: 0.85rem 0.95rem; }
+.dash-panel-head { display: flex; align-items: center; gap: 0.25rem; }
+.dash-panel-head .dash-kicker { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-serif { margin: 0; font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-size: 1.3rem; font-weight: 600; letter-spacing: -0.01em; }
+.dash-kicker { display: flex; align-items: center; gap: 0.4rem; margin: 0; color: var(--dl-ink-2); font-size: 0.8rem; font-weight: 600; }
+.dash-kicker svg { width: 0.95rem; height: 0.95rem; }
+.dash-kicker.is-amber { color: #8a5a00; }
+.dash-text { margin: 0; color: var(--dl-ink-2); font-size: 0.84rem; line-height: 1.45; }
+.dash-note { margin: 0; color: var(--dl-ink-3); font-size: 0.72rem; }
+.dash-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.4rem; }
+.dash-tiles > div { display: flex; min-width: 0; flex-direction: column; gap: 0.2rem; border-radius: 0.7rem; padding: 0.5rem 0.55rem; background: rgb(255 255 255 / 62%); }
+.dash-tiles span { overflow: hidden; color: var(--dl-ink-3); font-size: 0.7rem; text-overflow: ellipsis; white-space: nowrap; }
+.dash-tiles strong { font-size: 1.12rem; font-weight: 600; letter-spacing: -0.02em; }
+.dash-rows { display: flex; flex-direction: column; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
+.dash-rows li { display: flex; align-items: center; gap: 0.5rem; }
+.dash-rows li > div { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.dash-rows strong { overflow: hidden; font-size: 0.86rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.dash-rows span { overflow: hidden; color: var(--dl-ink-2); font-size: 0.78rem; text-overflow: ellipsis; white-space: nowrap; }
+.dash-facts { display: flex; flex-direction: column; gap: 0.45rem; margin: 0; }
+.dash-facts > div { display: flex; flex-direction: column; gap: 0.05rem; }
+.dash-facts dt { color: var(--dl-ink-3); font-size: 0.72rem; }
+.dash-facts dd { margin: 0; font-size: 0.88rem; font-weight: 600; line-height: 1.35; }
+.dash-list { display: flex; flex-direction: column; gap: 0.25rem; margin: 0; padding-left: 1.1rem; font-size: 0.84rem; line-height: 1.4; }
+.dash-quote { margin: 0; font-size: 0.86rem; font-style: italic; line-height: 1.45; }
+.dash-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.dash-table th { color: var(--dl-ink-3); font-weight: 600; text-align: left; }
+.dash-table :is(th, td) { padding: 0.2rem 0.3rem 0.2rem 0; }
+.dash-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.dash-button {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 1rem;
+  background: var(--dl-ink);
+  color: #fff;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dash-button svg { width: 1rem; height: 1rem; }
+.dash-button.is-quiet { background: rgb(24 33 46 / 7%); color: var(--dl-ink); }
+.dash-button:disabled { opacity: 0.5; cursor: default; }
+.dash-link { align-self: flex-start; border: 0; padding: 0.25rem 0; background: none; color: var(--dl-accent); font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+.dash-icon { display: grid; width: 2rem; height: 2rem; flex-shrink: 0; place-items: center; border: 0; border-radius: 50%; background: transparent; color: var(--dl-ink-3); cursor: pointer; }
+.dash-icon:hover:not(:disabled) { background: rgb(24 33 46 / 7%); color: var(--dl-ink); }
+.dash-icon svg { width: 0.9rem; height: 0.9rem; }
+.dash-input { width: 100%; height: 2.6rem; border: 1px solid var(--dl-line); border-radius: 0.8rem; padding: 0 0.8rem; background: rgb(255 255 255 / 70%); color: var(--dl-ink); font-size: 0.88rem; }
+.dash-create { display: flex; min-height: 2.9rem; align-items: center; justify-content: center; gap: 0.45rem; font-size: 0.86rem; font-weight: 600; cursor: pointer; }
+.dash-create svg { width: 1rem; height: 1rem; }
+.dash-create:hover:not(:disabled) { background: var(--dl-glass-strong); }
+.dash-create:disabled { color: var(--dl-ink-3); cursor: default; }
+.dash :is(button, input):focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px; }
+
+/* ---- Conversation: chat bubbles ---- */
+.vox-shell[data-vox-theme="daylight"] .transcript-panel {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+@media (min-width: 1024px) {
+  .vox-shell[data-vox-theme="daylight"] .conversation-console { align-items: center; padding: 0.25rem 1.5rem 0.5rem; }
+  .vox-shell[data-vox-theme="daylight"] .conversation-console > * { width: min(100%, 42rem); }
+}
+.vox-shell[data-vox-theme="daylight"] .conversation-stream {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.55rem;
+}
+.vox-shell[data-vox-theme="daylight"] .conversation-stream > * { margin: 0; }
+.vox-shell[data-vox-theme="daylight"] .message {
+  width: fit-content;
+  max-width: min(86%, 34rem);
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 1.15rem;
+  padding: 0.6rem 0.95rem;
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 1px 2px rgb(24 33 46 / 6%);
+}
+.vox-shell[data-vox-theme="daylight"] .message::before { display: none; }
+.vox-shell[data-vox-theme="daylight"] .message-user { align-self: flex-end; background: rgb(255 255 255 / 46%); box-shadow: none; }
+.vox-shell[data-vox-theme="daylight"] .message .message-copy { margin-top: 0; color: var(--dl-ink); font-size: 0.93rem; line-height: 1.5; }
+/* Plain messages need no "Vox" / "You" label; calls and texts keep theirs. */
+.vox-shell[data-vox-theme="daylight"] .message:not(.message-phone, .message-caller, .message-text-in) .message-header { display: none; }
+.vox-shell[data-vox-theme="daylight"] .message :is(.message-header) { margin-bottom: 0.3rem; }
+.vox-shell[data-vox-theme="daylight"] .message-role { color: var(--dl-ink-3); }
+.vox-shell[data-vox-theme="daylight"] :is(.message-caller, .message-text-in) { background: rgb(255 255 255 / 92%); }
+.vox-shell[data-vox-theme="daylight"] .message-caller.message-caller-user,
+.vox-shell[data-vox-theme="daylight"] .message-text-in { align-self: flex-start; }
+.vox-shell[data-vox-theme="daylight"] :is(.message-phone-badge, .message-text-badge) { border-color: var(--dl-line); background: rgb(24 33 46 / 5%); color: var(--dl-ink-2); }
+.vox-shell[data-vox-theme="daylight"] .empty-transcript { border-color: transparent; background: transparent; }
+.vox-shell[data-vox-theme="daylight"] .empty-icon { border-color: transparent; color: var(--dl-ink-2); background: var(--dl-glass); }
+.vox-shell[data-vox-theme="daylight"] .composer {
+  border-color: transparent;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 62%);
+  backdrop-filter: blur(22px);
+}
+.vox-shell[data-vox-theme="daylight"] .composer:focus-within { border-color: rgb(36 87 214 / 45%); box-shadow: 0 0 0 3px rgb(36 87 214 / 12%); }
+.vox-shell[data-vox-theme="daylight"] .composer input { color: var(--dl-ink); }
+.vox-shell[data-vox-theme="daylight"] .side-switch { border-color: transparent; background: var(--dl-glass); }
+.vox-shell[data-vox-theme="daylight"] .side-switch-tab[aria-selected="true"] { background: var(--dl-ink); color: #fff; }
+
+/* ---- Voice ---- */
+.vox-shell[data-vox-theme="daylight"] .voice-console { color: var(--dl-ink); }
+@media (min-width: 1024px) {
+  .vox-shell[data-vox-theme="daylight"] .voice-console,
+  .vox-shell[data-vox-surface="desktop"][data-vox-theme="daylight"] .voice-console {
+    align-self: start;
+    max-height: 100%;
+    border-radius: 1.4rem;
+    padding: 1.25rem 1rem;
+    background: var(--dl-glass);
+    backdrop-filter: blur(22px) saturate(1.2);
+  }
+  .vox-shell[data-vox-theme="daylight"] .voice-console:has(.talk-stage) { align-self: stretch; }
+  .vox-shell[data-vox-theme="daylight"] .voice-console:not(:has(.talk-stage)) .voice-stage { margin: 0.5rem 0; transform: scale(0.82); }
+}
+.vox-shell[data-vox-theme="daylight"] .orb::before { background: conic-gradient(from 210deg, #ffffff, #9fc0f2, #2457d6, #c9dcf7, #ffffff); }
+.vox-shell[data-vox-theme="daylight"] .orb-core { background: radial-gradient(circle at 35% 30%, #ffffff, #dfe9f8 60%, #b9cdea); color: var(--dl-ink); }
+.vox-shell[data-vox-theme="daylight"] .orb-ring { border-color: rgb(36 87 214 / 22%); }
+.vox-shell[data-vox-theme="daylight"] .orb:focus-visible { outline-color: var(--dl-accent); }
+.vox-shell[data-vox-theme="daylight"] .wave-bar { background: rgb(24 33 46 / 18%); }
+.vox-shell[data-vox-theme="daylight"] .wave-bar.is-live { background: linear-gradient(to top, #2457d6, #9fc0f2); box-shadow: none; }
+.vox-shell[data-vox-theme="daylight"] .mac-task-status { border-color: transparent; background: var(--dl-glass-strong); color: var(--dl-ink-2); }
+
+/* ---- Today, Library, Settings ---- */
+.vox-shell[data-vox-theme="daylight"] .settings-group-rows {
+  border-color: transparent;
+  background: var(--dl-glass);
+  backdrop-filter: blur(22px);
+}
+.vox-shell[data-vox-theme="daylight"] .settings-row-icon { border-color: transparent; color: var(--dl-ink); background: rgb(255 255 255 / 70%); }
+.vox-shell[data-vox-theme="daylight"] .vox-view-heading h1 { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; }
+.vox-shell[data-vox-theme="daylight"] .vox-share-card { border-color: transparent; background: var(--dl-glass); }
+.vox-shell[data-vox-theme="daylight"] .vox-share-card > svg { color: var(--dl-accent); }
+.vox-shell[data-vox-theme="daylight"] .vox-share-button { background: var(--dl-ink); color: #fff; box-shadow: none; }
+.vox-shell[data-vox-theme="daylight"] .vox-map { border-color: transparent; background: #e8eef5; }
+.vox-shell[data-vox-theme="daylight"] .vox-map-dot { border-color: #fff; background: var(--dl-accent); box-shadow: 0 0 0 4px rgb(36 87 214 / 22%); }
+.vox-shell[data-vox-theme="daylight"] .vox-map .leaflet-control-attribution { background: rgb(255 255 255 / 80%); color: var(--dl-ink-3); }
+.vox-shell[data-vox-theme="daylight"] .vox-map .leaflet-control-attribution a { color: var(--dl-accent); }
+.vox-shell[data-vox-theme="daylight"] .vox-map :is(.leaflet-popup-content-wrapper, .leaflet-popup-tip) { background: #fff; color: var(--dl-ink); box-shadow: 0 6px 24px rgb(24 33 46 / 18%); }
+.vox-shell[data-vox-theme="daylight"] .vx-browser-slot { background: rgb(255 255 255 / 40%); }
+
+/* Quiet details: no caption over the chat, and the camera box only once it's on. */
+.vox-shell[data-vox-theme="daylight"] .transcript-header p.text-sm { display: none; }
+.vox-shell[data-vox-theme="daylight"] .camera-block[data-active="false"] { display: none; }
+.vox-shell[data-vox-theme="daylight"] .transcript-clear { color: var(--dl-ink-3); }
+/* Phones: voice first, then the conversation, then the panels. */
+@media (max-width: 1023px) {
+  .vox-shell[data-vox-theme="daylight"] .interface-grid > .voice-console { order: 1; }
+  .vox-shell[data-vox-theme="daylight"] .interface-grid > .conversation-console { order: 2; }
+  .vox-shell[data-vox-theme="daylight"] .interface-grid > .dash { order: 3; padding: 0.5rem 1rem 1rem; }
+}
+.vox-shell[data-vox-theme="daylight"] .transcript-header > div:first-child { visibility: hidden; height: 0; }

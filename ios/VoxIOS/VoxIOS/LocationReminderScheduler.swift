@@ -1,4 +1,5 @@
 import CoreLocation
+import CryptoKit
 import Foundation
 import MapKit
 import Security
@@ -249,6 +250,15 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
                 $0.range(of: #"^[A-Za-z0-9_-]{16,128}$"#, options: .regularExpression) != nil ? $0 : nil
             }
         }
+
+        /// What an armed reminder depends on. When it's unchanged, the armed
+        /// geofence is left alone. Hashed, so no reminder text is stored.
+        var signature: String {
+            let saved = SavedPlaces.match(place).map { "\($0.latitude),\($0.longitude)" } ?? ""
+            let parts = [place, saved, leaving ? "leave" : "arrive", callToken ?? "", title, notes ?? ""]
+            let digest = SHA256.hash(data: Data(parts.joined(separator: "\n").utf8))
+            return digest.map { String(format: "%02x", $0) }.joined()
+        }
     }
 
     /// Replaces every armed place notification with the web app's current list
@@ -256,30 +266,64 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
     func schedule(_ reminders: [LocationReminder]) async -> [[String: String]] {
         let notificationCenter = UNUserNotificationCenter.current()
         let pending = await notificationCenter.pendingNotificationRequests()
-        notificationCenter.removePendingNotificationRequests(
-            withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix(Self.identifierPrefix) }
-        )
-        stopWatching { _ in true }
-        guard !reminders.isEmpty else { return [] }
+            .map(\.identifier)
+            .filter { $0.hasPrefix(Self.identifierPrefix) }
+        let clearEverything = {
+            notificationCenter.removePendingNotificationRequests(withIdentifiers: pending)
+            self.stopWatching { _ in true }
+            ArmedReminders.save([:])
+        }
+        guard !reminders.isEmpty else {
+            clearEverything()
+            return []
+        }
 
         guard await requestPermission() == "granted" else {
+            clearEverything()
             return reminders.map { ["id": $0.id, "status": "permission_needed"] }
         }
         // iOS refuses to schedule notifications until the user allows them.
         let alerts = await notificationCenter.notificationSettings().authorizationStatus
         guard [.authorized, .provisional, .ephemeral].contains(alerts) else {
+            clearEverything()
             return reminders.map { ["id": $0.id, "status": "notifications_off"] }
         }
 
-        let wantsCalls = reminders.contains { $0.callToken != nil }
+        // iOS only reports arriving or leaving when it sees you cross into or
+        // out of a place after it was registered. Re-registering an unchanged
+        // place (this runs on every reminders refresh) could swallow that
+        // crossing, so reminders that are unchanged and still armed are left
+        // alone; only new, changed, or removed ones are touched.
+        let previous = ArmedReminders.load()
+        let regions = manager.monitoredRegions.map(\.identifier).filter { $0.hasPrefix(Self.identifierPrefix) }
+        let prefixOf = { (id: String) in "\(Self.identifierPrefix)\(id)-" }
+        var kept: [String: (notifications: Int, regions: Int)] = [:]
+        for reminder in reminders where previous[reminder.id] == reminder.signature {
+            let prefix = prefixOf(reminder.id)
+            let notifications = pending.filter { $0.hasPrefix(prefix) }.count
+            let watching = regions.filter { $0.hasPrefix(prefix) }.count
+            if notifications + watching > 0 { kept[reminder.id] = (notifications, watching) }
+        }
+        let isKept = { (identifier: String) in kept.keys.contains { identifier.hasPrefix(prefixOf($0)) } }
+        notificationCenter.removePendingNotificationRequests(withIdentifiers: pending.filter { !isKept($0) })
+        stopWatching { kept[$0.reminderId] == nil }
+        var armedSignatures = previous.filter { kept[$0.key] != nil }
+
+        let toArm = reminders.filter { kept[$0.id] == nil }
+        let wantsCalls = toArm.contains { $0.callToken != nil }
         var canWatch = false
         if wantsCalls && CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) {
             canWatch = await requestAlwaysPermission()
         }
 
-        var remaining = Self.maximumRegions
+        var remaining = Self.maximumRegions - kept.values.reduce(0) { $0 + $1.notifications + $1.regions }
         var statuses: [[String: String]] = []
         for reminder in reminders {
+            if let armed = kept[reminder.id] {
+                let status = reminder.callToken != nil && armed.regions == 0 ? "call_needs_always" : "armed"
+                statuses.append(["id": reminder.id, "status": status])
+                continue
+            }
             let centers = await coordinates(for: reminder.place)
             guard !centers.isEmpty else {
                 statuses.append(["id": reminder.id, "status": "place_not_found"])
@@ -336,8 +380,10 @@ final class LocationReminderScheduler: NSObject, CLLocationManagerDelegate {
             let status = armed == 0
                 ? "notifications_off"
                 : (reminder.callToken != nil && !canWatch ? "call_needs_always" : "armed")
+            if armed > 0 { armedSignatures[reminder.id] = reminder.signature }
             statuses.append(["id": reminder.id, "status": status])
         }
+        ArmedReminders.save(armedSignatures)
         return statuses
     }
 
@@ -477,6 +523,19 @@ struct WatchedPlace: Codable {
     let notes: String?
     let place: String
     let leaving: Bool
+}
+
+/// Which place reminders are armed, and with what (see `LocationReminder.signature`).
+enum ArmedReminders {
+    private static let key = "vox.location.armedReminders"
+
+    static func load() -> [String: String] {
+        UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+    }
+
+    static func save(_ signatures: [String: String]) {
+        UserDefaults.standard.set(signatures, forKey: key)
+    }
 }
 
 enum WatchedPlaces {

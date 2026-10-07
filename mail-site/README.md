@@ -21,6 +21,26 @@ Google and Microsoft appear only when their client secrets are set. IMAP needs o
 
 When an app asks for access and the user has no working account, `/oauth/authorize` parks the request in D1 behind a random nonce and sends them to "Add an email account". Once an account is connected, they come back to the approval page.
 
+## Connecting from Vox in one step
+
+`/oauth/authorize` takes three optional query parameters besides the standard OAuth ones, so an app can send the user straight to the right sign-in:
+
+| Parameter | Values | What it does |
+|---|---|---|
+| `provider` | `google`, `microsoft`, `imap` | When the user has to connect an account, skip the chooser: go straight to Google's or Microsoft's consent screen, or to the app-password form. Anything else shows the chooser. |
+| `login_hint` | an email address | Preselects that address at Google or Microsoft, or prefills the app-password form. Ignored if it isn't an address. |
+| `add` | `1` | Connect another account first even if one already works ("connect another Gmail"), then continue. |
+
+- `provider` only matters when an account has to be connected: the user has no working account, or `add=1` is set. Otherwise the request just continues.
+- If `provider` names a sign-in that isn't configured here, the user sees "Gmail sign-in isn’t set up yet" with a button to the app-password form (for Microsoft, a button to the chooser).
+- The app's request is parked in D1 while the user is away, so only a random state or nonce travels through Google, Microsoft, or this site's pages.
+
+**Vox is approved automatically.** When the app's registered redirect URI is on the exact origin in `VOX_URL` (the Vox deployment users sign in with), a signed-in user with a working account gets no approval page: the authorization code goes straight back. PKCE and `state` work as usual. Every other app, including any look-alike origin, still gets the "wants to use your email" page.
+
+**Signing in is a redirect, not a page.** A user who isn't signed in to Vox Mail is sent to `/auth/login`, which redirects at once to Vox's own sign-in and comes back to the same request.
+
+So from Vox, "Connect Gmail" is: Vox → Google's consent screen → Vox.
+
 ## Tools
 
 `list_accounts`, `search_email`, `read_email`, `read_thread`, `list_labels`, `unread_summary`, `create_draft`, `send_email`, `reply_email`, `forward_email`, `send_draft`, `modify_email`, `trash_email`, and `untrash_email`. There is no permanent delete.

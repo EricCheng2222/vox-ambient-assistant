@@ -36,6 +36,7 @@ function publicStatus(
       : null,
     enabled: settings?.enabled ?? false,
     allowOutbound: settings?.allowOutbound ?? false,
+    shareLocationWithCallers: settings?.shareLocationWithCallers ?? false,
     inboundNumber: twilio?.phoneNumber ?? null,
   };
 }
@@ -128,8 +129,14 @@ export async function PATCH(request: Request) {
   const body = (await request.json().catch(() => null)) as {
     enabled?: unknown;
     allowOutbound?: unknown;
+    shareLocationWithCallers?: unknown;
   } | null;
-  if (!body || (typeof body.enabled !== "boolean" && typeof body.allowOutbound !== "boolean")) {
+  if (
+    !body ||
+    (typeof body.enabled !== "boolean" &&
+      typeof body.allowOutbound !== "boolean" &&
+      typeof body.shareLocationWithCallers !== "boolean")
+  ) {
     return Response.json({ error: "Choose a phone setting to update." }, { status: 400 });
   }
   const current = await getPhoneAssistantSettings(auth.user.id);
@@ -144,6 +151,8 @@ export async function PATCH(request: Request) {
     enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
     allowOutbound:
       typeof body.allowOutbound === "boolean" ? body.allowOutbound : undefined,
+    shareLocationWithCallers:
+      typeof body.shareLocationWithCallers === "boolean" ? body.shareLocationWithCallers : undefined,
   });
   return Response.json(publicStatus(settings), { headers: noStore });
 }

@@ -50,7 +50,7 @@ export function oauthConfigured(env: Env, kind: OAuthKind) {
 }
 
 /** Starts connecting; returns the provider's consent URL and a browser-binding cookie. */
-export async function beginOAuthConnect(env: Env, kind: OAuthKind, origin: string, userId: string, returnTo: string) {
+export async function beginOAuthConnect(env: Env, kind: OAuthKind, origin: string, userId: string, returnTo: string, loginHint = "") {
   const client = credentials(env, kind);
   if (!client || !oauthConfigured(env, kind)) throw new MailError(`${OAUTH[kind].name} accounts can't be connected on this site yet.`);
   const provider = OAUTH[kind];
@@ -71,6 +71,8 @@ export async function beginOAuthConnect(env: Env, kind: OAuthKind, origin: strin
     response_type: "code",
     scope: provider.scope,
     ...provider.params,
+    // Preselects the account at the provider when the app knows the address.
+    ...(loginHint ? { login_hint: loginHint } : {}),
     state,
     code_challenge: await sha256(verifier),
     code_challenge_method: "S256",

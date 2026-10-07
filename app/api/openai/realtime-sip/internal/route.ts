@@ -9,6 +9,8 @@ import {
   getPhoneAssistantDestination,
   verifyPhoneCallPassphrase,
 } from "@/lib/phone-assistant-store";
+import { listLocationDevices } from "@/lib/location-store";
+import { iPhoneLocationForCallers } from "@/lib/phone-location";
 import { searchPhoneWeb } from "@/lib/phone-web-search";
 import {
   phoneRealtimeCarryover,
@@ -75,7 +77,15 @@ export async function POST(request: Request) {
       // Not the owner: while the phone assistant is on, Vox answers as the
       // owner's assistant instead of hanging up.
       const settings = await getPhoneAssistantSettings(PHONE_ASSISTANT_OWNER_ID).catch(() => null);
-      return Response.json({ authenticated: false, guest: settings?.enabled === true }, { status: 401 });
+      return Response.json(
+        {
+          authenticated: false,
+          guest: settings?.enabled === true,
+          // The owner chose to let any caller ask where the iPhone is.
+          guestLocation: settings?.enabled === true && settings.shareLocationWithCallers === true,
+        },
+        { status: 401 },
+      );
     }
 
     const [preferences, memories, conversation] = await Promise.all([
@@ -111,6 +121,17 @@ export async function POST(request: Request) {
       body: text,
     });
     return Response.json({ saved: true });
+  }
+
+  if (body.action === "guest_location") {
+    // Re-checked at the moment of asking, so switching it off takes effect
+    // even during a call.
+    const settings = await getPhoneAssistantSettings(PHONE_ASSISTANT_OWNER_ID).catch(() => null);
+    if (!settings?.enabled || !settings.shareLocationWithCallers) {
+      return Response.json({ output: "Not available: the owner hasn't allowed callers to know where the phone is. Say you can't share that." });
+    }
+    const devices = await listLocationDevices(PHONE_ASSISTANT_OWNER_ID).catch(() => []);
+    return Response.json({ output: iPhoneLocationForCallers(devices) });
   }
 
   const ownerId = await authenticatedPhoneCallOwner(callId);
@@ -197,6 +218,10 @@ async function executePhoneTool(ownerId: string, name: unknown, rawArguments: un
   const argumentsObject = rawArguments && typeof rawArguments === "object"
     ? rawArguments as Record<string, unknown>
     : {};
+  if (name === "where_is_iphone") {
+    const devices = await listLocationDevices(ownerId).catch(() => []);
+    return Response.json({ output: iPhoneLocationForCallers(devices) });
+  }
   if (name === "search_web") {
     try {
       const result = await searchPhoneWeb(

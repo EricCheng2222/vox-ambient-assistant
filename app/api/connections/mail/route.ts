@@ -24,8 +24,14 @@ export async function POST(request: Request) {
   const auth = await requireUser(request);
   if ("response" in auth) return auth.response;
   try {
-    const authorizeUrl = await beginConnection(auth.user.id, mailServerUrl(), new URL(request.url).origin);
-    return Response.json({ authorizeUrl }, { headers: noStore });
+    const started = new URL(await beginConnection(auth.user.id, mailServerUrl(), new URL(request.url).origin));
+    // "Connect Gmail" goes straight to Google's consent, with no chooser.
+    const body = (await request.json().catch(() => ({}))) as { provider?: unknown; add?: unknown };
+    if (body.provider === "google" || body.provider === "microsoft" || body.provider === "imap") {
+      started.searchParams.set("provider", body.provider);
+    }
+    if (body.add === true) started.searchParams.set("add", "1");
+    return Response.json({ authorizeUrl: started.toString() }, { headers: noStore });
   } catch (error) {
     if (!(error instanceof McpConnectionError)) console.error("Mail connection failed", error);
     return Response.json(

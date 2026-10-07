@@ -223,6 +223,8 @@ export const phoneAssistantSettings = sqliteTable(
     phoneLastFour: text("phone_last_four"),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     allowOutbound: integer("allow_outbound", { mode: "boolean" }).notNull().default(false),
+    // Any caller, verified or not, may ask where the owner's iPhone is.
+    shareLocationWithCallers: integer("share_location_with_callers", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
@@ -351,4 +353,20 @@ export const locationPings = sqliteTable(
     receivedAt: text("received_at").notNull(),
   },
   (table) => [index("idx_location_pings_device_captured").on(table.deviceId, table.capturedAt)],
+);
+
+// Dashboard panels: things the user asked Vox to keep an eye on. The whole
+// panel (title, question, facts, sources) is encrypted.
+export const dashboardPanels = sqliteTable(
+  "dashboard_panels",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    position: integer("position").notNull().default(0),
+    ciphertext: text("ciphertext").notNull(),
+    iv: text("iv").notNull(),
+    refreshedAt: text("refreshed_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("idx_dashboard_panels_owner_position").on(table.ownerId, table.position)],
 );

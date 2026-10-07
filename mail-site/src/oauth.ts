@@ -28,6 +28,22 @@ export function isAllowedRedirectUri(value: unknown): value is string {
   return /^[a-z][a-z0-9+.-]*:$/u.test(url.protocol);
 }
 
+/**
+ * True when the app's registered redirect URI is on the Vox deployment that
+ * users sign in with (VOX_URL): an exact origin match, nothing looser.
+ */
+export function isFirstParty(voxUrl: string, redirectUri: string) {
+  try {
+    const target = new URL(redirectUri);
+    const vox = new URL(voxUrl);
+    if (target.username || target.password || vox.username || vox.password) return false;
+    if (target.protocol !== "https:" && !(target.protocol === "http:" && ["localhost", "127.0.0.1"].includes(target.hostname))) return false;
+    return target.origin === vox.origin;
+  } catch {
+    return false;
+  }
+}
+
 export function mcpResourceUrl(origin: string) {
   return `${origin}/mcp`;
 }

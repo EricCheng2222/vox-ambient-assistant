@@ -175,6 +175,7 @@ import { playHudCue, type HudCue, setHudVolume } from "@/lib/hud-sounds";
 import { FlashcardsConnection, openFlashcardsConnection } from "@/components/flashcards-connection";
 import { MailConnection } from "@/components/mail-connection";
 import { PhoneTexts } from "@/components/phone-texts";
+import { DashboardPanels } from "@/components/dashboard-panels";
 import { DeviceLocationsCard, devicePoints, fetchDeviceLocations, isIPhoneApp, LocationSharingSettings, ShareLocationCard } from "@/components/device-locations";
 import { SettingsGroup, SettingsRow } from "@/components/settings-row";
 import { AppRail, type VoxView } from "@/components/app-rail";
@@ -289,6 +290,7 @@ type PhoneAssistantStatus = {
   callbackPhoneLabel: string | null;
   enabled: boolean;
   allowOutbound: boolean;
+  shareLocationWithCallers?: boolean;
   inboundNumber: string | null;
 };
 type SmartHomeAdapter = {
@@ -1331,6 +1333,8 @@ export default function Home() {
   const announcedCallsRef = useRef(new Set<string>());
   // Marked read here but not yet confirmed by the server.
   const pendingReadRef = useRef(new Set<string>());
+  // The place reminders last armed on the iPhone (see syncLocationReminders).
+  const locationSyncRef = useRef<{ key: string; at: number } | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
   const cameraCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1602,7 +1606,7 @@ export default function Home() {
     queueMicrotask(() => setMapPickerAvailable(typeof window.voxNativeReminders?.pickPlace === "function"));
     // Re-arm place reminders that fired while Vox was in the background.
     const onVisible = () => {
-      if (document.visibilityState === "visible") void syncLocationReminders();
+      if (document.visibilityState === "visible") void syncLocationReminders(true);
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
@@ -4161,6 +4165,7 @@ export default function Home() {
   async function updatePhoneAssistant(patch: {
     enabled?: boolean;
     allowOutbound?: boolean;
+    shareLocationWithCallers?: boolean;
   }) {
     setPhoneAssistantBusy(true);
     setPhoneAssistantError("");
@@ -4311,14 +4316,26 @@ export default function Home() {
 
   // Asks the iPhone to arm place reminders, then records only whether each one
   // could be armed. No location data leaves the phone.
-  async function syncLocationReminders() {
+  async function syncLocationReminders(force = false) {
     const syncLocations = window.voxNativeReminders?.syncLocations;
     if (!syncLocations) return;
     const current = remindersRef.current;
+    // Reminders reload every 15 seconds; only ask the iPhone to re-arm when the
+    // place reminders changed (or every half hour, as a check).
+    const key = JSON.stringify(nativeLocationPayload(current, {}));
+    const last = locationSyncRef.current;
+    if (!force && last && last.key === key && Date.now() - last.at < 30 * 60_000) return;
     let statuses: Array<{ id: string; status: string }>;
     try {
-      const callTokens = await fetchLocationCallTokens(current).catch(() => ({}));
+      const needsTokens = current.some(
+        (reminder) => reminder.status === "pending" && isLocationReminder(reminder) && reminder.delivery === "call",
+      );
+      const callTokens = await fetchLocationCallTokens(current).catch(() => ({}) as Record<string, string>);
+      // Without its token a "phone me" reminder would be armed as a plain
+      // notification; wait for the next try instead.
+      if (needsTokens && Object.keys(callTokens).length === 0) return;
       statuses = await syncLocations(nativeLocationPayload(current, callTokens));
+      locationSyncRef.current = { key, at: Date.now() };
     } catch {
       return;
     }
@@ -4340,7 +4357,7 @@ export default function Home() {
       setSavedPlaces(result.places ?? null);
       setPlaceName("");
       toast.success(`Saved “${name}”`, { description: "Place reminders for it will use this spot." });
-      void syncLocationReminders();
+      void syncLocationReminders(true);
     } catch (error) {
       toast.error("Could not save this place", {
         description: error instanceof Error ? error.message : undefined,
@@ -4364,7 +4381,7 @@ export default function Home() {
       toast.success(`Saved “${result.name ?? name}”`, {
         description: "Place reminders for it will use the spot you picked.",
       });
-      void syncLocationReminders();
+      void syncLocationReminders(true);
     } catch (error) {
       toast.error("Could not save this place", {
         description: error instanceof Error ? error.message : undefined,
@@ -4379,7 +4396,7 @@ export default function Home() {
     if (!deletePlace) return;
     try {
       setSavedPlaces(await deletePlace(name));
-      void syncLocationReminders();
+      void syncLocationReminders(true);
     } catch {
       toast.error("Could not remove that place");
     }
@@ -6890,7 +6907,9 @@ export default function Home() {
   const lastAssistantText = [...messages].reverse().find((message) => message.role === "assistant")?.text ?? "";
   const todayAvailable = connectionMode === "cloud" && authState === "authenticated";
   const stageBrowserAvailable = desktopPersonalAvailable && Boolean(stageBrowserBridge());
-  const showingToday = todayAvailable && sidePanel === "today";
+  // Daylight keeps the conversation in the middle; its panels sit beside it.
+  const sidePanelSwitch = todayAvailable && theme !== "daylight";
+  const showingToday = sidePanelSwitch && sidePanel === "today";
   const conversationUnread = showingToday && messages.length > conversationSeen;
 
   return (
@@ -7016,6 +7035,15 @@ export default function Home() {
           } as CSSProperties
         }
       >
+        {theme === "daylight" && todayAvailable && (
+          <DashboardPanels
+            briefing={today}
+            waiting={todayWaiting}
+            reminders={todayReminders}
+            onStudy={todayProps.onStudy}
+            onOpenToday={() => setView("today")}
+          />
+        )}
         <div className="voice-console flex min-h-0 flex-col items-center justify-between px-4 py-7 sm:min-h-[620px] sm:px-10 sm:py-12 lg:min-h-0 lg:px-14 lg:py-16">
           {stage ? (
             <div className="talk-stage w-full self-stretch">
@@ -7312,7 +7340,7 @@ export default function Home() {
         <aside className="conversation-console transcript-panel flex flex-col border-t border-white/8 p-4 sm:min-h-[560px] sm:p-7 lg:min-h-0 lg:border-t-0 lg:p-8">
           <div className="transcript-header flex items-start justify-between gap-3 sm:gap-5">
             <div>
-              {todayAvailable ? (
+              {sidePanelSwitch ? (
                 <div className="side-switch" role="tablist" aria-label="Show in this panel">
                   <button
                     type="button"
@@ -7879,6 +7907,29 @@ export default function Home() {
                                   without one.
                                 </p>
                               )}
+                            </div>
+                            <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
+                              <p className="text-sm font-semibold text-white/78">Let any caller ask where my iPhone is</p>
+                              <p className="mt-2 text-xs leading-5 text-white/42">
+                                {phoneAssistantStatus.shareLocationWithCallers
+                                  ? "On. Anyone who calls Vox, including people who don’t say your sentence, can ask where your iPhone is and hear the place and how long ago. Turn this off if the number reaches people you don’t trust."
+                                  : "Off. Only you, after saying your sentence, can ask Vox where your iPhone is. When on, anyone who calls, strangers included, hears the place and how long ago (never coordinates)."}
+                              </p>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                disabled={phoneAssistantBusy}
+                                onClick={() =>
+                                  void updatePhoneAssistant({ shareLocationWithCallers: !phoneAssistantStatus.shareLocationWithCallers })
+                                }
+                                className={`mt-3 h-10 w-full rounded-full ${
+                                  phoneAssistantStatus.shareLocationWithCallers
+                                    ? "border-[#f0b95e]/40 bg-[#f0b95e]/10 text-[#f0c887] hover:bg-[#f0b95e]/15"
+                                    : "border-white/10 bg-black/15 text-white hover:bg-white/10 hover:text-white"
+                                }`}
+                              >
+                                {phoneAssistantStatus.shareLocationWithCallers ? "Stop sharing with callers" : "Let any caller ask"}
+                              </Button>
                             </div>
                             <Button
                               type="button"
