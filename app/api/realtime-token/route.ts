@@ -1,6 +1,7 @@
 import { buildVoiceInstructions } from "@/lib/memory";
 import { transcriptionConfig } from "@/lib/transcription-language";
 import { listMemories } from "@/lib/memory-store";
+import { loadProfileContext, noteTimeZone } from "@/lib/profile-store";
 import { requireUser } from "@/lib/auth";
 import { parseRealtimeVoice } from "@/lib/realtime-voice";
 import { parseVisualTheme } from "@/lib/visual-theme";
@@ -37,6 +38,16 @@ export async function POST(request: Request) {
     console.error("Starting Realtime without saved memory", error);
     return [];
   });
+  // What Vox learned overnight, as background. The client rebuilds these
+  // instructions during the session and passes the same text (GET /api/profile).
+  const profileContext = await loadProfileContext(
+    auth.user.id,
+    remembered.map((memory) => memory.content),
+  );
+  // Where the owner seems to be, for the nightly update's sleep window. Their
+  // own device's report (sent from the profile card) always takes precedence.
+  const networkZone = (request as Request & { cf?: { timezone?: unknown } }).cf?.timezone;
+  if (networkZone) await noteTimeZone(auth.user.id, networkZone, "network").catch(() => false);
 
   const response = await fetch(
     "https://api.openai.com/v1/realtime/client_secrets",
@@ -53,7 +64,7 @@ export async function POST(request: Request) {
           model: REALTIME_MODEL,
           output_modalities: ["audio"],
           truncation: realtimeTruncationConfig(),
-          instructions: `${buildVoiceInstructions(remembered, theme)}\n\n${replyLengthInstruction(replyLength)}`,
+          instructions: `${buildVoiceInstructions(remembered, theme, profileContext)}\n\n${replyLengthInstruction(replyLength)}`,
           audio: {
             input: {
               transcription: transcriptionConfig(requestBody.mandarinTranscription === true),

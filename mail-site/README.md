@@ -4,7 +4,7 @@ A remote MCP server that gives Vox access to the owner's email. People sign in w
 
 Three kinds of account sit behind one interface (`src/providers/`):
 
-- **Google** (Gmail, Google Workspace): Gmail REST API, OAuth.
+- **Google** (Gmail, Google Workspace): Gmail REST API, OAuth. A Google account also brings its Calendar, Tasks, Contacts, and Drive (`src/google.ts`).
 - **Microsoft** (Outlook.com, Hotmail, Live, Microsoft 365): Microsoft Graph, OAuth. Microsoft has turned off password sign-in for IMAP on Outlook.com, so these addresses always use this path.
 - **Other (IMAP)** (iCloud, Yahoo, Fastmail, Zoho, Gmail with an app password, or any IMAP + SMTP server): the site's own IMAP and SMTP clients over Workers TCP sockets (`src/imap.ts`, `src/smtp.ts`), signing in with an app password.
 
@@ -14,7 +14,7 @@ Google and Microsoft appear only when their client secrets are set. IMAP needs o
 
 - `GET /`: the user's email accounts (Reconnect, Make primary, Remove) and connected apps
 - `GET /accounts/add`: choose Google, Microsoft, or Other (IMAP)
-- `/google/connect`, `/google/callback`, `/microsoft/connect`, `/microsoft/callback`, `/imap/connect` (GET form, POST check and save)
+- `/google/connect` (optional `login_hint`), `/google/callback`, `/microsoft/connect`, `/microsoft/callback`, `/imap/connect` (GET form, POST check and save)
 - `POST /mcp`: the MCP server (Streamable HTTP, stateless JSON)
 - OAuth for MCP clients: `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/token`
 - Sign in with Vox: `/auth/login`, `/auth/callback`
@@ -55,6 +55,27 @@ So from Vox, "Connect Gmail" is: Vox → Google's consent screen → Vox.
   - Removing INBOX archives.
   - The account's own labels are Gmail labels, Outlook folders or categories, and IMAP folders.
 - Sending, replying, forwarding, sending drafts, and trashing say in their tool descriptions that they need the user's spoken confirmation. Vox enforces that as well, with MCP `require_approval`.
+- `unread_summary` takes `format: "json"` and then returns only `{"accounts":[{"address","provider"}],"unreadCount":n,"messages":[{"id","from","subject","snippet","account","date"}]}` with up to 20 of the newest unread emails. Each `id` is what `read_email` takes.
+
+### The rest of a Google account
+
+For a connected Google account: `list_events`, `create_event`, `update_event`, `invite_to_event`, `delete_event`, `list_tasks`, `create_task`, `update_task`, `delete_task`, `search_contacts`, `create_contact`, `search_drive`, `read_drive_file`, `create_drive_file`, and `trash_drive_file`.
+
+- Each takes an optional `account` (the Google address). Without it, the first Google account that allows that service is used.
+- `list_accounts` says, for each Google account, which of calendar, tasks, contacts, and drive it allows.
+- **Missing access.** A tool that needs a permission the account doesn't have returns an error whose text starts with `needs_google_access:` (for example `needs_google_access: Reconnect Google in Vox Mail to allow calendar access.`). The same prefix is used when Google answers 403 for a missing scope or an API that isn't enabled, and when the Google account needs reconnecting. With no Google account at all, the text starts with `no_google_account:`.
+- **Calendar.**
+  - `list_events` reads the calendars ticked in the user's Google Calendar, from now through 7 days unless `from` and `to` say otherwise. A time without an offset is in the user's own time zone, and a date for `to` includes that whole day.
+  - `create_event` and `update_event` never have guests and never email anyone (`sendUpdates=none`). Only `invite_to_event` adds guests, and Google emails them (`sendUpdates=all`).
+  - All-day events use dates, and `end` is the event's last day (Google's own API uses the day after).
+  - `calendar` is a calendar's name or id; the default is the primary calendar.
+- **Tasks.** `list` is a task list's name or id. `update_task` and `delete_task` need it. Google Tasks keeps only the date of a due date.
+- **Contacts.** `search_contacts` sends Google's warm-up request first. "Other contacts" (people the user has emailed) are searched only when the grant includes `contacts.other.readonly`, which the connect flow does not ask for.
+- **Drive.** `read_drive_file` exports Google Docs and Slides as text and Sheets as CSV (the first sheet), downloads plain-text files, and refuses everything else. `create_drive_file` makes a Google Doc from plain text. `trash_drive_file` moves a file to the trash; nothing is deleted for good.
+- `invite_to_event`, `delete_event`, `delete_task`, and `trash_drive_file` say in their descriptions that they need the user's spoken confirmation.
+- `format: "json"` on `list_events` and `list_tasks` returns only a JSON string:
+  - `{"events":[{"id","title","start","end","allDay","location","account","calendar"}]}`. `start` and `end` are ISO date-times with an offset, or `YYYY-MM-DD` for all-day events; `end` and `location` may be `null`; `calendar` is the calendar's name.
+  - `{"tasks":[{"id","title","due","completed","list","listId","account"}]}`. `due` is `YYYY-MM-DD` or `null`.
 
 ## Setup (once)
 
@@ -68,10 +89,10 @@ It encrypts every OAuth refresh token and IMAP app password in D1 (AES-GCM, boun
 
 ### Google (Gmail)
 
-1. In [console.cloud.google.com](https://console.cloud.google.com), create a project (for example “Vox Mail”), then open **APIs & Services → Library** and enable the **Gmail API**.
+1. In [console.cloud.google.com](https://console.cloud.google.com), create a project (for example “Vox Mail”), then open **APIs & Services → Library** and enable the **Gmail API**, **Google Calendar API**, **Google Tasks API**, **People API**, and **Google Drive API**. A tool whose API isn't enabled answers `needs_google_access:`.
 2. Open **Google Auth Platform** (the OAuth consent screen):
    - **Audience:** External. Under **Test users**, add your own Gmail address.
-   - **Data access:** add `openid`, `.../auth/userinfo.email`, and `https://www.googleapis.com/auth/gmail.modify`.
+   - **Data access:** add `openid`, `.../auth/userinfo.email`, and `https://www.googleapis.com/auth/` `gmail.modify`, `calendar`, `tasks`, `contacts`, and `drive`.
    - Then, under **Audience**, click **Publish app** so it is **In production**.
      - In Testing mode Google expires refresh tokens after 7 days, and Vox would lose Gmail every week.
      - An unverified app in production shows a “Google hasn’t verified this app” warning. As the owner, click **Advanced → Go to Vox Mail (unsafe)** and it works. Verification is only needed for other people.
@@ -84,6 +105,8 @@ It encrypts every OAuth refresh token and IMAP app password in D1 (AES-GCM, boun
    ```
 
 `gmail.modify` covers reading, composing, sending, labels, and Trash, but not permanent deletion.
+
+Only `gmail.modify` is required. Google lets people untick the other permissions, and an account connected before they were asked for has only mail. The granted scopes are stored with the account (`mail_accounts.scope`). The home page shows what Vox can use and, where something is missing, an **Allow calendar, tasks, contacts and files** button that runs the Google sign-in again for that address. Reconnecting an address updates its account in place: same id, new tokens and scopes.
 
 ### Microsoft (Outlook.com and Microsoft 365)
 

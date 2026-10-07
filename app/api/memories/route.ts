@@ -7,6 +7,7 @@ import {
   listMemories,
   updateMemory,
 } from "@/lib/memory-store";
+import { forgetInProfile } from "@/lib/profile-store";
 
 const CATEGORIES: MemoryCategory[] = [
   "preference",
@@ -230,9 +231,14 @@ export async function DELETE(request: Request) {
   if (!id) return Response.json({ error: "Memory id is required." }, { status: 400 });
 
   try {
-    const deletedId = await deleteMemory(auth.user.id, id);
-    if (!deletedId) return Response.json({ error: "Memory not found." }, { status: 404 });
-    return Response.json({ deletedId });
+    const deleted = await deleteMemory(auth.user.id, id);
+    if (!deleted) return Response.json({ error: "Memory not found." }, { status: 404 });
+    // Forgotten here means forgotten everywhere: the overnight profile drops
+    // it too and will not learn it again.
+    await forgetInProfile(auth.user.id, deleted.content).catch((error) => {
+      console.error("Could not carry a forgotten memory into the profile", error instanceof Error ? error.message : "");
+    });
+    return Response.json({ deletedId: deleted.id });
   } catch (error) {
     console.error("Memory deletion failed", error);
     return Response.json({ error: storageError(error) }, { status: 503 });

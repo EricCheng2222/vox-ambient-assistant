@@ -149,7 +149,9 @@ const textOf = async (name, args) => {
   const tools = (await mcp(token, { jsonrpc: "2.0", id: 2, method: "tools/list" })).body.result.tools;
   assert.deepEqual(
     tools.map((tool) => tool.name),
-    ["list_accounts", "search_email", "read_email", "read_thread", "list_labels", "unread_summary", "create_draft", "send_email", "reply_email", "forward_email", "send_draft", "modify_email", "trash_email", "untrash_email"],
+    ["list_accounts", "search_email", "read_email", "read_thread", "list_labels", "unread_summary", "create_draft", "send_email", "reply_email", "forward_email", "send_draft", "modify_email", "trash_email", "untrash_email",
+      "list_events", "create_event", "update_event", "invite_to_event", "delete_event", "list_tasks", "create_task", "update_task", "delete_task",
+      "search_contacts", "create_contact", "search_drive", "read_drive_file", "create_drive_file", "trash_drive_file"],
   );
   const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
   for (const name of ["list_accounts", "search_email", "read_email", "read_thread", "list_labels", "unread_summary"]) assert.equal(byName[name].annotations.readOnlyHint, true, name);
@@ -481,8 +483,14 @@ const ref = (native) => `m.${gmailAccount.id}.${Buffer.from(native).toString("ba
   const toGoogle = await get(`/google/connect?r=${nonce}`, { Cookie: sessionCookie });
   const googleUrl = new URL(toGoogle.headers.get("location"));
   assert.equal(googleUrl.origin + googleUrl.pathname, "https://accounts.google.com/o/oauth2/v2/auth");
-  assert.equal(googleUrl.searchParams.get("scope"), `openid email ${connect.GMAIL_SCOPE}`);
-  assert.deepEqual([googleUrl.searchParams.get("access_type"), googleUrl.searchParams.get("prompt")], ["offline", "consent"]);
+  assert.equal(
+    googleUrl.searchParams.get("scope"),
+    "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/tasks https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/contacts.other.readonly openid email",
+  );
+  assert.deepEqual(
+    [googleUrl.searchParams.get("access_type"), googleUrl.searchParams.get("prompt"), googleUrl.searchParams.get("include_granted_scopes")],
+    ["offline", "consent", "true"],
+  );
   const googleCookie = toGoogle.headers.get("set-cookie").split(";")[0];
   const googleState = googleUrl.searchParams.get("state");
   // The state is bound to the provider and the browser.

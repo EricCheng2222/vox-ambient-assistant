@@ -3,7 +3,14 @@ import {
   appendConversationMessage,
   getConversation,
 } from "./conversation-store.ts";
-import { createReminder, listReminders } from "./reminder-store.ts";
+import { createReminder, listReminders, reminderTimeZone } from "./reminder-store.ts";
+import {
+  firstOccurrence,
+  REMINDER_REPEAT_EXTRACTION_GUIDE,
+  reminderRepeatExtractionSchema,
+  reminderRepeatLabel,
+  repeatFromExtraction,
+} from "./reminder-repeat.ts";
 import { getCurrentTimeContext } from "./time-context.ts";
 
 type PhoneDecision = {
@@ -12,6 +19,7 @@ type PhoneDecision = {
   reminder_title: string | null;
   reminder_notes: string | null;
   reminder_due_at: string | null;
+  reminder_repeat: unknown;
 };
 
 function outputText(payload: {
@@ -89,7 +97,9 @@ export async function handlePhoneAssistantPrompt(ownerId: string, prompt: string
         { role: "user", content: spokenPrompt },
       ],
       instructions:
-        "You are Vox in a natural, ongoing telephone conversation. The input includes a bounded history shared with the user's Vox web conversation and may include earlier web or phone turns. Continue that thread naturally when relevant without recapping it or announcing a channel change. Match the caller's language and tone: use natural Taiwan Mandarin when they speak Mandarin, and English when they clearly speak English. Keep ordinary replies concise enough to sound natural on a call, usually under 45 spoken words, but vary length with the caller. Do not default to advice; acknowledge, ask, joke, share a thought, or simply continue the conversation as appropriate. Allowed actions are: chat and factual questions; create one reminder; list pending reminders; end the call. Do not claim to control a computer, smart home, contact another person, send a message, purchase, delete, log in, or reveal private data. Those requests are unsupported. For a reminder, resolve a precise future ISO timestamp using the clock below. Return JSON only.\n\n" +
+        "You are Vox in a natural, ongoing telephone conversation. The input includes a bounded history shared with the user's Vox web conversation and may include earlier web or phone turns. Continue that thread naturally when relevant without recapping it or announcing a channel change. Match the caller's language and tone: use natural Taiwan Mandarin when they speak Mandarin, and English when they clearly speak English. Keep ordinary replies concise enough to sound natural on a call, usually under 45 spoken words, but vary length with the caller. Do not default to advice; acknowledge, ask, joke, share a thought, or simply continue the conversation as appropriate. Allowed actions are: chat and factual questions; create one reminder; list pending reminders; end the call. Do not claim to control a computer, smart home, contact another person, send a message, purchase, delete, log in, or reveal private data. Those requests are unsupported. For a reminder, resolve a precise future ISO timestamp using the clock below. " +
+        REMINDER_REPEAT_EXTRACTION_GUIDE +
+        " When the action is not create_reminder, use repeat kind 'none'. Return JSON only.\n\n" +
         getCurrentTimeContext(),
       reasoning: { effort: "none" },
       max_output_tokens: 320,
@@ -111,8 +121,9 @@ export async function handlePhoneAssistantPrompt(ownerId: string, prompt: string
               reminder_title: { type: ["string", "null"] },
               reminder_notes: { type: ["string", "null"] },
               reminder_due_at: { type: ["string", "null"], format: "date-time" },
+              reminder_repeat: reminderRepeatExtractionSchema,
             },
-            required: ["action", "answer", "reminder_title", "reminder_notes", "reminder_due_at"],
+            required: ["action", "answer", "reminder_title", "reminder_notes", "reminder_due_at", "reminder_repeat"],
             additionalProperties: false,
           },
         },
@@ -156,7 +167,17 @@ export async function handlePhoneAssistantPrompt(ownerId: string, prompt: string
   if (decision.action === "create_reminder") {
     const title = decision.reminder_title?.trim().slice(0, 180) ?? "";
     const dueAt = decision.reminder_due_at?.trim() ?? "";
-    const dueTime = Date.parse(dueAt);
+    // A repeat that can't be kept exactly is asked about, never approximated.
+    const repeat = repeatFromExtraction(decision.reminder_repeat, await reminderTimeZone(ownerId));
+    if (repeat.kind === "invalid") {
+      return finish({
+        answer: "重複提醒目前可以設定每天、平日、每週固定幾天、每月或每年。你想要哪一種？",
+        end: false,
+      });
+    }
+    const dueTime = repeat.kind === "rule"
+      ? Date.parse(firstOccurrence(repeat.rule, repeat.startDate) ?? "")
+      : Date.parse(dueAt);
     if (!title || !Number.isFinite(dueTime) || dueTime <= Date.now()) {
       return finish({ answer: "我需要一個明確而且是未來的提醒時間。你想什麼時候提醒？", end: false });
     }
@@ -164,7 +185,14 @@ export async function handlePhoneAssistantPrompt(ownerId: string, prompt: string
       title,
       notes: decision.reminder_notes?.trim().slice(0, 500) || null,
       dueAt: new Date(dueTime).toISOString(),
+      repeat: repeat.kind === "rule" ? repeat.rule : null,
     });
+    if (repeat.kind === "rule") {
+      return finish({
+        answer: `好，已經設定重複提醒：${reminderRepeatLabel(repeat.rule, "taiwan_mandarin", "spoken")}，${title}。`,
+        end: false,
+      });
+    }
     return finish({ answer: `好，已經設定提醒：${spokenReminderTime(new Date(dueTime).toISOString())}，${title}。`, end: false });
   }
   return finish({ answer: decision.answer || "好。", end: false });

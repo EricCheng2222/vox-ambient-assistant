@@ -9,7 +9,7 @@ import {
   saveAccount,
   setPrimary,
 } from "./accounts.ts";
-import { beginOAuthConnect, cancelOAuthConnect, clearConnectCookie, finishOAuthConnect, type OAuthKind, oauthConfigured, revokeAccount } from "./connect.ts";
+import { beginOAuthConnect, cancelOAuthConnect, clearConnectCookie, finishOAuthConnect, googleServices, type OAuthKind, oauthConfigured, revokeAccount } from "./connect.ts";
 import { AuthError } from "./imap.ts";
 import { accountLabel, handleMcpMessage, type JsonRpcMessage, Mailboxes } from "./mcp.ts";
 import { requireAddresses } from "./mime.ts";
@@ -191,6 +191,7 @@ async function route(request: Request, env: Env) {
           clientName: result.client.name,
           userName: user.name,
           accounts: usable,
+          google: (await listAccounts(env.DB, user.id)).some((account) => account.provider === "gmail" && usable.includes(account.email)),
           returnHost,
           query: url.searchParams.toString(),
         }),
@@ -284,7 +285,8 @@ async function route(request: Request, env: Env) {
     if (!user) return redirect(`/auth/login?return_to=${encodeURIComponent(path + url.search)}`);
     try {
       const returnTo = (await recallReturn(env.DB, user.id, url.searchParams.get("r"))) ?? "/";
-      const connect = await beginOAuthConnect(env, connectKind, origin, user.id, returnTo);
+      // The home page's "Reconnect" and "Allow calendar…" links name the address to preselect.
+      const connect = await beginOAuthConnect(env, connectKind, origin, user.id, returnTo, validLoginHint(url.searchParams.get("login_hint")));
       return redirect(connect.location, { "Set-Cookie": connect.cookie });
     } catch (failure) {
       const message = failure instanceof MailError ? failure.message : "Please try again in a moment.";
@@ -368,6 +370,10 @@ async function route(request: Request, env: Env) {
           connectedAt: account.connectedAt,
           reconnectHref:
             account.provider === "gmail" ? "/google/connect" : account.provider === "microsoft" ? "/microsoft/connect" : `/imap/connect?email=${encodeURIComponent(account.email)}`,
+          google:
+            account.provider === "gmail"
+              ? { ...googleServices(account.scope), allowHref: oauthConfigured(env, "gmail") ? `/google/connect?login_hint=${encodeURIComponent(account.email)}` : null }
+              : null,
         })),
         canAdd: Boolean(env.MAIL_TOKEN_SECRET?.trim()),
         apps,
@@ -381,6 +387,11 @@ async function route(request: Request, env: Env) {
 const PROVIDER_HINTS: Record<string, OAuthKind | "imap"> = { google: "gmail", microsoft: "microsoft", imap: "imap" };
 const LOGIN_HINT = /^[^\s@<>"'&]{1,64}@[^\s@<>"'&]{1,189}\.[^\s@<>"'&]{2,63}$/u;
 
+function validLoginHint(value: string | null) {
+  const email = value?.trim() ?? "";
+  return LOGIN_HINT.test(email) && email.length <= 254 ? email : "";
+}
+
 /**
  * Sends the user to connect an account before an app's request continues.
  * `provider` (google, microsoft, imap) skips the chooser; `login_hint`
@@ -392,8 +403,7 @@ async function connectFirst(env: Env, user: SiteUser, origin: string, url: URL) 
   params.delete("add");
   const returnTo = `${url.pathname}?${params}`;
   const hint = PROVIDER_HINTS[url.searchParams.get("provider") ?? ""];
-  const email = url.searchParams.get("login_hint")?.trim() ?? "";
-  const loginHint = LOGIN_HINT.test(email) && email.length <= 254 ? email : "";
+  const loginHint = validLoginHint(url.searchParams.get("login_hint"));
   const nonce = await rememberReturn(env.DB, user.id, returnTo);
   const withNonce = (page: string, extra = "") => `${page}?r=${encodeURIComponent(nonce)}${extra}`;
   if (hint === "imap") return redirect(withNonce("/imap/connect", loginHint ? `&email=${encodeURIComponent(loginHint)}` : ""));

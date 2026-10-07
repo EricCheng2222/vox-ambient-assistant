@@ -169,6 +169,20 @@
       "when": 1791338926340,
       "tag": "0023_dashboard_panels",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1791344084279,
+      "tag": "0024_life_os_profile",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1791354341678,
+      "tag": "0025_recurring_reminders",
+      "breakpoints": true
     }
   ]
 }

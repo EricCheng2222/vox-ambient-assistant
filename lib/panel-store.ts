@@ -2,14 +2,32 @@ import { and, asc, eq, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { dashboardPanels } from "@/db/schema";
-import { MAX_DASHBOARD_PANELS, type DashboardPanel } from "@/lib/dashboard";
+import { defaultPanelRefresh, isOwnDataPanel, MAX_DASHBOARD_PANELS, panelRefreshChoice, type DashboardPanel } from "@/lib/dashboard";
 import type { StageBlock, StageSource } from "@/lib/stage";
 
-// Dashboard panels. Everything a panel says (its title, the question, the
-// facts, and the pages they came from) is stored encrypted and bound to its
-// owner and id.
+// Dashboard panels. Everything a panel says (its kind, its title, the
+// question, the facts, the pages they came from, a countdown's date) is
+// stored encrypted and bound to its owner and id.
 
-type PanelPayload = { title: string; question: string; blocks: StageBlock[]; sources: StageSource[] };
+/** `kind` is absent on panels saved before notes and countdowns: those are "web". */
+type PanelPayload = { title: string; question: string; blocks: StageBlock[]; sources: StageSource[]; kind?: DashboardPanel["kind"]; date?: string | null; refreshMinutes?: number; url?: string };
+
+/** What a stored payload shows, with its kind made explicit. */
+function panelFields(payload: Partial<PanelPayload>): Omit<DashboardPanel, "id" | "refreshedAt"> {
+  const kind =
+    payload.kind === "note" || payload.kind === "countdown" || payload.kind === "page" || isOwnDataPanel(payload.kind) ? payload.kind : "web";
+  return {
+    kind,
+    title: typeof payload.title === "string" ? payload.title : "",
+    question: typeof payload.question === "string" ? payload.question : "",
+    blocks: Array.isArray(payload.blocks) ? payload.blocks : [],
+    sources: Array.isArray(payload.sources) ? payload.sources : [],
+    ...(kind === "countdown" ? { date: typeof payload.date === "string" ? payload.date : null } : {}),
+    // Panels saved before the setting existed refresh at the default pace.
+    ...(kind === "page" ? { url: typeof payload.url === "string" ? payload.url : "" } : {}),
+    ...(kind === "web" || kind === "page" || isOwnDataPanel(kind) ? { refreshMinutes: panelRefreshChoice(payload.refreshMinutes) ?? defaultPanelRefresh(kind) } : {}),
+  };
+}
 type PanelRow = typeof dashboardPanels.$inferSelect;
 
 function bytesToBase64Url(bytes: Uint8Array) {
@@ -56,14 +74,7 @@ async function decryptPanel(row: PanelRow): Promise<DashboardPanel | null> {
       base64UrlToBytes(row.ciphertext),
     );
     const payload = JSON.parse(new TextDecoder().decode(plaintext)) as Partial<PanelPayload>;
-    return {
-      id: row.id,
-      title: typeof payload.title === "string" ? payload.title : "",
-      question: typeof payload.question === "string" ? payload.question : "",
-      blocks: Array.isArray(payload.blocks) ? payload.blocks : [],
-      sources: Array.isArray(payload.sources) ? payload.sources : [],
-      refreshedAt: row.refreshedAt,
-    };
+    return { id: row.id, ...panelFields(payload), refreshedAt: row.refreshedAt };
   } catch {
     return null;
   }
@@ -122,19 +133,23 @@ export async function createPanel(ownerId: string, payload: PanelPayload): Promi
     .where(and(eq(dashboardPanels.id, id), eq(dashboardPanels.ownerId, ownerId)))
     .limit(1);
   if (!saved) throw new PanelLimitError("Remove a panel before adding another.");
-  return { id, ...payload, refreshedAt: now };
+  return { id, ...panelFields(payload), refreshedAt: now };
 }
 
-/** Replaces a panel's contents after a refresh. Null if the owner has no such panel. */
-export async function updatePanel(ownerId: string, id: string, payload: PanelPayload): Promise<DashboardPanel | null> {
-  const now = new Date().toISOString();
+/**
+ * Replaces a panel's contents after a refresh or an edit. Null if the owner
+ * has no such panel. `refreshedAt` is given when only a setting changed, so
+ * the panel doesn't claim to be fresher than it is.
+ */
+export async function updatePanel(ownerId: string, id: string, payload: PanelPayload, refreshedAt?: string): Promise<DashboardPanel | null> {
+  const now = refreshedAt ?? new Date().toISOString();
   const encrypted = await encryptPanel(payload, ownerId, id);
   const result = await getDb()
     .update(dashboardPanels)
     .set({ ciphertext: encrypted.ciphertext, iv: encrypted.iv, refreshedAt: now })
     .where(and(eq(dashboardPanels.id, id), eq(dashboardPanels.ownerId, ownerId)))
     .returning({ id: dashboardPanels.id });
-  return result.length ? { id, ...payload, refreshedAt: now } : null;
+  return result.length ? { id, ...panelFields(payload), refreshedAt: now } : null;
 }
 
 export async function removePanel(ownerId: string, id: string) {

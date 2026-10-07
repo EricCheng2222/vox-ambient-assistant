@@ -54,7 +54,9 @@ config.services = [
   { binding: "MAIL", service: process.env.MAIL_WORKER_NAME?.trim() || "vox-mail" },
 ];
 // Every minute: place phone calls for reminders that asked to be delivered by call.
-config.triggers = { crons: ["* * * * *"] };
+// Every hour: the overnight owner-profile update (cloudflare/worker-entry.mjs
+// tells the two apart by this exact expression).
+config.triggers = { crons: ["* * * * *", "0 * * * *"] };
 config.migrations = [
   {
     tag: "sip-calls-v1",

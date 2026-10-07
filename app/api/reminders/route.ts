@@ -8,12 +8,25 @@ import {
   type ReminderStatus,
 } from "@/lib/reminder";
 import {
+  firstOccurrence,
+  isReminderRepeatPreset,
+  parseOccurrenceId,
+  REMINDER_REPEAT_EXTRACTION_GUIDE,
+  reminderRepeatExtractionSchema,
+  repeatFromExtraction,
+  repeatFromPreset,
+} from "@/lib/reminder-repeat";
+import {
+  completeReminderOccurrence,
   createReminder,
   deleteReminder,
   listReminders,
   postponeReminder,
+  reminderTimeZone,
+  restoreReminderOccurrence,
   updateReminderDelivery,
   updateReminderLocationStatus,
+  updateReminderRepeat,
   updateReminderStatus,
 } from "@/lib/reminder-store";
 import {
@@ -90,7 +103,9 @@ export async function POST(request: Request) {
         model: "gpt-5.6-terra",
         input: text,
         instructions:
-          "Extract one reminder from the user's request. Decide whether it is triggered by a time or by a place. Use trigger 'location' only when the user ties it to arriving at or leaving a place (for example 'when I get home', 'when I leave the office', 'when I'm at 全聯', 到家的時候, 離開公司時); then set place to the place as the user named it, in their language, without extra words (for example '家', 'home', '公司', '全聯'), set place_event to 'arrive' or 'leave', and set due_at to null. Otherwise use trigger 'time' with place and place_event null. Resolve relative dates and times against the authoritative clock below. Use Asia/Taipei unless the user explicitly gives another time zone. Return a concise reminder title in the user's language, an optional short note, an exact future ISO 8601 timestamp including its UTC offset, and a delivery method. Use delivery 'call' only when the user explicitly asks to be phoned or called for this reminder (for example 'call me', 'phone me', or 打電話提醒我); otherwise use 'app'. If the user gives a date without a time, use 09:00. If they give only a time and that time has already passed today, use tomorrow. Do not invent a reminder unrelated to the request. When the request refers to something said earlier (for example 'remind me about that'), take the subject from the earlier conversation.\n\n" +
+          "Extract one reminder from the user's request. Decide whether it is triggered by a time or by a place. Use trigger 'location' only when the user ties it to arriving at or leaving a place (for example 'when I get home', 'when I leave the office', 'when I'm at 全聯', 到家的時候, 離開公司時); then set place to the place as the user named it, in their language, without extra words (for example '家', 'home', '公司', '全聯'), set place_event to 'arrive' or 'leave', and set due_at to null. Otherwise use trigger 'time' with place and place_event null. Resolve relative dates and times against the authoritative clock below. Use Asia/Taipei unless the user explicitly gives another time zone. Return a concise reminder title in the user's language, an optional short note, an exact future ISO 8601 timestamp including its UTC offset, and a delivery method. Use delivery 'call' only when the user explicitly asks to be phoned or called for this reminder (for example 'call me', 'phone me', or 打電話提醒我); otherwise use 'app'. If the user gives a date without a time, use 09:00. If they give only a time and that time has already passed today, use tomorrow. Do not invent a reminder unrelated to the request. When the request refers to something said earlier (for example 'remind me about that'), take the subject from the earlier conversation. " +
+          REMINDER_REPEAT_EXTRACTION_GUIDE +
+          " For a repeating reminder, due_at is its first occurrence.\n\n" +
           getCurrentTimeContext() +
           (conversationContext ? `\n\n${conversationContext}` : ""),
         reasoning: { effort: "low" },
@@ -112,8 +127,9 @@ export async function POST(request: Request) {
                 place: { type: ["string", "null"] },
                 place_event: { type: ["string", "null"], enum: ["arrive", "leave", null] },
                 delivery: { type: "string", enum: ["app", "call"] },
+                repeat: reminderRepeatExtractionSchema,
               },
-              required: ["title", "notes", "trigger", "due_at", "place", "place_event", "delivery"],
+              required: ["title", "notes", "trigger", "due_at", "place", "place_event", "delivery", "repeat"],
               additionalProperties: false,
             },
           },
@@ -133,9 +149,25 @@ export async function POST(request: Request) {
       place?: string | null;
       place_event?: string | null;
       delivery?: string;
+      repeat?: unknown;
     };
     const title = parsed.title?.trim().slice(0, 180) ?? "";
+    // The repeat is checked here, never taken on trust: anything that isn't a
+    // rule Vox can keep exactly is turned back to the user as a question.
+    const repeat = repeatFromExtraction(parsed.repeat, await reminderTimeZone(auth.user.id));
+    if (repeat.kind === "invalid") {
+      return Response.json({ error: repeat.reason }, { status: 400 });
+    }
     if (parsed.trigger === "location") {
+      if (repeat.kind === "rule") {
+        return Response.json(
+          {
+            error:
+              "A reminder for a place goes off once and can’t repeat yet. Ask for it once, or give a time for it to repeat at.",
+          },
+          { status: 400 },
+        );
+      }
       const place = parsed.place?.replace(/\s+/g, " ").trim().slice(0, 80) ?? "";
       if (!title || !place || !isReminderPlaceEvent(parsed.place_event)) {
         return Response.json(
@@ -159,7 +191,18 @@ export async function POST(request: Request) {
         { status: 201 },
       );
     }
-    const dueAt = parsed.due_at?.trim() ?? "";
+    // A repeating reminder's first due time comes from its rule, worked out
+    // in the user's time zone, not from the model's timestamp.
+    const dueAt =
+      repeat.kind === "rule"
+        ? (firstOccurrence(repeat.rule, repeat.startDate) ?? "")
+        : (parsed.due_at?.trim() ?? "");
+    if (repeat.kind === "rule" && title && !dueAt) {
+      return Response.json(
+        { error: "That repeating reminder would end before it first goes off. Please give a later end date." },
+        { status: 400 },
+      );
+    }
     const dueTime = Date.parse(dueAt);
     if (!title || !Number.isFinite(dueTime) || dueTime <= Date.now()) {
       return Response.json(
@@ -174,6 +217,7 @@ export async function POST(request: Request) {
       notes: parsed.notes?.trim().slice(0, 500) || null,
       dueAt: new Date(dueTime).toISOString(),
       delivery: callAvailable ? "call" : "app",
+      repeat: repeat.kind === "rule" ? repeat.rule : null,
     });
     return Response.json(
       {
@@ -206,8 +250,17 @@ export async function PATCH(request: Request) {
     delivery?: unknown;
     postpone?: unknown;
     locationStatus?: unknown;
+    repeat?: unknown;
+    occurrence?: unknown;
   };
-  const id = typeof body.id === "string" ? body.id.trim() : "";
+  // An iPhone notification for one occurrence of a repeating reminder names
+  // the occurrence in its id; the page sends it as `occurrence`.
+  const target = parseOccurrenceId(typeof body.id === "string" ? body.id.trim() : "");
+  const id = target.id;
+  const occurrenceTime = typeof body.occurrence === "string" ? Date.parse(body.occurrence) : Number.NaN;
+  const occurrence = Number.isFinite(occurrenceTime)
+    ? new Date(occurrenceTime).toISOString()
+    : target.occurrence;
 
   if (body.locationStatus !== undefined) {
     // Reported by the iPhone app; carries no location data, only whether the
@@ -248,9 +301,43 @@ export async function PATCH(request: Request) {
     return Response.json({ reminder });
   }
 
+  if (body.repeat !== undefined) {
+    const preset = body.repeat === null ? "none" : body.repeat;
+    if (!id || !isReminderRepeatPreset(preset)) {
+      return Response.json({ error: "A valid reminder update is required." }, { status: 400 });
+    }
+    const zone = await reminderTimeZone(auth.user.id);
+    const reminder = await updateReminderRepeat(auth.user.id, id, (current) =>
+      repeatFromPreset(preset, current.dueAt, zone, current.repeat),
+    );
+    if (!reminder) {
+      return Response.json(
+        { error: "Only an open reminder with a time can repeat." },
+        { status: 404 },
+      );
+    }
+    return Response.json({ reminder });
+  }
+
   const status = body.status;
   if (!id || !status || !["pending", "completed", "dismissed"].includes(status)) {
     return Response.json({ error: "A valid reminder update is required." }, { status: 400 });
+  }
+  if (status === "pending" && occurrence) {
+    // Undo for skipping one occurrence of a repeating reminder.
+    const restored = await restoreReminderOccurrence(auth.user.id, id, occurrence);
+    if (!restored) {
+      return Response.json({ error: "That time can no longer be put back." }, { status: 409 });
+    }
+    return Response.json({ reminder: restored });
+  }
+  if (status !== "pending") {
+    // Done on a repeating reminder finishes one occurrence, not the series.
+    const result = await completeReminderOccurrence(auth.user.id, id, occurrence);
+    if (result.kind === "busy") {
+      return Response.json({ error: "That reminder just changed. Please try again." }, { status: 409 });
+    }
+    if (result.kind !== "not_repeating") return Response.json({ reminder: result.reminder });
   }
   const reminder = await updateReminderStatus(auth.user.id, id, status);
   if (!reminder) return Response.json({ error: "Reminder not found." }, { status: 404 });

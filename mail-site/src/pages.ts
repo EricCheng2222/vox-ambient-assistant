@@ -121,6 +121,7 @@ const baseStyles = `
   .row-meta .state { display: inline-flex; align-items: center; gap: 7px; }
   .row-meta .state.amber { color: var(--amber-text); }
   .row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+  .row-allow { margin-top: 8px; }
   .empty { display: grid; gap: 14px; justify-items: start; padding: 8px 20px 22px; }
   .empty p { color: #9fc3cc; }
   .code { display: block; margin-top: 6px; padding: 10px 12px; overflow-wrap: anywhere; border: 1px solid var(--line-soft); border-radius: 9px; background: var(--field); color: var(--cyan-text); font-family: var(--hud); font-size: 13px; }
@@ -351,6 +352,8 @@ export type AccountRow = {
   isPrimary: boolean;
   connectedAt: string;
   reconnectHref: string;
+  /** Google accounts: what was allowed beyond mail, and where to allow the rest. */
+  google?: { calendar: boolean; tasks: boolean; contacts: boolean; drive: boolean; allowHref: string | null } | null;
 };
 
 export type HomeState = {
@@ -378,6 +381,29 @@ function signInMethod(provider: string) {
   return provider === "gmail" ? "signed in with Google" : provider === "microsoft" ? "signed in with Microsoft" : "app password";
 }
 
+function wordList(words: string[]) {
+  return words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}` : (words[0] ?? "");
+}
+
+/** For a Google account: what Vox can use, and a button to allow whatever is missing. */
+function googleAccess(account: AccountRow) {
+  const google = account.google;
+  if (!google) return "";
+  const parts: Array<[boolean, string, string]> = [
+    [google.calendar, "Calendar", "calendar"],
+    [google.tasks, "Tasks", "tasks"],
+    [google.contacts, "Contacts", "contacts"],
+    [google.drive, "Drive", "files"],
+  ];
+  const allowed = ["Mail", ...parts.filter(([granted]) => granted).map(([, name]) => name)];
+  const missing = parts.filter(([granted]) => !granted).map(([, , word]) => word);
+  const button =
+    missing.length && google.allowHref && account.status === "connected"
+      ? `<div class="row-allow"><a class="btn btn-sm" href="${escapeHtml(google.allowHref)}">Allow ${wordList(missing)}</a></div>`
+      : "";
+  return `<div class="row-meta"><span>Vox can use ${wordList(allowed)}${allowed.length === 1 ? " only" : ""}</span></div>${button}`;
+}
+
 /** The signed-in home page: the connected email accounts and the apps that use them. */
 export function homePage(state: HomeState) {
   const accounts = state.accounts.length
@@ -391,6 +417,7 @@ export function homePage(state: HomeState) {
           <div class="row-meta"><span>${escapeHtml(account.label)} · ${signInMethod(account.provider)}</span>${
             ok ? `<span class="state"><span class="dot"></span>Connected</span>` : `<span class="state amber"><span class="dot amber"></span>Needs reconnecting</span>`
           }</div>
+          ${googleAccess(account)}
         </div>
         <div class="row-actions">${ok ? "" : `<a class="btn btn-sm btn-amber" href="${escapeHtml(account.reconnectHref)}">Reconnect</a>`}${
           account.isPrimary || !ok ? "" : postButton("/accounts/primary", { account_id: account.id }, "Make primary", "btn btn-sm")
@@ -398,7 +425,7 @@ export function homePage(state: HomeState) {
       </li>`;
         })
         .join("")}</ul>`
-    : `<div class="empty"><p>No email connected yet. Add Gmail, Outlook, iCloud, or any other account, and Vox can search, read, draft, send, label, and tidy it for you.</p></div>`;
+    : `<div class="empty"><p>No email connected yet. Add Gmail, Outlook, iCloud, or any other account, and Vox can search, read, draft, send, label, and tidy it for you. With a Google account, Vox can also use your calendar, tasks, contacts, and Drive files.</p></div>`;
   const add = state.canAdd
     ? `<a class="btn ${state.accounts.length ? "" : "btn-primary"}" href="/accounts/add">${icons.plus}Add an account</a>`
     : `<p class="muted">Email accounts can’t be connected yet: this site isn’t configured.</p>`;
@@ -423,7 +450,7 @@ export function homePage(state: HomeState) {
     <div class="page-head">
       <p class="hud">Vox Mail / Accounts</p>
       <h1>Email accounts</h1>
-      <p class="lede">Vox searches, reads, drafts, and tidies every account below. New email goes out from the primary account unless you say otherwise.</p>
+      <p class="lede">Vox searches, reads, drafts, and tidies every account below. New email goes out from the primary account unless you say otherwise. A Google account can also share its calendar, tasks, contacts, and Drive files.</p>
     </div>
     <section class="panel" aria-labelledby="accounts-title">
       <div class="panel-head"><h2 id="accounts-title" class="hud" style="color:var(--muted)">Mailboxes</h2>${state.accounts.length ? add : ""}</div>
@@ -433,7 +460,7 @@ export function homePage(state: HomeState) {
     <section class="note" aria-label="Safety">
       ${icons.shield}
       <div><h3>Nothing leaves without your spoken yes</h3>
-      <p>Before Vox sends, replies, forwards, or trashes email, it reads back who it’s going to and what it says, and waits for you.</p></div>
+      <p>Before Vox sends, replies, forwards, or trashes email, it reads back who it’s going to and what it says, and waits for you. The same goes for inviting people to an event, deleting an event or a task, and moving a Drive file to the trash.</p></div>
     </section>
     <section class="panel" aria-labelledby="apps-title">
       <div class="panel-head"><h2 id="apps-title" class="hud" style="color:var(--muted)">Connected apps</h2></div>
@@ -451,7 +478,7 @@ export function addAccountPage(input: { google: boolean; microsoft: boolean; ima
   const tile = (href: string, mark: string, title: string, text: string, action: string) =>
     `<a class="tile" href="${href}">${mark}<h2>${title}</h2><p>${text}</p><span class="tile-foot">${action}${icons.arrow}</span></a>`;
   const choices = [
-    input.google ? tile(`/google/connect${query}`, `<span class="mono big">G</span>`, "Google", "Gmail and Google Workspace. Sign in with Google.", "Sign in with Google") : "",
+    input.google ? tile(`/google/connect${query}`, `<span class="mono big">G</span>`, "Google", "Gmail and Google Workspace, with your calendar, tasks, contacts, and Drive files. Sign in with Google.", "Sign in with Google") : "",
     input.microsoft
       ? tile(`/microsoft/connect${query}`, `<span class="mono big">O</span>`, "Microsoft", "Outlook.com, Hotmail, Microsoft 365. Sign in with Microsoft.", "Sign in with Microsoft")
       : "",
@@ -603,7 +630,7 @@ export function imapPage(input: { presets: Record<string, PresetInfo>; values: I
 }
 
 /** Approval screen shown to a signed-in user when an MCP client asks for access. */
-export function consentPage(input: { clientName: string; userName: string; accounts: string[]; returnHost: string; query: string }) {
+export function consentPage(input: { clientName: string; userName: string; accounts: string[]; google?: boolean; returnHost: string; query: string }) {
   const name = escapeHtml(input.clientName);
   const data = JSON.stringify({ query: input.query }).replace(/</g, "\\u003c");
   return shell(
@@ -630,6 +657,7 @@ export function consentPage(input: { clientName: string; userName: string; accou
         <ul class="checks">
           <li>${icons.check}<span>Search and read your email</span></li>
           <li>${icons.check}<span>Write drafts, and archive, label, and mark email read</span></li>
+          ${input.google ? `<li>${icons.check}<span>See and change your Google calendar, tasks, contacts, and Drive files, where you’ve allowed it</span></li>` : ""}
           <li class="amber">${icons.mic}<span>Send, reply, forward, or move to Trash, only after your spoken confirmation</span></li>
         </ul>
       </div>

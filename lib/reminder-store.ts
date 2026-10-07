@@ -1,7 +1,8 @@
-import { and, asc, eq, gt, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { reminders } from "@/db/schema";
+import { reminders, userProfiles } from "@/db/schema";
+import { isValidTimeZone } from "@/lib/profile-schedule";
 import {
   LOCATION_REMINDER_DUE_AT,
   type Reminder,
@@ -10,6 +11,20 @@ import {
   type ReminderPlaceEvent,
   type ReminderStatus,
 } from "@/lib/reminder";
+import {
+  claimRepeatingAlert,
+  completeRepeatingOccurrence,
+  MAX_REMINDER_CALL_ATTEMPTS,
+  nextOccurrence,
+  parseReminderRepeat,
+  REMINDER_CALL_WINDOW_MS,
+  restoreRepeatingOccurrence,
+  rollRepeatingReminder,
+  serializeReminderRepeat,
+  type ReminderRepeat,
+  type RepeatingReminderChange,
+} from "@/lib/reminder-repeat";
+import { USER_TIME_ZONE } from "@/lib/time-context";
 
 const publicReminder = {
   id: reminders.id,
@@ -26,9 +41,46 @@ const publicReminder = {
   place: reminders.place,
   placeEvent: reminders.placeEvent,
   locationStatus: reminders.locationStatus,
+  repeatRule: reminders.repeatRule,
+  lastOccurrenceAt: reminders.lastOccurrenceAt,
   createdAt: reminders.createdAt,
   updatedAt: reminders.updatedAt,
 };
+
+type ReminderRow = Omit<Reminder, "repeat"> & { repeatRule: string | null };
+
+// The stored rule is checked every time it is read: a rule that no longer
+// validates makes the reminder an ordinary one-time reminder.
+function toReminder<Row extends { repeatRule: string | null }>(row: Row) {
+  const { repeatRule, ...rest } = row;
+  return { ...rest, repeat: parseReminderRepeat(repeatRule) };
+}
+
+function toReminders(rows: unknown) {
+  return (rows as ReminderRow[]).map((row) => toReminder(row) as Reminder);
+}
+
+function firstReminder(rows: unknown) {
+  return toReminders(rows)[0] ?? null;
+}
+
+/**
+ * The time zone a new repeating reminder is worked out in: the one the user's
+ * own device last reported (user_profiles.time_zone), else the app default.
+ */
+export async function reminderTimeZone(ownerId: string) {
+  try {
+    const [row] = await getDb()
+      .select({ timeZone: userProfiles.timeZone })
+      .from(userProfiles)
+      .where(eq(userProfiles.ownerId, ownerId))
+      .limit(1);
+    if (isValidTimeZone(row?.timeZone)) return row.timeZone;
+  } catch (error) {
+    console.error("Reminder time zone lookup failed", error);
+  }
+  return USER_TIME_ZONE;
+}
 
 // Pending reminders stay listed, overdue or not, until the user completes or
 // postpones them. Completed and dismissed reminders drop out once their time
@@ -37,20 +89,22 @@ export async function listReminders(
   ownerId: string,
   limit = 200,
 ): Promise<Reminder[]> {
-  return getDb()
-    .select(publicReminder)
-    .from(reminders)
-    .where(
-      and(
-        eq(reminders.ownerId, ownerId),
-        or(
-          eq(reminders.status, "pending"),
-          and(eq(reminders.triggerType, "time"), gt(reminders.dueAt, new Date().toISOString())),
+  return toReminders(
+    await getDb()
+      .select(publicReminder)
+      .from(reminders)
+      .where(
+        and(
+          eq(reminders.ownerId, ownerId),
+          or(
+            eq(reminders.status, "pending"),
+            and(eq(reminders.triggerType, "time"), gt(reminders.dueAt, new Date().toISOString())),
+          ),
         ),
-      ),
-    )
-    .orderBy(asc(reminders.dueAt))
-    .limit(limit) as Promise<Reminder[]>;
+      )
+      .orderBy(asc(reminders.dueAt))
+      .limit(limit),
+  );
 }
 
 export async function createReminder(
@@ -61,6 +115,8 @@ export async function createReminder(
     dueAt?: string;
     delivery?: ReminderDelivery;
     location?: { place: string; event: ReminderPlaceEvent };
+    // Time reminders only. dueAt must be the rule's first occurrence.
+    repeat?: ReminderRepeat | null;
   },
 ) {
   const now = new Date().toISOString();
@@ -80,11 +136,170 @@ export async function createReminder(
       triggerType: input.location ? "location" : "time",
       place: input.location?.place ?? null,
       placeEvent: input.location?.event ?? null,
+      repeatRule: input.location ? null : serializeReminderRepeat(input.repeat ?? null),
       createdAt: now,
       updatedAt: now,
     })
     .returning(publicReminder);
-  return reminder as Reminder;
+  return toReminder(reminder) as Reminder;
+}
+
+type RepeatingRow = ReminderRow & { callAttempts: number };
+
+const repeatingRow = { ...publicReminder, callAttempts: reminders.callAttempts };
+
+function sameOrNull(
+  column: typeof reminders.notifiedAt | typeof reminders.lastOccurrenceAt,
+  value: string | null,
+) {
+  return value === null ? isNull(column) : eq(column, value);
+}
+
+// Applies a change worked out from `row` only if the reminder is still exactly
+// as it was read, so two apps (or an app and the scheduler) acting on the same
+// occurrence can never both win.
+async function applyRepeatingChange(row: RepeatingRow, change: RepeatingReminderChange, now: Date) {
+  const [updated] = await getDb()
+    .update(reminders)
+    .set({
+      ...(change.dueAt !== undefined ? { dueAt: change.dueAt } : {}),
+      ...(change.notifiedAt !== undefined ? { notifiedAt: change.notifiedAt } : {}),
+      ...(change.lastOccurrenceAt !== undefined ? { lastOccurrenceAt: change.lastOccurrenceAt } : {}),
+      ...(change.resetCall ? { callStatus: null, callAttempts: 0 } : {}),
+      ...(change.finish ? { status: "completed" } : {}),
+      updatedAt: now.toISOString(),
+    })
+    .where(
+      and(
+        eq(reminders.id, row.id),
+        eq(reminders.status, "pending"),
+        eq(reminders.dueAt, row.dueAt),
+        sameOrNull(reminders.notifiedAt, row.notifiedAt),
+        sameOrNull(reminders.lastOccurrenceAt, row.lastOccurrenceAt),
+      ),
+    )
+    .returning(publicReminder);
+  return updated ? (toReminder(updated) as Reminder) : null;
+}
+
+async function loadRepeatingRow(ownerId: string, id: string) {
+  const [row] = await getDb()
+    .select(repeatingRow)
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.ownerId, ownerId),
+        eq(reminders.id, id),
+        eq(reminders.triggerType, "time"),
+        isNotNull(reminders.repeatRule),
+      ),
+    )
+    .limit(1);
+  const rule = row ? parseReminderRepeat(row.repeatRule) : null;
+  return row && rule ? { row: row as RepeatingRow, rule } : null;
+}
+
+export type ReminderOccurrenceResult =
+  | { kind: "not_repeating" }
+  // Changed by something else twice in a row; nothing was done.
+  | { kind: "busy" }
+  | { kind: "unchanged"; reminder: Reminder }
+  | { kind: "updated"; reminder: Reminder };
+
+/**
+ * "Done" on a repeating reminder: finishes one occurrence and keeps the
+ * series. Returns not_repeating for a one-time reminder (or a finished one),
+ * which the caller completes the ordinary way.
+ */
+export async function completeReminderOccurrence(
+  ownerId: string,
+  id: string,
+  occurrence: string | null,
+  now = new Date(),
+): Promise<ReminderOccurrenceResult> {
+  // Retried once: another app may have moved the reminder on in between.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const found = await loadRepeatingRow(ownerId, id);
+    if (!found || found.row.status !== "pending") return { kind: "not_repeating" };
+    const change = completeRepeatingOccurrence(found.rule, found.row, occurrence, now);
+    if (!change) {
+      const unchanged = await getDb()
+        .select(publicReminder)
+        .from(reminders)
+        .where(and(eq(reminders.ownerId, ownerId), eq(reminders.id, id)))
+        .limit(1);
+      const reminder = firstReminder(unchanged);
+      return reminder ? { kind: "unchanged", reminder } : { kind: "not_repeating" };
+    }
+    const reminder = await applyRepeatingChange(found.row, change, now);
+    if (reminder) return { kind: "updated", reminder };
+  }
+  return { kind: "busy" };
+}
+
+/** Undo for a skipped occurrence: puts the reminder back on it. */
+export async function restoreReminderOccurrence(
+  ownerId: string,
+  id: string,
+  occurrence: string,
+  now = new Date(),
+) {
+  const found = await loadRepeatingRow(ownerId, id);
+  if (!found || found.row.status !== "pending") return null;
+  const change = restoreRepeatingOccurrence(found.row, occurrence, now);
+  return change ? applyRepeatingChange(found.row, change, now) : null;
+}
+
+/**
+ * Sets, changes, or clears how an open time reminder repeats. The due time
+ * moves to the rule's next occurrence when it doesn't already fall on one.
+ */
+export async function updateReminderRepeat(
+  ownerId: string,
+  id: string,
+  build: (current: { dueAt: string; repeat: ReminderRepeat | null }) => ReminderRepeat | null,
+  now = new Date(),
+) {
+  const [row] = await getDb()
+    .select(publicReminder)
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.ownerId, ownerId),
+        eq(reminders.id, id),
+        eq(reminders.status, "pending"),
+        eq(reminders.triggerType, "time"),
+      ),
+    )
+    .limit(1);
+  if (!row) return null;
+  const current = parseReminderRepeat(row.repeatRule);
+  const rule = build({ dueAt: row.dueAt, repeat: current });
+  const stamp = now.toISOString();
+  if (!rule) {
+    const [updated] = await getDb()
+      .update(reminders)
+      .set({ repeatRule: null, lastOccurrenceAt: null, updatedAt: stamp })
+      .where(and(eq(reminders.id, row.id), eq(reminders.dueAt, row.dueAt)))
+      .returning(publicReminder);
+    return firstReminder(updated ? [updated] : []);
+  }
+  // Keep a due time the new rule also lands on; otherwise take its next one.
+  const dueMs = Date.parse(row.dueAt);
+  const dueAt = nextOccurrence(rule, Math.max(dueMs - 1, now.getTime()));
+  if (!dueAt) return null;
+  const moved = dueAt !== row.dueAt;
+  const [updated] = await getDb()
+    .update(reminders)
+    .set({
+      repeatRule: serializeReminderRepeat(rule),
+      dueAt,
+      ...(moved ? { notifiedAt: null, callStatus: null, callAttempts: 0, lastOccurrenceAt: null } : {}),
+      updatedAt: stamp,
+    })
+    .where(and(eq(reminders.id, row.id), eq(reminders.dueAt, row.dueAt)))
+    .returning(publicReminder);
+  return firstReminder(updated ? [updated] : []);
 }
 
 export async function updateReminderStatus(
@@ -106,7 +321,7 @@ export async function updateReminderStatus(
     })
     .where(and(eq(reminders.ownerId, ownerId), eq(reminders.id, id)))
     .returning(publicReminder);
-  return (reminder ?? null) as Reminder | null;
+  return firstReminder(reminder ? [reminder] : []);
 }
 
 export async function updateReminderDelivery(
@@ -132,7 +347,7 @@ export async function updateReminderDelivery(
       ),
     )
     .returning(publicReminder);
-  return (reminder ?? null) as Reminder | null;
+  return firstReminder(reminder ? [reminder] : []);
 }
 
 export async function postponeReminder(ownerId: string, id: string, dueAt: string) {
@@ -145,6 +360,9 @@ export async function postponeReminder(ownerId: string, id: string, dueAt: strin
       callStatus: null,
       callAttempts: 0,
       calledAt: null,
+      // A snooze takes over from the occurrence that just went off. A repeating
+      // reminder goes back to its own times after the snoozed alert.
+      lastOccurrenceAt: null,
       updatedAt: new Date().toISOString(),
     })
     .where(
@@ -156,7 +374,7 @@ export async function postponeReminder(ownerId: string, id: string, dueAt: strin
       ),
     )
     .returning(publicReminder);
-  return (reminder ?? null) as Reminder | null;
+  return firstReminder(reminder ? [reminder] : []);
 }
 
 export async function updateReminderLocationStatus(
@@ -175,7 +393,7 @@ export async function updateReminderLocationStatus(
       ),
     )
     .returning(publicReminder);
-  return (reminder ?? null) as Reminder | null;
+  return firstReminder(reminder ? [reminder] : []);
 }
 
 export async function deleteReminder(ownerId: string, id: string) {
@@ -186,24 +404,85 @@ export async function deleteReminder(ownerId: string, id: string) {
   return deleted?.id ?? null;
 }
 
+// Reminders an app should alert about now. Each one is handed to exactly one
+// caller: a one-time reminder once, a repeating reminder once per occurrence.
 export async function claimDueReminders(ownerId: string, now = new Date()) {
   const notifiedAt = now.toISOString();
-  return getDb()
-    .update(reminders)
-    .set({ notifiedAt, updatedAt: notifiedAt })
+  const db = getDb();
+  const due = toReminders(
+    await db
+      .update(reminders)
+      .set({ notifiedAt, updatedAt: notifiedAt })
+      .where(
+        and(
+          eq(reminders.ownerId, ownerId),
+          eq(reminders.status, "pending"),
+          isNull(reminders.repeatRule),
+          isNull(reminders.notifiedAt),
+          lte(reminders.dueAt, notifiedAt),
+        ),
+      )
+      .returning(publicReminder),
+  );
+
+  // Repeating: one that is due, or one the scheduler already moved on whose
+  // alert is still owed.
+  const repeating = (await db
+    .select(repeatingRow)
+    .from(reminders)
     .where(
       and(
         eq(reminders.ownerId, ownerId),
         eq(reminders.status, "pending"),
-        isNull(reminders.notifiedAt),
-        lte(reminders.dueAt, notifiedAt),
+        eq(reminders.triggerType, "time"),
+        isNotNull(reminders.repeatRule),
+        or(lte(reminders.dueAt, notifiedAt), isNotNull(reminders.lastOccurrenceAt)),
       ),
-    )
-    .returning(publicReminder) as Promise<Reminder[]>;
+    )) as RepeatingRow[];
+  for (const row of repeating) {
+    const rule = parseReminderRepeat(row.repeatRule);
+    if (!rule) {
+      // A rule that no longer validates: alert once, like a one-time reminder.
+      if (row.notifiedAt === null && Date.parse(row.dueAt) <= now.getTime()) {
+        const claimed = await applyRepeatingChange(row, { notifiedAt }, now);
+        if (claimed) due.push(claimed);
+      }
+      continue;
+    }
+    const { alert, change } = claimRepeatingAlert(rule, row, now);
+    if (!change) continue;
+    const updated = await applyRepeatingChange(row, change, now);
+    if (updated && alert) due.push(updated);
+  }
+  return due;
 }
 
-const MAX_REMINDER_CALL_ATTEMPTS = 3;
-const REMINDER_CALL_WINDOW_MS = 30 * 60_000;
+/**
+ * Run by the every-minute scheduler: moves every due repeating reminder on to
+ * its next future occurrence, so the series continues with no app open. It
+ * never alerts; a reminder still waiting on its phone call is left alone.
+ */
+export async function rollDueRepeatingReminders(now = new Date()) {
+  const rows = (await getDb()
+    .select(repeatingRow)
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.status, "pending"),
+        eq(reminders.triggerType, "time"),
+        isNotNull(reminders.repeatRule),
+        lte(reminders.dueAt, now.toISOString()),
+      ),
+    )
+    .limit(500)) as RepeatingRow[];
+  let rolled = 0;
+  for (const row of rows) {
+    const rule = parseReminderRepeat(row.repeatRule);
+    const change = rule ? rollRepeatingReminder(rule, row, now) : null;
+    if (change && (await applyRepeatingChange(row, change, now))) rolled += 1;
+  }
+  return rolled;
+}
 
 function dueCallReminderFilter(ownerId: string, now: Date) {
   return and(
@@ -238,7 +517,8 @@ export async function claimDueCallReminders(ownerId: string, now = new Date()) {
       updatedAt: stamp,
     })
     .where(and(dueCallReminderFilter(ownerId, now), gte(reminders.dueAt, oldestCallable)))
-    .returning(publicReminder) as Promise<Reminder[]>;
+    .returning(publicReminder)
+    .then(toReminders);
 }
 
 export async function markDueCallRemindersUnavailable(ownerId: string, now = new Date()) {
@@ -305,7 +585,7 @@ export async function claimLocationReminderCall(id: string, now = new Date()) {
       ),
     )
     .returning({ ...publicReminder, ownerId: reminders.ownerId });
-  return reminder ?? null;
+  return reminder ? toReminder(reminder) : null;
 }
 
 export async function markLocationReminderCallUnavailable(id: string) {

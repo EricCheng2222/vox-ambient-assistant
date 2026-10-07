@@ -64,6 +64,11 @@ export const reminders = sqliteTable(
     place: text("place"),
     placeEvent: text("place_event"),
     locationStatus: text("location_status"),
+    // Repeating reminders: the validated rule as JSON (lib/reminder-repeat.ts),
+    // and the due time of the occurrence that last went off and is not yet
+    // marked done. Both null for a one-time reminder.
+    repeatRule: text("repeat_rule"),
+    lastOccurrenceAt: text("last_occurrence_at"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
@@ -370,3 +375,59 @@ export const dashboardPanels = sqliteTable(
   },
   (table) => [index("idx_dashboard_panels_owner_position").on(table.ownerId, table.position)],
 );
+
+// Today briefing: JEV's verdict on an unread email, kept so each message is
+// judged once. `id` is a hash of the owner and the message id; no email
+// content is stored. Rows older than about 30 days are pruned.
+export const mailTriage = sqliteTable(
+  "mail_triage",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    // "needs_you" | "worth_reading" | "skip"
+    verdict: text("verdict").notNull(),
+    judgedAt: text("judged_at").notNull(),
+  },
+  (table) => [index("idx_mail_triage_owner_judged_at").on(table.ownerId, table.judgedAt)],
+);
+
+// Today briefing: the last "now" decision per user. `signature` is a hash of
+// the candidate set and the local hour it was made for; `chosen` is a JSON
+// array of the chosen candidate keys ("event:<id>").
+export const todayNowCache = sqliteTable("today_now_cache", {
+  ownerId: text("owner_id").primaryKey(),
+  signature: text("signature").notNull(),
+  chosen: text("chosen").notNull(),
+  decidedAt: text("decided_at").notNull(),
+});
+
+// The owner profile Vox builds overnight from the day's conversations. The
+// profile itself (facts, the day's digest, and what the owner had Vox forget)
+// is encrypted and bound to its owner; the rest is bookkeeping for the nightly
+// run: where the owner is, how far through the conversation it has read, and
+// how the last run went.
+export const userProfiles = sqliteTable("user_profiles", {
+  ownerId: text("owner_id").primaryKey(),
+  ciphertext: text("ciphertext"),
+  iv: text("iv"),
+  // IANA zone, and whether the owner's device ("device") or the network
+  // ("network") reported it.
+  timeZone: text("time_zone"),
+  timeZoneSource: text("time_zone_source"),
+  // conversation_messages.sequence of the last message already folded in.
+  lastSequence: integer("last_sequence").notNull().default(0),
+  // Local day (YYYY-MM-DD) the nightly run last finished for.
+  consolidatedDay: text("consolidated_day"),
+  lastRunAt: text("last_run_at"),
+  lastRunStatus: text("last_run_status"),
+  lastRunTrigger: text("last_run_trigger"),
+  lastRunMessages: integer("last_run_messages").notNull().default(0),
+  lastRunError: text("last_run_error"),
+  lastSuccessAt: text("last_success_at"),
+  // Set while a run is under way, so two never overlap.
+  runStartedAt: text("run_started_at"),
+  // Last "Update now", for its rate limit.
+  manualRunAt: text("manual_run_at"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});

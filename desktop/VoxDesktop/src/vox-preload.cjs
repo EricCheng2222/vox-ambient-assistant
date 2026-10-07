@@ -80,6 +80,11 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
     cancelEnrollment: () => ipcRenderer.invoke("vox-voice-filter:enroll-cancel"),
     forget: () => ipcRenderer.invoke("vox-voice-filter:forget"),
   },
+  // Pages the user asked Vox to keep an eye on, read from the built-in browser's profile.
+  watch: {
+    read: (url) => ipcRenderer.invoke("vox-watch:read", typeof url === "string" ? url.slice(0, 2_000) : ""),
+    close: (url) => ipcRenderer.invoke("vox-watch:close", typeof url === "string" ? url.slice(0, 2_000) : ""),
+  },
   // The stage's built-in browser: a real web page shown inside Vox.
   browser: {
     open: (url) => ipcRenderer.invoke("vox-browser:open", typeof url === "string" ? url.slice(0, 4_000) : ""),
@@ -96,6 +101,14 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
     command: (action) =>
       ipcRenderer.invoke("vox-browser:command", ["back", "forward", "reload", "stop", "external"].includes(action) ? action : ""),
     read: () => ipcRenderer.invoke("vox-browser:read"),
+    // Acting on the page for the user: a numbered look, then one action at a time.
+    look: () => ipcRenderer.invoke("vox-browser:look"),
+    act: (request) =>
+      ipcRenderer.invoke("vox-browser:act", {
+        action: typeof request?.action === "string" ? request.action.slice(0, 20) : "",
+        ref: Number.isInteger(request?.ref) ? request.ref : -1,
+        text: typeof request?.text === "string" ? request.text.slice(0, 500) : "",
+      }),
     onState: (listener) => {
       if (typeof listener !== "function") return () => undefined;
       const handler = (_event, state) => listener(state ?? null);

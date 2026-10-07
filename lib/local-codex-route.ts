@@ -10,10 +10,14 @@ const engineeringTarget =
 const directChineseEngineeringRequest =
   /^(?:(?:請|幫我|麻煩你|可以請你|能不能)\s*)?(?:檢查|除錯|修復|修好|修改|實作|重構|跑測試|測試|建置|處理)/u;
 
+// Hands-on work on files: used only when JEV can't be asked.
+const workspaceTask =
+  /\b(?:in|inside|from|into|to) (?:my |the |vox'?s? )?workspace\b|工作區(?:裡|中|內)|\b(?:write|run|make|create) (?:me )?(?:a |the )?(?:python |shell |bash |node )?script\b|寫(?:一個|個)?(?:腳本|程式)|\b(?:convert|merge|rename|clean up|analy[sz]e)\b.{0,40}\b(?:csv|pdfs?|spreadsheet|excel|files|photos|images)\b/iu;
+
 export function isLocalCodexTask(text: string) {
   const value = text.trim();
   if (!value) return false;
-  if (explicitCodexRequest.test(value)) return true;
+  if (explicitCodexRequest.test(value) || workspaceTask.test(value)) return true;
   return (
     engineeringTarget.test(value) &&
     (directEngineeringRequest.test(value) || directChineseEngineeringRequest.test(value))

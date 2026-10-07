@@ -1,7 +1,9 @@
+import { askFirstAvailable, EXPERT_MODELS } from "@/lib/models";
 import { requireUser } from "@/lib/auth";
 import { earlierMessages, parseRecentMessages } from "@/lib/conversation-context";
 import { formatMemoryContext } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
+import { loadProfileContext } from "@/lib/profile-store";
 import {
   adaptiveReplyLengthInstruction,
   adaptiveReplyLengthSettings,
@@ -92,12 +94,18 @@ export async function POST(request: Request) {
   const isExpert = route === "expert_reasoning";
   const isWeb = route === "live_web";
   const lengthSettings = adaptiveReplyLengthSettings(responseLength, isExpert);
-  const model = isExpert ? "gpt-6-astra" : "gpt-5.6-terra";
+  const models = isExpert ? EXPERT_MODELS : (["gpt-5.6-terra"] as const);
   const remembered = await listMemories(auth.user.id, 24).catch((error) => {
     console.error("Reasoning without saved memory", error);
     return [];
   });
-  const memoryContext = remembered.length ? `\n\n${formatMemoryContext(remembered)}` : "";
+  const profileBackground = await loadProfileContext(
+    auth.user.id,
+    remembered.map((memory) => memory.content),
+  );
+  const memoryContext =
+    (remembered.length ? `\n\n${formatMemoryContext(remembered)}` : "") +
+    (profileBackground ? `\n\n${profileBackground}` : "");
   const timeContext = `\n\n${getCurrentTimeContext()}`;
   const recentMessages = parseRecentMessages(body.recentMessages);
   const languageInstruction = responseLanguageInstruction(
@@ -112,14 +120,15 @@ export async function POST(request: Request) {
     { role: "user" as const, content: text },
   ];
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  let model: string = models[0];
+  const response = await askFirstAvailable(models, (candidate) => fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model,
+      model: (model = candidate),
       input,
       instructions:
         "Prepare an accurate answer for a voice assistant to speak aloud. Answer the latest user message as the next turn of the conversation you are given: resolve references to earlier turns and do not repeat what was already said. Use plain language, spoken-friendly sentences, and no markdown. Do not mention model routing.\n\n" +
@@ -139,7 +148,7 @@ export async function POST(request: Request) {
       tools: isWeb ? [{ type: "web_search" }] : undefined,
       store: false,
     }),
-  });
+  }));
 
   const payload = (await response.json()) as Parameters<typeof readOutputText>[0];
   if (!response.ok) {

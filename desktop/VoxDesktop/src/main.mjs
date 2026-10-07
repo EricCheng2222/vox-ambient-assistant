@@ -39,6 +39,7 @@ import { startLocalVoxServer } from "./local-web-server.mjs";
 import { registerVoiceFilter } from "./voice-filter.mjs";
 import { registerWelcomeHome } from "./welcome-home.mjs";
 import { registerStageBrowser } from "./stage-browser.mjs";
+import { registerPageWatch } from "./page-watch.mjs";
 import {
   availableSmartHomeAdapters,
   configureSmartHomeDevice,
@@ -66,6 +67,7 @@ const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 let voiceFilter = null;
 let welcomeHome = null;
 let stageBrowser = null;
+let pageWatch = null;
 const shellFile = path.join(currentDirectory, "shell.html");
 const shellUrl = pathToFileURL(shellFile).href;
 const settingsFileName = "desktop-settings.json";
@@ -510,8 +512,11 @@ async function runCodexTask(taskId, request) {
       skipGitRepoCheck: true,
       sandboxMode: canEdit ? "workspace-write" : "read-only",
       approvalPolicy: request.computerControl ? "on-request" : "never",
+      // Commands never get the network: the sandbox lets them read beyond the
+      // workspace, and a page Vox read must not be able to send that anywhere.
       networkAccessEnabled: false,
-      webSearchMode: "disabled",
+      // In its own workspace Vox may look things up; desktop control may not.
+      webSearchMode: request.freeRein ? "live" : "disabled",
       modelReasoningEffort: "medium",
       threadSource: "vox-desktop",
     });
@@ -533,7 +538,7 @@ async function runCodexTask(taskId, request) {
         ].join("\n\n")
       : request.voice
         ? [
-          "Complete the user's task in the selected local project.",
+          "Complete the user's task in this folder, which is your own workspace on the user's Mac: you may create, edit, delete, and run anything inside it without asking. Do not change anything outside it. Save what you make as files here and name them clearly.",
           "Your final response will be spoken aloud by Vox. Write that final response in the same language as the user, keep it concise and natural for speech, and state the outcome rather than narrating your process.",
           "Never include secrets, access tokens, private keys, or large code blocks in the final response.",
           `User request:\n${request.prompt}`,
@@ -641,15 +646,8 @@ async function runCodexTask(taskId, request) {
   }
 }
 
-function openCodexPanel() {
-  panelOpen = true;
-  layoutVoxView();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("vox-codex:panel-open", true);
-  }
-}
 
-async function chooseWorkspace(title = "Choose a folder for local Codex") {
+async function chooseWorkspace(title = "Choose a folder to be Vox's workspace") {
   const result = await dialog.showOpenDialog(mainWindow, {
     title,
     buttonLabel: "Use this folder",
@@ -659,20 +657,38 @@ async function chooseWorkspace(title = "Choose a folder for local Codex") {
 
   const workspace = await validateWorkspace(result.filePaths[0]);
   const settings = await readSettings();
-  await saveSettings({ ...settings, workspace });
+  await saveSettings({ ...settings, voxWorkspace: workspace });
   return workspace;
 }
 
-async function savedOrChosenWorkspace() {
+/**
+ * Vox's own folder on this Mac: the one place it may create, change, and run
+ * things freely. It is made on first use; the user can move it. A project
+ * folder chosen for the old "Tools" panel is deliberately not reused, so Vox
+ * never gets free rein over something it wasn't given for that.
+ */
+async function voxWorkspace() {
   const settings = await readSettings();
-  if (typeof settings.workspace === "string") {
+  if (typeof settings.voxWorkspace === "string") {
     try {
-      return await validateWorkspace(settings.workspace);
+      return await validateWorkspace(settings.voxWorkspace);
     } catch {
-      // The folder may have moved or been removed. Ask for a current project below.
+      // Moved or deleted: fall back to the default folder.
     }
   }
-  return chooseWorkspace("Choose a project for this voice task");
+  const folder = path.join(app.getPath("home"), "Vox Workspace");
+  await mkdir(folder, { recursive: true });
+  const readme = path.join(folder, "README.txt");
+  await writeFile(
+    readme,
+    "This is Vox's workspace.\n\nVox can create, change, and run files inside this folder when you ask it to (in the Vox Mac app: say what you want, or use the Workspace panel). It cannot change files anywhere else on this Mac. Put things here that you want Vox to work on, and look here for what it makes.\n",
+    { flag: "wx" },
+  ).catch(() => undefined);
+  return folder;
+}
+
+async function savedOrChosenWorkspace() {
+  return voxWorkspace();
 }
 
 async function performRemoteSmartHomeCommand(command) {
@@ -803,7 +819,7 @@ async function performRemoteCodexTask(command) {
     type: "question",
     title: "Remote Codex request",
     message: "Allow the paired phone to run this local Codex task?",
-    detail: `Folder: ${workspace}\n\nTask: ${truncate(prompt, 700)}\n\nRemote Codex tasks require confirmation on this Mac and start read-only.`,
+    detail: `Folder: ${workspace}\n\nTask: ${truncate(prompt, 700)}\n\nTasks sent from another device are confirmed on this Mac and can only read Vox's workspace.`,
     buttons: ["Run read-only", "Cancel"],
     defaultId: 1,
     cancelId: 1,
@@ -833,8 +849,7 @@ async function performRemoteCommand(command) {
   if (command.kind === "phone_mac") return performPhoneMacRequest(command);
   if (command.kind === "local_codex") return performRemoteCodexTask(command);
   if (command.kind === "open_workspace") {
-    const settings = await readSettings();
-    const workspace = await validateWorkspace(settings.workspace);
+    const workspace = await voxWorkspace();
     const openError = await shell.openPath(workspace);
     if (openError) throw new Error(openError);
     return `Opened ${path.basename(workspace)} in Finder on the paired Mac.`;
@@ -1329,14 +1344,20 @@ function registerIpcHandlers() {
 
   ipcMain.handle("vox-codex:status", async (event) => {
     requireTrustedSender(event);
-    const settings = await readSettings();
     return {
       available: true,
-      workspace: typeof settings.workspace === "string" ? settings.workspace : null,
+      workspace: await voxWorkspace().catch(() => null),
       running: Boolean(activeTask),
       taskId: activeTask?.id ?? null,
-      safety: "Local tasks stay inside the selected folder. Network access is off.",
+      safety: "Vox works freely inside its workspace folder and can't change files anywhere else.",
     };
+  });
+
+  ipcMain.handle("vox-codex:open-workspace", async (event) => {
+    requireTrustedSender(event);
+    const openError = await shell.openPath(await voxWorkspace());
+    if (openError) throw new Error(openError);
+    return true;
   });
 
   ipcMain.handle("vox-codex:choose-workspace", async (event) => {
@@ -1358,22 +1379,10 @@ function registerIpcHandlers() {
       if (prompt.length > maximumPromptLength) {
         throw new Error(`Keep the task under ${maximumPromptLength.toLocaleString()} characters.`);
       }
-      const workspace = await validateWorkspace(rawRequest?.workspace);
-      const access = rawRequest?.access === "workspace-write" ? "workspace-write" : "read-only";
-      const confirmation = await dialog.showMessageBox(mainWindow, {
-        type: "question",
-        title: "Run with local Codex?",
-        message: access === "workspace-write" ? "Allow Codex to edit this folder?" : "Run a read-only Codex task?",
-        detail: `Folder: ${workspace}\n\nTask: ${truncate(prompt, 700)}\n\nNetwork access is off. The selected access mode is enforced by Codex's local sandbox.`,
-        buttons: [access === "workspace-write" ? "Run and allow edits" : "Run read-only", "Cancel"],
-        defaultId: 1,
-        cancelId: 1,
-        noLink: true,
-      });
-      if (confirmation.response !== 0) return { canceled: true };
-
+      // Vox's own workspace: no question each time; the sandbox keeps changes inside it.
+      const workspace = await voxWorkspace();
       const taskId = randomUUID();
-      void runCodexTask(taskId, { prompt, workspace, access, voice: false });
+      void runCodexTask(taskId, { prompt, workspace, access: "workspace-write", voice: false, freeRein: true });
       return { canceled: false, taskId };
     } finally {
       taskLaunchPending = false;
@@ -1393,29 +1402,15 @@ function registerIpcHandlers() {
         throw new Error(`Keep the task under ${maximumPromptLength.toLocaleString()} characters.`);
       }
 
-      const workspace = await savedOrChosenWorkspace();
-      if (!workspace) return { canceled: true };
-
-      const confirmation = await dialog.showMessageBox(mainWindow, {
-        type: "question",
-        title: "Let Vox use local Codex?",
-        message: "How may Codex access this project?",
-        detail: `Folder: ${workspace}\n\nVox heard: ${truncate(prompt, 700)}\n\nNetwork access is off. The selected access mode is enforced by Codex's local sandbox. Codex's concise final reply will return to Vox so it can speak it, and that reply may appear in your synced conversation.`,
-        buttons: ["Run read-only", "Allow edits", "Cancel"],
-        defaultId: 2,
-        cancelId: 2,
-        noLink: true,
-      });
-      if (confirmation.response === 2) return { canceled: true };
-
-      const access = confirmation.response === 1 ? "workspace-write" : "read-only";
+      // Spoken tasks run in Vox's own workspace without a question each time.
+      const workspace = await voxWorkspace();
       const taskId = randomUUID();
-      openCodexPanel();
       const result = await runCodexTask(taskId, {
         prompt,
         workspace,
-        access,
+        access: "workspace-write",
         voice: true,
+        freeRein: true,
       });
 
       if (result.status === "completed") {
@@ -1435,8 +1430,7 @@ function registerIpcHandlers() {
       throw new Error("The project folder was just opened.");
     }
 
-    const settings = await readSettings();
-    const workspace = await validateWorkspace(settings.workspace);
+    const workspace = await voxWorkspace();
     lastWorkspaceOpenAt = now;
     const openError = await shell.openPath(workspace);
     if (openError) throw new Error(openError);
@@ -1503,7 +1497,6 @@ function registerIpcHandlers() {
       }
       const workspace = await computerControlWorkingDirectory();
       const taskId = randomUUID();
-      openCodexPanel();
       const result = await runCodexTask(taskId, {
         prompt,
         workspace,
@@ -1693,6 +1686,7 @@ app.whenReady().then(async () => {
   voiceFilter = registerVoiceFilter({ requireTrustedVoxSender, readSettings, saveSettings, secureStorageAvailable });
   welcomeHome = registerWelcomeHome({ requireTrustedVoxSender, readSettings, saveSettings, pairing: unlockedRemotePairing });
   stageBrowser = registerStageBrowser({ requireTrustedVoxSender, getWindow: () => mainWindow, getVoxView: () => voxView });
+  pageWatch = registerPageWatch({ requireTrustedVoxSender });
   // Installed-app discovery is useful for voice routing, but it must never sit
   // on the first conversational turn's latency path.
   void installedApps().catch(() => undefined);
@@ -1709,6 +1703,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  pageWatch?.closeAll();
   // Stop acting on commands now; the saved choice is restored at next launch.
   remoteControlArmed = false;
   if (remoteRelayTimer) clearInterval(remoteRelayTimer);

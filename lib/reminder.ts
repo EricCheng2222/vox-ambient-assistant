@@ -1,3 +1,5 @@
+import type { ReminderRepeat } from "./reminder-repeat";
+
 export type ReminderStatus = "pending" | "completed" | "dismissed";
 
 export type ReminderDelivery = "app" | "call";
@@ -44,6 +46,11 @@ export type Reminder = {
   place: string | null;
   placeEvent: ReminderPlaceEvent | null;
   locationStatus: ReminderLocationStatus | null;
+  // A repeating reminder stays pending and moves to its next due time each
+  // time it goes off. lastOccurrenceAt is the one that last went off and
+  // hasn't been marked done.
+  repeat: ReminderRepeat | null;
+  lastOccurrenceAt: string | null;
   createdAt: string;
   updatedAt: string;
 };

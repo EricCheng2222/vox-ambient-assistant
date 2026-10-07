@@ -5,5 +5,6 @@
 await import("./unit.test.mjs");
 await import("./imap.test.mjs");
 await import("./site.test.mjs");
+await import("./google.test.mjs");
 
 console.log("Vox Mail checks passed.");

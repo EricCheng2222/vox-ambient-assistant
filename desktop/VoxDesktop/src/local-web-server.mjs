@@ -37,6 +37,8 @@ const cloudApiMethods = new Map([
   ["/api/phone-assistant", new Set(["GET", "POST", "PATCH", "DELETE"])],
   ["/api/phone-assistant/texts", new Set(["GET", "POST"])],
   ["/api/preferences", new Set(["GET", "PATCH"])],
+  ["/api/profile", new Set(["GET", "PATCH", "DELETE"])],
+  ["/api/profile/consolidate", new Set(["POST"])],
   ["/api/realtime-token", new Set(["POST"])],
   ["/api/reason", new Set(["POST"])],
   ["/api/reminders", new Set(["GET", "POST", "PATCH", "DELETE"])],

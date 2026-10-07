@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 const { weatherCondition, localClockTime, weatherPlace, approximateCoordinates, openMeteoUrl } = await import("../lib/weather.ts");
 const { finishPanel, answerSentences, PanelBuildError, PANEL_TITLE_MAX } = await import("../lib/panel-builder.ts");
 const { MAX_DASHBOARD_PANELS } = await import("../lib/dashboard.ts");
+const { newPanelContent, editedPanelContent, isPanelEdit, panelBlocks } = await import("../lib/panel-input.ts");
 
 // WMO codes become short English conditions.
 for (const [code, condition] of [
@@ -69,6 +70,49 @@ assert.equal(new PanelBuildError("x").budget, false);
 assert.equal(new PanelBuildError("x", true).budget, true);
 assert.equal(new PanelBuildError("x") instanceof Error, true);
 
+// Notes and countdowns: what a client sends is cleaned with the stage's block rules.
+const list = { kind: "list", title: "", items: ["Passport", "Charger"] };
+assert.deepEqual(newPanelContent({ kind: "note", title: "  Packing   list ", blocks: [{ kind: "list", items: ["Passport", " Charger ", "", 7] }, map, { kind: "video" }] }), {
+  ok: true,
+  panel: { kind: "note", title: "Packing list", blocks: [list], date: null },
+});
+assert.deepEqual(panelBlocks([map, facts, "x", null, { kind: "facts", rows: [] }]), [facts], "no map, no unknown or empty blocks");
+assert.equal(panelBlocks(Array.from({ length: 9 }, () => facts)).length, 3, "at most three blocks");
+assert.equal(panelBlocks([{ kind: "list", title: "T".repeat(500), items: Array.from({ length: 40 }, () => "i".repeat(900)) }])[0].items.length, 10);
+assert.equal(panelBlocks([{ kind: "list", items: ["i".repeat(900)] }])[0].items[0].length, 200);
+assert.deepEqual(panelBlocks("not blocks"), []);
+assert.equal(newPanelContent({ kind: "note", title: "T".repeat(90), blocks: [list] }).panel.title.length, 60);
+assert.deepEqual(newPanelContent({ kind: "note", title: "Empty", blocks: [map] }), { ok: false, error: "A note needs something to show." });
+assert.deepEqual(newPanelContent({ kind: "note", title: "  ", blocks: [list] }), { ok: false, error: "Give the panel a title." });
+assert.deepEqual(newPanelContent({ kind: "note", title: 5, blocks: [list] }), { ok: false, error: "Give the panel a title." });
+assert.deepEqual(newPanelContent({ kind: "countdown", title: "Exam", date: "2027-03-07" }), {
+  ok: true,
+  panel: { kind: "countdown", title: "Exam", blocks: [], date: "2027-03-07" },
+});
+assert.deepEqual(newPanelContent({ kind: "countdown", title: "Exam", date: "2027-03-07", blocks: [facts, map] }).panel.blocks, [facts]);
+for (const date of ["2027-02-30", "07/03/2027", "2027-3-7", "", null, undefined, 20270307]) {
+  assert.deepEqual(newPanelContent({ kind: "countdown", title: "Exam", date }), { ok: false, error: "Give the date as YYYY-MM-DD." }, String(date));
+}
+assert.equal(newPanelContent({ kind: "video", title: "x" }).ok, false);
+// Editing: only what was sent changes; a web panel is refreshed, not edited.
+const note = { kind: "note", title: "Packing", blocks: [list], date: null };
+const countdown = { kind: "countdown", title: "Exam", blocks: [], date: "2027-03-07" };
+assert.equal(isPanelEdit({ id: "x" }), false);
+for (const body of [{ title: "New" }, { blocks: [] }, { date: "2027-01-01" }, { title: null }]) assert.equal(isPanelEdit(body), true);
+assert.deepEqual(editedPanelContent(note, { title: "Trip packing" }), { ok: true, panel: { ...note, title: "Trip packing" } });
+assert.deepEqual(editedPanelContent(note, { blocks: [facts, map] }), { ok: true, panel: { ...note, blocks: [facts] } });
+assert.deepEqual(editedPanelContent(note, { blocks: [] }), { ok: false, error: "A note needs something to show." });
+assert.deepEqual(editedPanelContent(note, { title: "" }), { ok: false, error: "Give the panel a title." });
+assert.deepEqual(editedPanelContent(note, { date: "2027-01-01" }), { ok: false, error: "Only a countdown has a date." });
+assert.deepEqual(editedPanelContent(countdown, { date: "2027-03-14" }), { ok: true, panel: { ...countdown, date: "2027-03-14" } });
+assert.deepEqual(editedPanelContent(countdown, { blocks: [facts], title: "KMU exam" }), { ok: true, panel: { kind: "countdown", title: "KMU exam", blocks: [facts], date: "2027-03-07" } });
+assert.deepEqual(editedPanelContent(countdown, { date: "soon" }), { ok: false, error: "Give the date as YYYY-MM-DD." });
+assert.deepEqual(editedPanelContent(countdown, { date: null }), { ok: false, error: "Give the date as YYYY-MM-DD." });
+assert.deepEqual(editedPanelContent({ kind: "web", title: "USD", blocks: [facts] }, { title: "Dollar" }), {
+  ok: false,
+  error: "A panel looked up on the web can only be refreshed.",
+});
+
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 const [weather, panels, store, builder, schema, migration, proxy] = await Promise.all([
   read("app/api/weather/route.ts"),
@@ -96,12 +140,24 @@ assert.match(panels, /status: 201, headers: noStore/u);
 assert.match(panels, /error instanceof PanelLimitError\) return Response\.json\(\{ error: LIMIT_MESSAGE \}, \{ status: 409/u);
 assert.match(panels, /error\.budget \? API_BUDGET_MESSAGE : LOOKUP_MESSAGE \}, \{ status: 503/u);
 assert.match(panels, /buildPanel\(existing\.question, apiKey\)/u);
+// Notes and countdowns are stored as sent (cleaned), without a web lookup or an OpenAI key.
+assert.match(panels, /if \(body\.kind === "note" \|\| body\.kind === "countdown" \|\| body\.kind === "page" \|\| isOwnDataPanel\(body\.kind\)\) \{\n    const input = newPanelContent\(body\);\n    if \(!input\.ok\) return Response\.json\(\{ error: input\.error \}, \{ status: 400, headers: noStore \}\);[^]*?createPanel\(auth\.user\.id, \{ question: "", sources: \[\], \.\.\.input\.panel, \.\.\.pace \}\)[^]*?const apiKey = process\.env\.OPENAI_API_KEY;/u);
+assert.match(panels, /createPanel\(auth\.user\.id, \{ kind: "web", question, \.\.\.built, refreshMinutes \}\)/u);
+// How often a panel refreshes is one of the listed choices, saved without a lookup or a new age.
+assert.match(panels, /if \(!editing && body\.refreshMinutes !== undefined\) \{[^]*?panelRefreshChoice\(body\.refreshMinutes\)[^]*?status: 400[^]*?updatePanel\(auth\.user\.id, id, \{ \.\.\.content, refreshMinutes \}, refreshedAt\)[^]*?buildPanel\(existing\.question, apiKey\)/u);
+// Only web panels refresh; the others are edited.
+assert.match(panels, /if \(existing\.kind !== "web"\) return Response\.json\(\{ error: REFRESH_MESSAGE \}, \{ status: 400, headers: noStore \}\);[^]*?buildPanel\(existing\.question, apiKey\)/u);
+assert.match(panels, /REFRESH_MESSAGE = "Only panels looked up on the web can be refreshed\."/u);
+assert.match(panels, /if \(editing\) \{[^]*?editedPanelContent\(existing, body\)[^]*?status: 400[^]*?updatePanel\(auth\.user\.id, body\.id, \{ question: "", sources: \[\], \.\.\.input\.panel, \.\.\.pace \}\)/u);
 // The whole panel is encrypted with its own key and bound to its owner and id.
 assert.match(store, /`dashboard-panels:\$\{secret\}`/u);
 assert.match(store, /new TextEncoder\(\)\.encode\(`\$\{ownerId\}:\$\{id\}`\)/u);
 assert.equal(store.match(/additionalData: panelBinding\(/gu).length, 2);
 assert.match(store, /new TextEncoder\(\)\.encode\(JSON\.stringify\(payload\)\)/u);
-assert.match(store, /type PanelPayload = \{ title: string; question: string; blocks: StageBlock\[\]; sources: StageSource\[\] \}/u);
+assert.match(store, /type PanelPayload = \{ title: string; question: string; blocks: StageBlock\[\]; sources: StageSource\[\]; kind\?: DashboardPanel\["kind"\]; date\?: string \| null; refreshMinutes\?: number; url\?: string \}/u);
+// The kind and date are inside the encrypted payload; panels saved before kinds existed are "web".
+assert.match(store, /payload\.kind === "note" \|\| payload\.kind === "countdown" \|\| payload\.kind === "page" \|\| isOwnDataPanel\(payload\.kind\) \? payload\.kind : "web";/u);
+assert.equal(store.match(/\.\.\.panelFields\(payload\)/gu).length, 3);
 assert.doesNotMatch(migration, /title|question|blocks|sources/u);
 assert.match(migration, /`ciphertext` text NOT NULL,\n\t`iv` text NOT NULL/u);
 assert.match(schema, /sqliteTable\(\n  "dashboard_panels"/u);

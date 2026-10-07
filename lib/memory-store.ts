@@ -73,6 +73,6 @@ export async function deleteMemory(ownerId: string, id: string) {
   const [memory] = await getDb()
     .delete(memories)
     .where(and(eq(memories.ownerId, ownerId), eq(memories.id, id)))
-    .returning({ id: memories.id });
-  return memory?.id ?? null;
+    .returning({ id: memories.id, content: memories.content });
+  return memory ?? null;
 }

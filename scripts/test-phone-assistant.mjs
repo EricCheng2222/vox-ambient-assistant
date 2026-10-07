@@ -191,7 +191,8 @@ const dispatchRoute = await readFile(
 );
 assert.match(workerEntry, /async scheduled\(/u);
 assert.match(workerEntry, /\/api\/reminders\/call-dispatch/u);
-assert.match(deployPrep, /crons: \["\* \* \* \* \*"\]/u);
+// The every-minute cron stays first; the hourly one is the overnight profile update.
+assert.match(deployPrep, /crons: \["\* \* \* \* \*", "0 \* \* \* \*"\]/u);
 assert.match(dispatchRoute, /__voxSchedulerToken/u);
 assert.match(dispatchRoute, /status: 404/u);
 

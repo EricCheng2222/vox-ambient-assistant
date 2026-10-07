@@ -109,6 +109,11 @@ function block(value: unknown): StageBlock | null {
   }
 }
 
+/** Validates blocks written by the model (stage or dashboard panel). */
+export function blocksFromToolArguments(value: unknown, max = 3): StageBlock[] {
+  return (Array.isArray(value) ? value : []).map(block).filter((item): item is StageBlock => Boolean(item)).slice(0, max);
+}
+
 /** Validates the model's show_on_stage arguments into stage content. */
 export function stageFromToolArguments(rawArguments: string | undefined, now = Date.now()): StageContent | null {
   let parsed: unknown;
@@ -120,7 +125,7 @@ export function stageFromToolArguments(rawArguments: string | undefined, now = D
   if (!parsed || typeof parsed !== "object") return null;
   const args = parsed as Record<string, unknown>;
   const title = text(args.title, 120);
-  const blocks = (Array.isArray(args.blocks) ? args.blocks : []).map(block).filter((item): item is StageBlock => Boolean(item)).slice(0, 3);
+  const blocks = blocksFromToolArguments(args.blocks);
   const source = httpsSource(args.url);
   if (!title || (!blocks.length && !source)) return null;
   return {

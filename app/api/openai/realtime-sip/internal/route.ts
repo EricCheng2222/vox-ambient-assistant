@@ -1,6 +1,7 @@
 import { appendConversationMessage, appendIncomingText, getConversation } from "@/lib/conversation-store";
 import { listMemories } from "@/lib/memory-store";
 import { getUserPreferences } from "@/lib/preference-store";
+import { loadProfileContext } from "@/lib/profile-store";
 import {
   authenticatedPhoneCallOwner,
   endPhoneCall,
@@ -16,8 +17,9 @@ import {
   phoneRealtimeCarryover,
   phoneRealtimeConversationInstructions,
 } from "@/lib/realtime-sip";
-import { createReminder, listReminders } from "@/lib/reminder-store";
+import { createReminder, listReminders, reminderTimeZone } from "@/lib/reminder-store";
 import { reminderPlaceLabel } from "@/lib/reminder";
+import { firstOccurrence, reminderRepeatLabel, repeatFromExtraction } from "@/lib/reminder-repeat";
 import {
   enqueueRemoteCommand,
   getAvailableRemoteDevice,
@@ -93,11 +95,17 @@ export async function POST(request: Request) {
       listMemories(ownerId, 24),
       getConversation(ownerId),
     ]);
+    // Only after the caller passed the private-sentence check.
+    const profileContext = await loadProfileContext(
+      ownerId,
+      memories.map((memory) => memory.content),
+    );
     return Response.json({
       authenticated: true,
       instructions: phoneRealtimeConversationInstructions(
         memories,
         preferences.replyLength,
+        profileContext,
       ),
       carryover: phoneRealtimeCarryover(conversation.messages),
     });
@@ -251,7 +259,17 @@ async function executePhoneTool(ownerId: string, name: unknown, rawArguments: un
     const dueAt = typeof argumentsObject.due_at === "string"
       ? argumentsObject.due_at.trim()
       : "";
-    const dueTime = Date.parse(dueAt);
+    // The repeat is validated here; one that can't be kept exactly is asked
+    // about instead of being saved as something else.
+    const repeat = repeatFromExtraction(argumentsObject.repeat, await reminderTimeZone(ownerId));
+    if (repeat.kind === "invalid") {
+      return Response.json({
+        output: JSON.stringify({ ok: false, error: `${repeat.reason} Ask the caller; do not create it yet.` }),
+      });
+    }
+    const dueTime = repeat.kind === "rule"
+      ? Date.parse(firstOccurrence(repeat.rule, repeat.startDate) ?? "")
+      : Date.parse(dueAt);
     if (!title || !Number.isFinite(dueTime) || dueTime <= Date.now()) {
       return Response.json({
         output: JSON.stringify({ ok: false, error: "A precise future time is required." }),
@@ -265,11 +283,20 @@ async function executePhoneTool(ownerId: string, name: unknown, rawArguments: un
       notes,
       dueAt: new Date(dueTime).toISOString(),
       delivery: callAvailable ? "call" : "app",
+      repeat: repeat.kind === "rule" ? repeat.rule : null,
     });
     return Response.json({
       output: JSON.stringify({
         ok: true,
         reminder,
+        ...(reminder.repeat
+          ? {
+              when: {
+                english: reminderRepeatLabel(reminder.repeat, "english", "spoken"),
+                mandarin: reminderRepeatLabel(reminder.repeat, "taiwan_mandarin", "spoken"),
+              },
+            }
+          : {}),
         ...(wantsCall && !callAvailable
           ? { note: "Saved as an app reminder: calls from Vox are not enabled for this account." }
           : {}),
@@ -284,7 +311,14 @@ async function executePhoneTool(ownerId: string, name: unknown, rawArguments: un
       .map((reminder) =>
         reminder.triggerType === "location"
           ? { title: reminder.title, when: reminderPlaceLabel(reminder, "taiwan_mandarin") }
-          : { title: reminder.title, dueAt: reminder.dueAt, notes: reminder.notes },
+          : {
+              title: reminder.title,
+              dueAt: reminder.dueAt,
+              notes: reminder.notes,
+              ...(reminder.repeat
+                ? { repeats: reminderRepeatLabel(reminder.repeat, "taiwan_mandarin", "spoken") }
+                : {}),
+            },
       );
     return Response.json({
       output: JSON.stringify({ ok: true, reminders }),

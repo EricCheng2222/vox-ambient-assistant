@@ -62,13 +62,15 @@ export async function saveAgentFile(
     purpose: string;
     mimeType: string;
     content: string;
+    /** For files that aren't text (PowerPoint, Word); used instead of `content`. */
+    bytes?: Uint8Array;
   },
 ) {
   const id = crypto.randomUUID();
   const objectKey = `agent-files/${id}/${input.name}`;
-  const bytes = new TextEncoder().encode(input.content);
+  const bytes = input.bytes ?? new TextEncoder().encode(input.content);
   await getBucket().put(objectKey, bytes, {
-    httpMetadata: { contentType: `${input.mimeType}; charset=utf-8` },
+    httpMetadata: { contentType: input.bytes ? input.mimeType : `${input.mimeType}; charset=utf-8` },
   });
 
   try {

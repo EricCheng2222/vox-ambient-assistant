@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("voxDesktop", {
   setCodexPanelOpen: (open) => ipcRenderer.invoke("vox-codex:set-panel-open", Boolean(open)),
   getCodexStatus: () => ipcRenderer.invoke("vox-codex:status"),
   chooseCodexWorkspace: () => ipcRenderer.invoke("vox-codex:choose-workspace"),
+  openCodexWorkspace: () => ipcRenderer.invoke("vox-codex:open-workspace"),
   runCodex: (request) => ipcRenderer.invoke("vox-codex:run", request),
   cancelCodex: (taskId) => ipcRenderer.invoke("vox-codex:cancel", { taskId }),
   onCodexPanelOpen: (listener) => {

@@ -20,73 +20,8 @@
           <i></i>
           Ready
         </span>
-        <button id="toggle-codex" type="button" aria-expanded="false" aria-controls="codex-panel">
-          <span aria-hidden="true">⌘</span>
-          Tools
-        </button>
       </div>
     </header>
-
-    <aside id="codex-panel" class="codex-panel" aria-hidden="true">
-      <div class="panel-header">
-        <div>
-          <p class="eyebrow">PRIVATE · ON THIS MAC</p>
-          <h1>Local workspace</h1>
-        </div>
-        <button id="close-codex" class="icon-button" type="button" aria-label="Close Local Codex">×</button>
-      </div>
-
-      <div class="privacy-note">
-        <span aria-hidden="true">◇</span>
-        <p>Your selected folder, task, and Codex output stay inside this desktop app.</p>
-      </div>
-
-      <form id="codex-form">
-        <section class="field-group">
-          <div class="field-heading">
-            <label>Selected folder</label>
-            <button id="choose-folder" class="text-button" type="button">Choose folder</button>
-          </div>
-          <p id="workspace" class="workspace-path">No local folder selected</p>
-        </section>
-
-        <section class="field-group">
-          <label for="access">Access for this task</label>
-          <select id="access">
-            <option value="read-only">Read only</option>
-            <option value="workspace-write">Can edit the selected folder</option>
-          </select>
-          <p class="field-help">Network access stays off. A native confirmation appears before every run.</p>
-        </section>
-
-        <section class="field-group grow">
-          <label for="prompt">Task</label>
-          <textarea
-            id="prompt"
-            rows="6"
-            maxlength="12000"
-            placeholder="Ask Codex to inspect, explain, or change this project…"
-          ></textarea>
-        </section>
-
-        <p id="error" class="error" hidden></p>
-
-        <section id="activity-card" class="result-card" hidden>
-          <p id="activity-label" class="result-label">ACTIVITY</p>
-          <pre id="activity"></pre>
-        </section>
-
-        <section id="output-card" class="result-card output-card" hidden>
-          <p class="result-label">CODEX</p>
-          <pre id="output"></pre>
-        </section>
-
-        <div class="form-actions">
-          <button id="run-codex" class="primary-button" type="submit" disabled>Run with local Codex</button>
-          <button id="cancel-codex" class="danger-button" type="button" hidden>Cancel task</button>
-        </div>
-      </form>
-    </aside>
 
     <script type="module" src="./renderer.mjs"></script>
   </body>

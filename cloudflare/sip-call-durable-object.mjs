@@ -183,19 +183,46 @@ const phoneTools = [
   {
     type: "function",
     name: "create_reminder",
-    description: "Create one private Vox reminder after the caller gives a clear future time.",
+    description:
+      "Create one private Vox reminder after the caller gives a clear future time. It can repeat. Confirm it to the caller using the `when` text in the result.",
     parameters: {
       type: "object",
       properties: {
         title: { type: "string" },
         notes: { type: ["string", "null"] },
-        due_at: { type: "string", description: "Future ISO 8601 timestamp with timezone." },
+        due_at: {
+          type: "string",
+          description: "Future ISO 8601 timestamp with timezone. For a repeating reminder, its first occurrence.",
+        },
         call_me: {
           type: "boolean",
           description: "True only when the caller explicitly asks Vox to phone them when the reminder is due.",
         },
+        // Checked by the server (lib/reminder-repeat.ts repeatFromExtraction).
+        repeat: {
+          type: "object",
+          description:
+            "How it repeats. kind 'none' for a one-time reminder. Use a repeating kind only when the caller clearly asks (every day, every weekday, every Monday and Thursday, on the 1st of every month, every year on March 7, 每天, 平日, 每週一三五, 每月一號, 每年三月七日): 'daily'; 'weekdays' (Monday to Friday); 'weekly' with weekdays; 'monthly' with month_day (31 for the last day); 'yearly' with month and month_day. time is the time of day as 24-hour HH:MM. start_date and until are YYYY-MM-DD or null. Use 'unsupported' for anything else (every other week, every 3 days, twice a day); never approximate.",
+          properties: {
+            kind: {
+              type: "string",
+              enum: ["none", "daily", "weekdays", "weekly", "monthly", "yearly", "unsupported"],
+            },
+            weekdays: {
+              type: "array",
+              items: { type: "string", enum: ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] },
+            },
+            month_day: { type: ["integer", "null"] },
+            month: { type: ["integer", "null"] },
+            time: { type: ["string", "null"] },
+            start_date: { type: ["string", "null"] },
+            until: { type: ["string", "null"] },
+          },
+          required: ["kind", "weekdays", "month_day", "month", "time", "start_date", "until"],
+          additionalProperties: false,
+        },
       },
-      required: ["title", "notes", "due_at", "call_me"],
+      required: ["title", "notes", "due_at", "call_me", "repeat"],
       additionalProperties: false,
     },
   },

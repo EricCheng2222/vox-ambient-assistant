@@ -1,4 +1,4 @@
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, gt, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { conversationMessages, conversationThreads } from "@/db/schema";
@@ -249,4 +249,56 @@ export async function markConversationRead(ownerId: string, ids: string[]) {
       AND id IN (${sql.join(unique.map((id) => sql`${id}`), sql`, `)})
   `);
   return Number(result.meta.changes ?? 0);
+}
+
+/**
+ * Messages newer than `afterSequence`, oldest first, for the nightly profile
+ * update. Only the owner's own conversation with Vox is decrypted. Texts and
+ * caller lines from other people come back without their content, so their
+ * words can never be read as the owner's.
+ */
+export async function getConversationTurnsSince(ownerId: string, afterSequence: number) {
+  const records = await getDb()
+    .select({
+      sequence: conversationMessages.sequence,
+      role: conversationMessages.role,
+      source: conversationMessages.source,
+      ciphertext: conversationMessages.ciphertext,
+      iv: conversationMessages.iv,
+      createdAt: conversationMessages.createdAt,
+    })
+    .from(conversationMessages)
+    .where(and(eq(conversationMessages.ownerId, ownerId), gt(conversationMessages.sequence, afterSequence)))
+    .orderBy(asc(conversationMessages.sequence))
+    .limit(MAX_STORED_MESSAGES);
+  return Promise.all(
+    records.map(async (record) => ({
+      sequence: record.sequence,
+      role: record.role,
+      source: record.source,
+      createdAt: record.createdAt,
+      text:
+        record.source === "local" || record.source === "phone"
+          ? await decryptText(record.ciphertext, record.iv).catch(() => "")
+          : "",
+    })),
+  );
+}
+
+/** The newest message's sequence for this owner, or 0 when there are none. */
+export async function latestConversationSequence(ownerId: string) {
+  const [row] = await getDb()
+    .select({ sequence: sql<number>`COALESCE(MAX(${conversationMessages.sequence}), 0)` })
+    .from(conversationMessages)
+    .where(eq(conversationMessages.ownerId, ownerId));
+  return Number(row?.sequence ?? 0);
+}
+
+/** Accounts that have a conversation, for jobs that visit every account. */
+export async function listConversationOwnerIds(limit = 500) {
+  const rows = await getDb()
+    .selectDistinct({ ownerId: conversationMessages.ownerId })
+    .from(conversationMessages)
+    .limit(limit);
+  return rows.map((row) => row.ownerId);
 }

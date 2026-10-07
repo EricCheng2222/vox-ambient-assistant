@@ -5,6 +5,40 @@ import { type Env, MailError, base64UrlToBytes, now, randomSecret, readCookie, s
 // code + PKCE, offline access), and keeping their access tokens fresh.
 
 export const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
+
+// The rest of the Google account. Each is optional: Google lets people untick
+// permissions, and accounts connected before these existed have only Gmail.
+export type GoogleService = "calendar" | "tasks" | "contacts" | "drive";
+export const GOOGLE_SERVICES: GoogleService[] = ["calendar", "tasks", "contacts", "drive"];
+export const GOOGLE_SERVICE_SCOPES: Record<GoogleService, string> = {
+  calendar: "https://www.googleapis.com/auth/calendar",
+  tasks: "https://www.googleapis.com/auth/tasks",
+  contacts: "https://www.googleapis.com/auth/contacts",
+  drive: "https://www.googleapis.com/auth/drive",
+};
+/** "Other contacts" (people the user has emailed) need their own scope; used only when Google reports it granted. */
+export const GOOGLE_OTHER_CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.other.readonly";
+export const GOOGLE_CONNECT_SCOPE = [
+  GMAIL_SCOPE,
+  ...GOOGLE_SERVICES.map((service) => GOOGLE_SERVICE_SCOPES[service]),
+  GOOGLE_OTHER_CONTACTS_SCOPE,
+  "openid",
+  "email",
+].join(" ");
+
+export function scopeGranted(granted: string, scope: string) {
+  return granted.split(/\s+/u).includes(scope);
+}
+
+/** Which parts of a Google account, beyond mail, the stored grant covers. */
+export function googleServices(granted: string): Record<GoogleService, boolean> {
+  return {
+    calendar: scopeGranted(granted, GOOGLE_SERVICE_SCOPES.calendar),
+    tasks: scopeGranted(granted, GOOGLE_SERVICE_SCOPES.tasks),
+    contacts: scopeGranted(granted, GOOGLE_SERVICE_SCOPES.contacts),
+    drive: scopeGranted(granted, GOOGLE_SERVICE_SCOPES.drive),
+  };
+}
 export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 export const MICROSOFT_TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
@@ -21,10 +55,12 @@ const OAUTH = {
     name: "Google",
     authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: GOOGLE_TOKEN_URL,
-    scope: `openid email ${GMAIL_SCOPE}`,
+    scope: GOOGLE_CONNECT_SCOPE,
+    // Only mail is required; the granted scopes are stored with the account.
     required: [GMAIL_SCOPE],
-    // A refresh token on every consent, so reconnecting always works.
-    params: { access_type: "offline", prompt: "consent" },
+    // A refresh token on every consent, so reconnecting always works, and
+    // everything granted before stays granted.
+    params: { access_type: "offline", prompt: "consent", include_granted_scopes: "true" },
     callback: "/google/callback",
   },
   microsoft: {

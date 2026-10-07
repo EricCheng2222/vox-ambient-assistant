@@ -62,6 +62,25 @@ async function dispatchReminderCalls(env, context) {
   if (!response.ok) console.error("Reminder call dispatch returned", response.status);
 }
 
+// Must match the hourly entry in scripts/prepare-cloudflare-deploy.mjs.
+const PROFILE_CRON = "0 * * * *";
+
+// Hourly: for each account that is inside its sleep window (03:00-05:00 on the
+// owner's own clock) and has not been done today, fold the day's conversation
+// into the owner profile. The route decides who is due.
+async function updateOwnerProfiles(env, context) {
+  const response = await runApplication(
+    new Request("https://vox.internal/api/profile/nightly", {
+      method: "POST",
+      headers: { "x-vox-scheduler": schedulerToken() },
+    }),
+    env,
+    context,
+  );
+  if (!response.ok) console.error("Nightly profile update returned", response.status);
+  else console.log("Nightly profile update", await response.text());
+}
+
 // "Sign in with Vox" discovery lives at a fixed /.well-known path (RFC 8414);
 // serve it from an API route.
 function wellKnownRewrite(request) {
@@ -82,7 +101,16 @@ const worker = {
   async fetch(request, env, context) {
     return securedResponse(await runApplication(wellKnownRewrite(request), env, context));
   },
-  async scheduled(_event, env, context) {
+  async scheduled(event, env, context) {
+    // Each cron expression arrives as its own event.
+    if (event?.cron === PROFILE_CRON) {
+      context.waitUntil(
+        updateOwnerProfiles(env, context).catch((error) => {
+          console.error("Nightly profile update failed", error instanceof Error ? error.message : "");
+        }),
+      );
+      return;
+    }
     context.waitUntil(dispatchReminderCalls(env, context));
   },
 };

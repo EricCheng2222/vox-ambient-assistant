@@ -39,9 +39,10 @@ export function phoneRealtimeAuthInstructions() {
 export function phoneRealtimeConversationInstructions(
   memories: MemoryRecord[],
   replyLength: ReplyLength,
+  profileContext = "",
 ) {
   return [
-    buildVoiceInstructions(memories),
+    buildVoiceInstructions(memories, "ambient", profileContext),
     replyLengthInstruction(replyLength),
     "This is a direct, continuous telephone conversation. No per-turn external social-routing decision is supplied, so choose the socially natural next move yourself: listen, acknowledge, joke, ask, share, answer, advise only when wanted, repair a mismatch, or remain briefly quiet. Do not default to advice or end every reply with a question.",
     "Allow interruptions and thinking pauses. Keep phone replies easy to follow aloud. Do not read URLs, Markdown, citation syntax, or raw tool output aloud; summarize sources naturally when relevant.",

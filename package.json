@@ -50,11 +50,14 @@
     "test:guest-calls": "node scripts/test-guest-calls.mjs",
     "test:device-locations": "node --experimental-strip-types scripts/test-device-locations.mjs",
     "test:place-reminders": "node scripts/test-place-reminders.mjs",
+    "test:recurring-reminders": "node --experimental-strip-types scripts/test-recurring-reminders.mjs",
     "test:phone-location": "node --experimental-strip-types scripts/test-phone-location.mjs",
     "test:daylight": "node --experimental-strip-types scripts/test-daylight.mjs",
     "test:stage-page": "node --experimental-strip-types scripts/test-stage-page.mjs",
     "test:today": "node --experimental-strip-types scripts/test-today.mjs",
-    "test:dashboard": "node --experimental-strip-types scripts/test-dashboard.mjs"
+    "test:today-moments": "node --experimental-strip-types scripts/test-today-moments.mjs",
+    "test:dashboard": "node --experimental-strip-types scripts/test-dashboard.mjs",
+    "test:profile": "node --experimental-strip-types scripts/test-profile.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -66,6 +69,7 @@
     "date-fns": "^4.4.0",
     "drizzle-orm": "0.45.2",
     "embla-carousel-react": "^8.6.0",
+    "fflate": "^0.8.3",
     "input-otp": "^1.4.2",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.31.0",
