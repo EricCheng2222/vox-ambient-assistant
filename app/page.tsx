@@ -3158,7 +3158,7 @@ export default function Home() {
             voiceInstructions(),
             responseLanguageInstruction(selectResponseLanguage("", messagesRef.current)),
             more
-              ? "The tool results (email, Google account, or VÉLO) are now in the conversation. Continue the user's request: use another tool only if it is still needed; otherwise answer briefly for listening. Don't repeat an action you already took."
+              ? "The tool results (email, Google account, or VÉLO) are now in the conversation. Continue the user's request: use another tool only if it is still needed; if a tool refused a call, correct the arguments as its message says and try once more. Otherwise answer briefly for listening. Don't repeat an action you already took."
               : "The tool results are now in the conversation. Answer the user now from what you have, briefly, for listening.",
           ].join("\n\n"),
         },
