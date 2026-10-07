@@ -49,6 +49,7 @@ const cloudApiMethods = new Map([
   ["/api/today", new Set(["GET"])],
   ["/api/weather", new Set(["GET"])],
   ["/api/trip", new Set(["GET"])],
+  ["/api/diagnostics", new Set(["POST"])],
   ["/api/attachments", new Set(["POST"])],
   ["/api/connections/velo", new Set(["GET", "POST", "DELETE"])],
   ["/api/velo/token", new Set(["POST"])],

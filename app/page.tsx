@@ -1216,6 +1216,14 @@ function Waveform({
   );
 }
 
+/** The words under the sun before anything has been said. */
+function sunriseGreeting(hour: number) {
+  if (hour < 5) return "Still up?";
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
 function subscribeToNothing() {
   return () => undefined;
 }
@@ -1325,13 +1333,33 @@ export default function Home() {
   // Phone and tablet widths, for the parts of the layout CSS alone can't move.
   const phoneScreen = useMediaQuery("(max-width: 639px)");
   const compactScreen = useMediaQuery("(max-width: 1023px)");
+  // Sunrise keeps Talk to one column; the panels open beside it when asked for.
+  const [dashOpen, setDashOpen] = useState(false);
+  useEffect(() => {
+    try {
+      // Read after mount so the server and the first client render agree.
+      if (window.localStorage.getItem("vox:panels-open") === "1") queueMicrotask(() => setDashOpen(true));
+    } catch {
+      // Closed until opened.
+    }
+  }, []);
+  const toggleDash = () =>
+    setDashOpen((open) => {
+      try {
+        window.localStorage.setItem("vox:panels-open", open ? "0" : "1");
+      } catch {
+        // The choice lasts for this session only.
+      }
+      return !open;
+    });
   // On a phone, Talk fills exactly the space between the header and the tab
   // bar (and stays above the keyboard), so the message box is always in reach.
   useEffect(() => {
     const grid = interfaceGridRef.current;
     if (!grid) return;
     const apply = () => {
-      if (!phoneScreen || view !== "talk") {
+      // Phones in every theme; Sunrise at every size (its Talk view is one screen).
+      if ((!phoneScreen && theme !== "daylight") || view !== "talk") {
         grid.style.removeProperty("--talk-height");
         return;
       }
@@ -1350,7 +1378,7 @@ export default function Home() {
       window.visualViewport?.removeEventListener("resize", apply);
       window.clearTimeout(timer);
     };
-  }, [phoneScreen, view, authState]);
+  }, [phoneScreen, view, authState, theme]);
   const [stage, setStage] = useState<StageContent | null>(null);
   const [stageSourceIndex, setStageSourceIndex] = useState(0);
   const [stagePage, setStagePage] = useState<StagePage | null>(null);
@@ -1498,6 +1526,11 @@ export default function Home() {
   // tools of the live session.
   const mailToolRef = useRef<Record<string, unknown> | null>(null);
   const veloToolRef = useRef<Record<string, unknown> | null>(null);
+  // While OpenAI re-reads the tool servers after a session update, replies wait.
+  const toolListingUntilRef = useRef(0);
+  const toolListingsRef = useRef(0);
+  const toolListingMarkedAtRef = useRef(0);
+  const lastSessionUpdateRef = useRef<{ channel: RTCDataChannel | null; payload: string }>({ channel: null, payload: "" });
   const flashcardsToolRef = useRef<Record<string, unknown> | null>(null);
   const pendingMailApprovalRef = useRef<{ id: string; requestedAt: number } | null>(null);
   // Acting on a web page for the user: the last look at it, how many steps
@@ -3117,17 +3150,38 @@ export default function Home() {
         },
       };
       channel.send(JSON.stringify({ type: "session.update", session: { type: "realtime", tools: sessionTools() } }));
+      markToolListing();
       refreshRealtimeContext();
     } catch {
       // Email stays unavailable for this conversation.
     }
   }
 
+  /** Tells the server's log what went wrong in this live session, so it can be diagnosed. */
+  function reportSessionProblem(kind: string, detail: unknown) {
+    if (connectionMode !== "cloud") return;
+    let text = "";
+    try {
+      text = typeof detail === "string" ? detail : JSON.stringify(detail);
+    } catch {
+      text = String(detail);
+    }
+    void fetch("/api/diagnostics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, detail: text.slice(0, 900) }),
+    }).catch(() => undefined);
+  }
+
   /** Gives the live session the user's VÉLO notebook, when they have connected it. */
   async function attachVeloTools(channel: RTCDataChannel) {
     try {
       const response = await fetch("/api/velo/token", { method: "POST" });
-      if (!response.ok) return;
+      if (!response.ok) {
+        // 409 only means VÉLO isn't connected; anything else is worth knowing.
+        if (response.status !== 409) reportSessionProblem("velo_token", `status ${response.status}`);
+        return;
+      }
       const access = (await response.json()) as { token?: string; serverUrl?: string };
       if (!access.token || !access.serverUrl) return;
       if (channelRef.current !== channel || channel.readyState !== "open") return;
@@ -3143,6 +3197,8 @@ export default function Home() {
         },
       };
       channel.send(JSON.stringify({ type: "session.update", session: { type: "realtime", tools: sessionTools() } }));
+      markToolListing();
+      reportSessionProblem("velo_attached", `tools sent: ${sessionTools().length}`);
       refreshRealtimeContext();
     } catch {
       // VÉLO stays unavailable for this conversation.
@@ -4234,22 +4290,37 @@ export default function Home() {
   ) {
     const channel = channelRef.current;
     if (channel?.readyState === "open") {
-      channel.send(
-        JSON.stringify({
-          type: "session.update",
-          session: {
-            type: "realtime",
-            truncation: realtimeTruncationConfig(),
-            audio: { input: { transcription: transcriptionConfig(mandarinTranscriptionRef.current) } },
-            instructions: [
-              voiceInstructions(),
-              replyLengthInstruction(nextReplyLength),
-            ]
-              .filter(Boolean)
-              .join("\n\n"),
-          },
-        }),
-      );
+      const update = JSON.stringify({
+        type: "session.update",
+        session: {
+          type: "realtime",
+          truncation: realtimeTruncationConfig(),
+          audio: { input: { transcription: transcriptionConfig(mandarinTranscriptionRef.current) } },
+          instructions: [
+            voiceInstructions(),
+            replyLengthInstruction(nextReplyLength),
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        },
+      });
+      // Every session update makes OpenAI read the tool servers' lists again,
+      // and a reply created meanwhile has no email or VÉLO tools. So an update
+      // that changes nothing but the clock's minute is not sent, and one that
+      // is sent holds replies until the lists are back (see markToolListing).
+      const comparable = update.replace(/\d{1,2}:\d{2}(?::\d{2})?(?:\s?[AP]M)?/gu, "");
+      if (lastSessionUpdateRef.current.channel === channel && lastSessionUpdateRef.current.payload === comparable) return;
+      lastSessionUpdateRef.current = { channel, payload: comparable };
+      channel.send(update);
+      markToolListing();
+    }
+  }
+
+  /** A session update was just sent: tool servers are re-read for a moment. */
+  function markToolListing() {
+    if (mailToolRef.current || veloToolRef.current || flashcardsToolRef.current) {
+      toolListingMarkedAtRef.current = Date.now();
+      toolListingUntilRef.current = Date.now() + 3_000;
     }
   }
 
@@ -5485,6 +5556,12 @@ export default function Home() {
       const dispatch = (attempt = 0) => {
         if (!isCurrentTurn() || openChannel.readyState !== "open") return;
         const macReportSpeaking = macReportSpeakingUntilRef.current > Date.now();
+        // The tool servers are being re-read: a reply now would have no email or VÉLO tools.
+        const listing = toolListingsRef.current > 0 || toolListingUntilRef.current > Date.now();
+        if (listing && !exactText && attempt < 40) {
+          window.setTimeout(() => dispatch(attempt + 1), 100);
+          return;
+        }
         if ((speechAwaitingTranscriptRef.current || macReportSpeaking) && attempt < 200) {
           window.setTimeout(() => dispatch(attempt + 1), 100);
           return;
@@ -6691,6 +6768,7 @@ export default function Home() {
       }
       case "response.mcp_call.completed":
       case "response.mcp_call.failed": {
+        if (event.type === "response.mcp_call.failed") reportSessionProblem("mcp_call.failed", event);
         if (event.item_id) {
           completedMcpCallsRef.current.add(event.item_id);
           if (completedMcpCallsRef.current.size > 200) completedMcpCallsRef.current.clear();
@@ -6699,7 +6777,14 @@ export default function Home() {
         continueAfterMailTools();
         break;
       }
+      case "mcp_list_tools.in_progress": {
+        toolListingsRef.current += 1;
+        break;
+      }
       case "mcp_list_tools.completed": {
+        toolListingsRef.current = Math.max(0, toolListingsRef.current - 1);
+        // The lists are back; nothing more to wait for, unless an update just went out whose listing hasn't started.
+        if (toolListingsRef.current === 0 && Date.now() - toolListingMarkedAtRef.current > 700) toolListingUntilRef.current = 0;
         const opening = studyOpeningRef.current;
         if (opening && studyModeRef.current && channelRef.current?.readyState === "open") {
           window.clearTimeout(opening.timer);
@@ -6710,6 +6795,9 @@ export default function Home() {
         break;
       }
       case "mcp_list_tools.failed": {
+        toolListingsRef.current = Math.max(0, toolListingsRef.current - 1);
+        if (toolListingsRef.current === 0 && Date.now() - toolListingMarkedAtRef.current > 700) toolListingUntilRef.current = 0;
+        reportSessionProblem("mcp_list_tools.failed", event);
         if (studyOpeningRef.current) {
           window.clearTimeout(studyOpeningRef.current.timer);
           studyOpeningRef.current = null;
@@ -6721,6 +6809,9 @@ export default function Home() {
         break;
       }
       case "response.done": {
+        for (const item of (event.response?.output ?? []) as Array<{ type?: string; name?: string; server_label?: string; error?: unknown }>) {
+          if (item.type === "mcp_call" && item.error) reportSessionProblem("mcp_call.error", { tool: item.name, server: item.server_label, error: item.error });
+        }
         if (event.response?.id) {
           const key = responseDisplayKeysRef.current.get(event.response.id);
           if (key) displayAnswersRef.current.delete(key);
@@ -6789,6 +6880,7 @@ export default function Home() {
         break;
       }
       case "error":
+        reportSessionProblem("realtime_error", event.error ?? event);
         if (
           settleVisionAckByEventId(event.error?.event_id) ||
           settleVisionAckByEventId(event.event_id)
@@ -7054,6 +7146,8 @@ export default function Home() {
     answerSpeechRef.current = null;
     mailToolRef.current = null;
     veloToolRef.current = null;
+    toolListingsRef.current = 0;
+    toolListingUntilRef.current = 0;
     flashcardsToolRef.current = null;
     pendingMailApprovalRef.current = null;
     mailAwaitingCallsRef.current = null;
@@ -7692,8 +7786,8 @@ export default function Home() {
   const todayProps = {
     onBrief: briefMe,
     panels:
-      // Daylight keeps panels beside the conversation; on smaller screens they live in Today.
-      connectionMode === "cloud" && authState === "authenticated" && (theme !== "daylight" || compactScreen) ? (
+      // Panels live in Today, unless Sunrise has them open beside the conversation.
+      connectionMode === "cloud" && authState === "authenticated" && (theme !== "daylight" || compactScreen || !dashOpen) ? (
         <SavedPanels live={liveMessages} onOpenPage={openPageOnStage} />
       ) : undefined,
     briefing: today,
@@ -7845,7 +7939,7 @@ export default function Home() {
           } as CSSProperties
         }
       >
-        {theme === "daylight" && todayAvailable && !compactScreen && (
+        {theme === "daylight" && todayAvailable && !compactScreen && dashOpen && (
           <DashboardPanels
             briefing={today}
             waiting={todayWaiting}
@@ -7932,7 +8026,9 @@ export default function Home() {
 
             <div className="voice-status mt-7 text-center sm:mt-10" aria-live="polite">
               <p className="font-display text-xl font-medium tracking-tight sm:text-2xl">
-                {(theme === "holographic" ? holoStatusCopy : statusCopy)[connectionState]}
+                {theme === "daylight" && connectionState === "idle"
+                  ? sunriseGreeting(new Date().getHours())
+                  : (theme === "holographic" ? holoStatusCopy : statusCopy)[connectionState]}
               </p>
               <p className="mt-2 min-h-5 text-sm text-white/42">
                 {errorMessage ||
@@ -7944,7 +8040,9 @@ export default function Home() {
                       : initiative === "off"
                         ? "You can speak over Vox whenever you need"
                         : "Listening for you — and for a useful moment to speak"
-                    : "Tap the orb to begin")}
+                    : theme === "daylight"
+                      ? "Tap the sun to talk, or type below"
+                      : "Tap the orb to begin")}
               </p>
               {connected && micModeAvailable && (
                 <button
@@ -8190,6 +8288,16 @@ export default function Home() {
               )}
             </div>
             <div className="transcript-actions flex items-center gap-1.5">
+              {theme === "daylight" && todayAvailable && !compactScreen && (
+                <button
+                  type="button"
+                  onClick={toggleDash}
+                  aria-pressed={dashOpen}
+                  className="transcript-clear rounded-full px-3 py-1.5 text-xs text-white/36 transition hover:bg-white/5 hover:text-white/70"
+                >
+                  {dashOpen ? "Hide panels" : "Panels"}
+                </button>
+              )}
               {!showingToday && messages.length > 0 && (
                 <button
                   type="button"
@@ -8225,13 +8333,13 @@ export default function Home() {
                   <AudioLines size={22} />
                 </div>
                 <p className="mt-5 font-display text-lg font-medium">
-                  {theme === "holographic" ? "Awaiting voice input" : theme === "daylight" && suggestions.length > 0 ? "Ready when you are" : "The room is quiet"}
+                  {theme === "holographic" ? "Awaiting voice input" : theme === "daylight" ? sunriseGreeting(new Date().getHours()) : "The room is quiet"}
                 </p>
                 <p className="mt-2 max-w-[260px] text-sm leading-6 text-white/38">
                   {theme === "holographic"
                     ? "Initialize the private voice link. Conversation data will appear in this stream."
-                    : theme === "daylight" && suggestions.length > 0
-                      ? "Tap a suggestion below, or just start talking. I’ll bring up what matters as we go."
+                    : theme === "daylight"
+                      ? "Say it, type it, or add a file. I’ll bring up what matters as we go."
                       : "Start a voice session and the important parts of your conversation will appear here."}
                 </p>
               </div>
@@ -8374,7 +8482,7 @@ export default function Home() {
                 id="message"
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
-                placeholder={connected ? "Type if you’d rather…" : connectionState === "connecting" ? "Connecting…" : "Type a message, or tap the orb to talk"}
+                placeholder={connected ? "Type if you’d rather…" : connectionState === "connecting" ? "Connecting…" : "Message Vox"}
                 disabled={!connected && connectionState !== "idle" && connectionState !== "error"}
                 autoComplete="off"
               />

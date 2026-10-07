@@ -42,7 +42,7 @@ for (const rule of css.split("}\n").map((block) => block.split("{")[0].trim()).f
   }
 }
 // The dashboard column only exists in Daylight, for a signed-in account.
-assert.match(page, /\{theme === "daylight" && todayAvailable && !compactScreen && \(\n\s+<DashboardPanels/u);
+assert.match(page, /\{theme === "daylight" && todayAvailable && !compactScreen && dashOpen && \(\n\s+<DashboardPanels/u);
 // One-click connect: the button names the provider and Vox passes it on.
 assert.match(panels, /openMailConnection\(\{ provider: "google" \}\)/u);
 assert.match(mailRoute, /started\.searchParams\.set\("provider", body\.provider\)/u);

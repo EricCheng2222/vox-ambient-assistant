@@ -182,27 +182,6 @@ html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
   .vox-shell[data-vox-theme="daylight"] .vx-rail-item:hover { background: rgb(24 33 46 / 7%); color: var(--dl-ink); }
   .vox-shell[data-vox-theme="daylight"] .vx-rail-item[aria-current="page"] { background: var(--dl-ink); color: #fff; }
 
-  /* Talk: panels, conversation, voice. */
-  .vox-shell[data-vox-theme="daylight"] .interface-grid,
-  .vox-shell[data-vox-surface="desktop"][data-vox-theme="daylight"] .interface-grid {
-    max-width: none;
-    grid-template-columns: minmax(0, 1fr) 21rem;
-    gap: 0;
-    border: 0;
-    padding: 0 0.9rem 0.9rem;
-  }
-  .vox-shell[data-vox-theme="daylight"] .interface-grid:has(> .dash),
-  .vox-shell[data-vox-surface="desktop"][data-vox-theme="daylight"] .interface-grid:has(> .dash) {
-    grid-template-columns: 19rem minmax(0, 1fr) 21rem;
-  }
-  /* While Vox shows something on the stage, it gets the room. */
-  .vox-shell[data-vox-theme="daylight"] .interface-grid:has(.talk-stage),
-  .vox-shell[data-vox-surface="desktop"][data-vox-theme="daylight"] .interface-grid:has(.talk-stage) {
-    grid-template-columns: 17rem minmax(0, 0.8fr) minmax(0, 1.25fr);
-  }
-  .vox-shell[data-vox-theme="daylight"] .interface-grid > .dash { order: 1; }
-  .vox-shell[data-vox-theme="daylight"] .interface-grid > .conversation-console { order: 2; }
-  .vox-shell[data-vox-theme="daylight"] .interface-grid > .voice-console { order: 3; }
   .vox-shell[data-vox-theme="daylight"] .panel-resize-handle { display: none; }
 }
 
@@ -337,19 +316,6 @@ html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
 
 /* ---- Voice ---- */
 .vox-shell[data-vox-theme="daylight"] .voice-console { color: var(--dl-ink); }
-@media (min-width: 1024px) {
-  .vox-shell[data-vox-theme="daylight"] .voice-console,
-  .vox-shell[data-vox-surface="desktop"][data-vox-theme="daylight"] .voice-console {
-    align-self: start;
-    max-height: 100%;
-    border-radius: 1.4rem;
-    padding: 1.25rem 1rem;
-    background: var(--dl-glass);
-    backdrop-filter: blur(22px) saturate(1.2);
-  }
-  .vox-shell[data-vox-theme="daylight"] .voice-console:has(.talk-stage) { align-self: stretch; }
-  .vox-shell[data-vox-theme="daylight"] .voice-console:not(:has(.talk-stage)) .voice-stage { margin: 0.5rem 0; transform: scale(0.82); }
-}
 .vox-shell[data-vox-theme="daylight"] .orb::before { background: conic-gradient(from 210deg, #ffffff, #9fc0f2, #2457d6, #c9dcf7, #ffffff); }
 .vox-shell[data-vox-theme="daylight"] .orb-core { background: radial-gradient(circle at 35% 30%, #ffffff, #dfe9f8 60%, #b9cdea); color: var(--dl-ink); }
 .vox-shell[data-vox-theme="daylight"] .orb-ring { border-color: rgb(36 87 214 / 22%); }

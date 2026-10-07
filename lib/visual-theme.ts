@@ -11,7 +11,7 @@ export const visualThemeOptions: Array<{
   { id: "ambient", label: "Ambient" },
   { id: "holographic", label: "Holographic" },
   // Light and calm: a soft sky, glass panels beside the conversation.
-  { id: "daylight", label: "Daylight" },
+  { id: "daylight", label: "Sunrise" },
 ];
 
 const visualThemes = new Set<VisualTheme>(
