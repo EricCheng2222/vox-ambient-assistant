@@ -230,6 +230,10 @@ export const phoneAssistantSettings = sqliteTable(
     allowOutbound: integer("allow_outbound", { mode: "boolean" }).notNull().default(false),
     // Any caller, verified or not, may ask where the owner's iPhone is.
     shareLocationWithCallers: integer("share_location_with_callers", { mode: "boolean" }).notNull().default(false),
+    // "Text me when something needs me": Vox may text the callback number on
+    // its own (nudges, a morning briefing, an evening review). On unless the
+    // owner turns it off; it does nothing without a callback number.
+    proactiveTexts: integer("proactive_texts", { mode: "boolean" }).notNull().default(true),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
@@ -431,3 +435,43 @@ export const userProfiles = sqliteTable("user_profiles", {
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+// What the background check has already dealt with, so nothing is texted
+// twice. One row per thing (an email, an invitation, a task, an event) per
+// owner, known only by a hash of its key: none of its words, and no address,
+// is stored. `status` is what became of it: "sent" (texted), "briefed" (covered
+// by a morning briefing or evening review), "wait" (JEV: leave it for the
+// briefing), or "never" (JEV: not worth a text). Rows are dropped 14 days
+// after the thing was last seen.
+export const proactiveTextKeys = sqliteTable(
+  "proactive_text_keys",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    kind: text("kind").notNull(),
+    status: text("status").notNull(),
+    createdAt: text("created_at").notNull(),
+    seenAt: text("seen_at").notNull(),
+  },
+  (table) => [index("idx_proactive_text_keys_owner_seen").on(table.ownerId, table.seenAt)],
+);
+
+// Every text Vox set out to send on its own: which kind ("nudge", "morning",
+// "evening"), when, and how it went ("sending", "sent", "error", or "skipped"
+// when there was nothing to say). Never the text itself. The daily cap, the
+// spacing between texts, and "once per local day" are all read from here.
+export const proactiveTextLog = sqliteTable(
+  "proactive_text_log",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    kind: text("kind").notNull(),
+    status: text("status").notNull(),
+    // The owner's own calendar date (YYYY-MM-DD) when it was decided.
+    localDay: text("local_day").notNull(),
+    items: integer("items").notNull().default(0),
+    error: text("error"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("idx_proactive_text_log_owner_created").on(table.ownerId, table.createdAt)],
+);

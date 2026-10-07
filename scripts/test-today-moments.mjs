@@ -520,17 +520,28 @@ const candidates = moments.buildCandidates(sources, NOW, TAIPEI);
 
 // ---- The route and the store (read as source: they need Cloudflare bindings) ----
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
-const [route, store, schema, jev] = await Promise.all([read("app/api/today/route.ts"), read("lib/today-store.ts"), read("db/schema.ts"), read("lib/today-jev.ts")]);
+// The route signs the user in and hands over to lib/today-briefing.ts, which
+// the background check shares.
+const [route, assembly, store, schema, jev] = await Promise.all([
+  read("app/api/today/route.ts"), read("lib/today-briefing.ts"), read("lib/today-store.ts"), read("db/schema.ts"), read("lib/today-jev.ts"),
+]);
 assert.match(route, /const auth = await requireUser\(request\);\n  if \("response" in auth\) return auth\.response;/u);
 assert.match(route, /validTimeZone\(new URL\(request\.url\)\.searchParams\.get\("tz"\)\)/u);
-assert.match(route, /\{ name: "unread_summary", args: \{ format: "json" \} \}/u);
-assert.match(route, /name: "list_events",\n\s+args: \{ from: now\.toISOString\(\), to: new Date\(now\.getTime\(\) \+ 36 \* 60 \* 60_000\)\.toISOString\(\), max: 12, format: "json" \}/u);
-assert.match(route, /\{ name: "list_tasks", args: \{ format: "json" \} \}/u);
-assert.match(route, /calendar: noAccounts \? \{ connected: false, events: \[\] \} : calendarPart\(eventsResult, now, timeZone\)/u);
-assert.match(route, /tasks: noAccounts \? \{ connected: false, items: \[\] \} : tasksPart\(tasksResult, now, timeZone\)/u);
-assert.match(route, /if \(!results\) \{\n    return \{\n      mail: \{ \.\.\.mail, connected: false \},\n      calendar: \{ connected: false, events: \[\] \},\n      tasks: \{ connected: false, items: \[\] \},/u);
-assert.match(route, /importance: "worth_reading" as const/u, "the text fallback shows each message as worth reading");
+assert.match(assembly, /\{ name: "unread_summary", args: \{ format: "json" \} \}/u);
+assert.match(assembly, /name: "list_events",\n\s+args: \{ from: now\.toISOString\(\), to: new Date\(now\.getTime\(\) \+ 36 \* 60 \* 60_000\)\.toISOString\(\), max: 12, format: "json" \}/u);
+assert.match(assembly, /\{ name: "list_tasks", args: \{ format: "json" \} \}/u);
+assert.match(assembly, /calendar: noAccounts \? \{ connected: false, events: \[\] \} : calendarPart\(eventsResult, now, timeZone\)/u);
+assert.match(assembly, /tasks: noAccounts \? \{ connected: false, items: \[\] \} : tasksPart\(tasksResult, now, timeZone\)/u);
+assert.match(assembly, /if \(!results\) \{\n    return \{\n      mail: \{ \.\.\.mail, connected: false \},\n      calendar: \{ connected: false, events: \[\] \},\n      tasks: \{ connected: false, items: \[\] \},/u);
+assert.match(assembly, /importance: "worth_reading" as const/u, "the text fallback shows each message as worth reading");
 assert.match(route, /"Cache-Control": "no-store"/u);
+assert.match(route, /const briefing = await buildBriefing\(auth\.user\.id, timeZone, new Date\(\)\);\n  return Response\.json\(briefing, /u);
+assert.doesNotMatch(route, /callMcpTools|askJev|syncLeaveReminders/u, "the route only wraps the assembly");
+assert.doesNotMatch(assembly, /requireUser|request\.url/u, "the assembly needs no request");
+assert.match(assembly, /export async function buildBriefing\(ownerId: string, timeZone: string, now: Date\): Promise<TodayBriefing> \{/u);
+assert.match(assembly, /return \{ \.\.\.mailSite, flashcards, now: chosen, prep, generatedAt: now\.toISOString\(\) \};/u);
+// "Time to leave" reminders are kept in step wherever the briefing is built.
+assert.match(assembly, /const prep = buildEventPrep\(calendar\.events, travel, now, timeZone\);\n    await syncLeaveReminders\(ownerId, prep, now\)/u);
 // Every query is the owner's; a message is known only by a hash; old verdicts are pruned.
 assert.equal(store.match(/\.where\(/gu).length, store.match(/\.where\((?:and\()?eq\((?:mailTriage|todayNowCache)\.ownerId, ownerId\)/gu).length);
 assert.match(store, /sha256\(`mail-triage:\$\{ownerId\}:\$\{messageId\}`\)/u);

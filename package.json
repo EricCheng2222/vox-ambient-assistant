@@ -61,7 +61,8 @@
     "test:today": "node --experimental-strip-types scripts/test-today.mjs",
     "test:today-moments": "node --experimental-strip-types scripts/test-today-moments.mjs",
     "test:dashboard": "node --experimental-strip-types scripts/test-dashboard.mjs",
-    "test:profile": "node --experimental-strip-types scripts/test-profile.mjs"
+    "test:profile": "node --experimental-strip-types scripts/test-profile.mjs",
+    "test:proactive-texts": "node --experimental-strip-types scripts/test-proactive-texts.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

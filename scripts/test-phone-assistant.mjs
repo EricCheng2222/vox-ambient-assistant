@@ -193,6 +193,12 @@ assert.match(workerEntry, /async scheduled\(/u);
 assert.match(workerEntry, /\/api\/reminders\/call-dispatch/u);
 // The every-minute cron stays first; the hourly one is the overnight profile update.
 assert.match(deployPrep, /crons: \["\* \* \* \* \*", "0 \* \* \* \*"\]/u);
+// The 15-minute check that texts the owner rides the every-minute cron (on the
+// quarter hours) instead of adding a third trigger; reminder calls still go
+// out every minute, whatever becomes of it.
+assert.match(workerEntry, /context\.waitUntil\(dispatchReminderCalls\(env, context\)\);/u);
+assert.match(workerEntry, /if \(proactiveTickDue\(event\)\) \{/u);
+assert.match(workerEntry, /\/api\/proactive\/tick/u);
 assert.match(dispatchRoute, /__voxSchedulerToken/u);
 assert.match(dispatchRoute, /status: 404/u);
 

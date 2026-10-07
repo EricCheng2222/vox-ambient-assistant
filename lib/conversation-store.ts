@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { conversationMessages, conversationThreads } from "@/db/schema";
@@ -231,6 +231,51 @@ export async function appendIncomingText(
         LIMIT ${MAX_STORED_MESSAGES}
       )
   `);
+}
+
+/**
+ * Adds something Vox said to its owner while the app was closed (a text it
+ * sent to their phone), as Vox's own message in the conversation, so it is
+ * there when they open the app. Retries carry the same id and are kept once.
+ */
+export async function appendAssistantNote(ownerId: string, note: { id: string; text: string }) {
+  await ensureThread(ownerId);
+  const encrypted = await encryptText(note.text);
+  await getDb().run(sql`
+    INSERT INTO conversation_messages (id, owner_id, role, source, ciphertext, iv)
+    VALUES (${note.id}, ${ownerId}, 'assistant', 'local', ${encrypted.ciphertext}, ${encrypted.iv})
+    ON CONFLICT(id) DO NOTHING
+  `);
+  await getDb().run(sql`
+    DELETE FROM conversation_messages
+    WHERE owner_id = ${ownerId}
+      AND sequence NOT IN (
+        SELECT sequence FROM conversation_messages
+        WHERE owner_id = ${ownerId}
+        ORDER BY sequence DESC
+        LIMIT ${MAX_STORED_MESSAGES}
+      )
+  `);
+}
+
+/**
+ * The owner's own most recent messages to Vox, newest first: typed or spoken
+ * by them, never a text or a caller's line from someone else.
+ */
+export async function recentOwnerMessages(ownerId: string, limit = 30) {
+  const records = await getDb()
+    .select({ ciphertext: conversationMessages.ciphertext, iv: conversationMessages.iv })
+    .from(conversationMessages)
+    .where(
+      and(
+        eq(conversationMessages.ownerId, ownerId),
+        eq(conversationMessages.role, "user"),
+        inArray(conversationMessages.source, ["local", "phone"]),
+      ),
+    )
+    .orderBy(desc(conversationMessages.sequence))
+    .limit(Math.min(Math.max(limit, 1), 100));
+  return Promise.all(records.map((record) => decryptText(record.ciphertext, record.iv).catch(() => "")));
 }
 
 /**

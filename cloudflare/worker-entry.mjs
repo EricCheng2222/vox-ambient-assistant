@@ -81,6 +81,30 @@ async function updateOwnerProfiles(env, context) {
   else console.log("Nightly profile update", await response.text());
 }
 
+// Every 15 minutes, off the every-minute cron: "Vox reaches you when it's
+// closed". The route decides who may be texted and whether anything is worth
+// sending (a nudge, the morning briefing, the evening review).
+const PROACTIVE_EVERY_MINUTES = 15;
+
+function proactiveTickDue(event) {
+  const scheduled = Number(event?.scheduledTime);
+  const at = new Date(Number.isFinite(scheduled) && scheduled > 0 ? scheduled : Date.now());
+  return at.getUTCMinutes() % PROACTIVE_EVERY_MINUTES === 0;
+}
+
+async function runProactiveTick(env, context) {
+  const response = await runApplication(
+    new Request("https://vox.internal/api/proactive/tick", {
+      method: "POST",
+      headers: { "x-vox-scheduler": schedulerToken() },
+    }),
+    env,
+    context,
+  );
+  if (!response.ok) console.error("Proactive text check returned", response.status);
+  else console.log("Proactive text check", await response.text());
+}
+
 // "Sign in with Vox" discovery lives at a fixed /.well-known path (RFC 8414);
 // serve it from an API route.
 function wellKnownRewrite(request) {
@@ -112,6 +136,14 @@ const worker = {
       return;
     }
     context.waitUntil(dispatchReminderCalls(env, context));
+    // On its own promise, so neither job can hold up or fail the other.
+    if (proactiveTickDue(event)) {
+      context.waitUntil(
+        runProactiveTick(env, context).catch((error) => {
+          console.error("Proactive text check failed", error instanceof Error ? error.message : "");
+        }),
+      );
+    }
   },
 };
 

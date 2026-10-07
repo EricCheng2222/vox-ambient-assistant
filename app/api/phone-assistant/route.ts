@@ -8,6 +8,7 @@ import {
   savePhoneAssistantSettings,
   updatePhoneAssistantOptions,
 } from "@/lib/phone-assistant-store";
+import { lastProactiveText } from "@/lib/proactive-text-store";
 import { getTwilioConfig, placeTwilioCall } from "@/lib/twilio";
 
 const noStore = { "Cache-Control": "no-store" };
@@ -37,6 +38,9 @@ function publicStatus(
     enabled: settings?.enabled ?? false,
     allowOutbound: settings?.allowOutbound ?? false,
     shareLocationWithCallers: settings?.shareLocationWithCallers ?? false,
+    // "Text me when something needs me": on unless turned off, and only
+    // meaningful with a callback number to text.
+    proactiveTexts: Boolean(settings?.phoneLastFour) && (settings?.proactiveTexts ?? false),
     inboundNumber: twilio?.phoneNumber ?? null,
   };
 }
@@ -46,10 +50,12 @@ export async function GET(request: Request) {
   const denied = requirePhoneOwner(auth);
   if (denied) return denied;
   if ("response" in auth) return auth.response;
-  return Response.json(
-    publicStatus(await getPhoneAssistantSettings(auth.user.id)),
-    { headers: noStore },
-  );
+  const status = publicStatus(await getPhoneAssistantSettings(auth.user.id));
+  // How the last text Vox sent on its own went, so a failure can be seen.
+  const proactiveTextLast = status.proactiveTexts
+    ? await lastProactiveText(auth.user.id).catch(() => null)
+    : null;
+  return Response.json({ ...status, proactiveTextLast }, { headers: noStore });
 }
 
 export async function POST(request: Request) {
@@ -130,12 +136,14 @@ export async function PATCH(request: Request) {
     enabled?: unknown;
     allowOutbound?: unknown;
     shareLocationWithCallers?: unknown;
+    proactiveTexts?: unknown;
   } | null;
   if (
     !body ||
     (typeof body.enabled !== "boolean" &&
       typeof body.allowOutbound !== "boolean" &&
-      typeof body.shareLocationWithCallers !== "boolean")
+      typeof body.shareLocationWithCallers !== "boolean" &&
+      typeof body.proactiveTexts !== "boolean")
   ) {
     return Response.json({ error: "Choose a phone setting to update." }, { status: 400 });
   }
@@ -147,12 +155,19 @@ export async function PATCH(request: Request) {
       { status: 400, headers: noStore },
     );
   }
+  if (body.proactiveTexts === true && !current.phoneLastFour) {
+    return Response.json(
+      { error: "Add a callback number before asking Vox to text you." },
+      { status: 400, headers: noStore },
+    );
+  }
   const settings = await updatePhoneAssistantOptions(auth.user.id, {
     enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
     allowOutbound:
       typeof body.allowOutbound === "boolean" ? body.allowOutbound : undefined,
     shareLocationWithCallers:
       typeof body.shareLocationWithCallers === "boolean" ? body.shareLocationWithCallers : undefined,
+    proactiveTexts: typeof body.proactiveTexts === "boolean" ? body.proactiveTexts : undefined,
   });
   return Response.json(publicStatus(settings), { headers: noStore });
 }

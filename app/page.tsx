@@ -335,6 +335,8 @@ type PhoneAssistantStatus = {
   enabled: boolean;
   allowOutbound: boolean;
   shareLocationWithCallers?: boolean;
+  proactiveTexts?: boolean;
+  proactiveTextLast?: { kind: "nudge" | "morning" | "evening"; ok: boolean; at: string } | null;
   inboundNumber: string | null;
 };
 type SmartHomeAdapter = {
@@ -4646,6 +4648,7 @@ export default function Home() {
     enabled?: boolean;
     allowOutbound?: boolean;
     shareLocationWithCallers?: boolean;
+    proactiveTexts?: boolean;
   }) {
     setPhoneAssistantBusy(true);
     setPhoneAssistantError("");
@@ -8908,6 +8911,26 @@ export default function Home() {
                                 }`}
                               >
                                 {phoneAssistantStatus.shareLocationWithCallers ? "Stop sharing with callers" : "Let any caller ask"}
+                              </Button>
+                            </div>
+                            <div className="rounded-2xl border border-white/9 bg-white/[0.035] p-4">
+                              <p className="text-sm font-semibold text-white/78">Text me when something needs me</p>
+                              <p className="mt-2 text-xs leading-5 text-white/42">
+                                {phoneAssistantStatus.callbackPhoneLabel
+                                  ? `${phoneAssistantStatus.proactiveTexts ? "On" : "Off"}. While Vox is closed it checks every 15 minutes and texts ${phoneAssistantStatus.callbackPhoneLabel} when something can’t wait (an email that needs you, an unanswered invitation, an event about to start: at most 5 a day, never between 22:30 and 07:30), plus a morning briefing and an evening review. Initiative “Quiet” limits it to those two summaries; “Off” stops it.`
+                                  : "Needs a callback number. Add one by reconnecting and Vox can text you when something can’t wait, plus a morning briefing and an evening review."}
+                              </p>
+                              {phoneAssistantStatus.proactiveTexts && phoneAssistantStatus.proactiveTextLast?.ok === false && (
+                                <p className="mt-2 text-xs leading-5 text-[#f0c887]">The last text could not be sent.</p>
+                              )}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                disabled={phoneAssistantBusy || !phoneAssistantStatus.callbackPhoneLabel}
+                                onClick={() => void updatePhoneAssistant({ proactiveTexts: !phoneAssistantStatus.proactiveTexts })}
+                                className="mt-3 h-10 w-full rounded-full border-white/10 bg-black/15 text-white hover:bg-white/10 hover:text-white"
+                              >
+                                {phoneAssistantStatus.proactiveTexts ? "Stop texting me" : "Text me"}
                               </Button>
                             </div>
                             <Button

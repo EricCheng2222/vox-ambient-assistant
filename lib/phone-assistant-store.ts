@@ -1,4 +1,4 @@
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, sql } from "drizzle-orm";
 
 import { getDb } from "../db/index.ts";
 import {
@@ -162,6 +162,7 @@ export async function getPhoneAssistantSettings(ownerId: string) {
       enabled: phoneAssistantSettings.enabled,
       allowOutbound: phoneAssistantSettings.allowOutbound,
       shareLocationWithCallers: phoneAssistantSettings.shareLocationWithCallers,
+      proactiveTexts: phoneAssistantSettings.proactiveTexts,
     })
     .from(phoneAssistantSettings)
     .where(eq(phoneAssistantSettings.ownerId, ownerId))
@@ -191,9 +192,51 @@ export async function getPhoneAssistantDestination(ownerId: string) {
   return decryptPhone(record.phoneCiphertext, record.phoneIv);
 }
 
+/**
+ * Accounts Vox may text on its own: phone access is on, there is a callback
+ * number, and "Text me when something needs me" has not been turned off.
+ * Phone access is owner-only, so this is the owner or nobody.
+ */
+export async function listProactiveTextOwnerIds() {
+  const rows = await getDb()
+    .select({ ownerId: phoneAssistantSettings.ownerId })
+    .from(phoneAssistantSettings)
+    .where(
+      and(
+        eq(phoneAssistantSettings.enabled, true),
+        eq(phoneAssistantSettings.proactiveTexts, true),
+        isNotNull(phoneAssistantSettings.phoneCiphertext),
+        isNotNull(phoneAssistantSettings.phoneIv),
+      ),
+    )
+    .limit(50);
+  return rows.map((row) => row.ownerId).filter(isPhoneAssistantOwner);
+}
+
+/**
+ * The account's own callback number, for a text from Vox to its owner; null
+ * unless that account may be texted (see listProactiveTextOwnerIds). This is
+ * the only place a text's recipient comes from. Never log what it returns.
+ */
+export async function getOwnerTextDestination(ownerId: string) {
+  if (!isPhoneAssistantOwner(ownerId)) return null;
+  const [record] = await getDb()
+    .select({
+      phoneCiphertext: phoneAssistantSettings.phoneCiphertext,
+      phoneIv: phoneAssistantSettings.phoneIv,
+      enabled: phoneAssistantSettings.enabled,
+      proactiveTexts: phoneAssistantSettings.proactiveTexts,
+    })
+    .from(phoneAssistantSettings)
+    .where(eq(phoneAssistantSettings.ownerId, ownerId))
+    .limit(1);
+  if (!record?.enabled || !record.proactiveTexts || !record.phoneCiphertext || !record.phoneIv) return null;
+  return decryptPhone(record.phoneCiphertext, record.phoneIv);
+}
+
 export async function updatePhoneAssistantOptions(
   ownerId: string,
-  patch: { enabled?: boolean; allowOutbound?: boolean; shareLocationWithCallers?: boolean },
+  patch: { enabled?: boolean; allowOutbound?: boolean; shareLocationWithCallers?: boolean; proactiveTexts?: boolean },
 ) {
   if (!isPhoneAssistantOwner(ownerId)) return null;
   await getDb()

@@ -54,7 +54,8 @@ config.services = [
   { binding: "MAIL", service: process.env.MAIL_WORKER_NAME?.trim() || "vox-mail" },
   { binding: "VELO", service: process.env.VELO_WORKER_NAME?.trim() || "vox-velo" },
 ];
-// Every minute: place phone calls for reminders that asked to be delivered by call.
+// Every minute: place phone calls for reminders that asked to be delivered by call,
+// and, on each quarter hour, the check that texts the owner (no cron of its own).
 // Every hour: the overnight owner-profile update (cloudflare/worker-entry.mjs
 // tells the two apart by this exact expression).
 config.triggers = { crons: ["* * * * *", "0 * * * *"] };
