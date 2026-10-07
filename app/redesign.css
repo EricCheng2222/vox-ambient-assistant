@@ -1406,3 +1406,44 @@ button.vx-row:hover .vx-row-main {
 .dash-lines li[data-new]::before { content: ""; display: inline-block; width: 0.4rem; height: 0.4rem; margin-right: 0.4rem; border-radius: 50%; background: var(--dl-accent); vertical-align: middle; }
 .dash-foot .dash-link { display: inline-flex; min-width: 0; align-items: center; gap: 0.3rem; align-self: center; }
 .dash-foot .dash-link svg { width: 0.8rem; height: 0.8rem; flex-shrink: 0; }
+
+/* ---- Attachments in the message box ---- */
+.composer-attach {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 8%);
+  color: inherit;
+  cursor: pointer;
+}
+.composer-attach svg { width: 1.05rem; height: 1.05rem; }
+.composer-attach:hover:not(:disabled) { background: rgb(255 255 255 / 15%); }
+.composer-attach:disabled { opacity: 0.4; cursor: default; }
+.composer-attach:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.vox-shell[data-vox-theme="daylight"] .composer-attach { background: rgb(24 33 46 / 8%); }
+.vox-shell[data-vox-theme="daylight"] .composer-attach:hover:not(:disabled) { background: rgb(24 33 46 / 14%); }
+.attachment-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 0.45rem; padding: 0; list-style: none; }
+.attachment-chip {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 2.25rem;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 0.8rem;
+  padding: 0.2rem 0.3rem 0.2rem 0.45rem;
+  background: rgb(255 255 255 / 5%);
+  font-size: 0.78rem;
+}
+.attachment-chip img { width: 1.75rem; height: 1.75rem; flex: none; border-radius: 0.4rem; object-fit: cover; }
+.attachment-chip > svg { width: 1rem; height: 1rem; flex: none; opacity: 0.7; }
+.attachment-chip span { min-width: 0; max-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-chip button { display: grid; width: 1.6rem; height: 1.6rem; flex: none; place-items: center; border: 0; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; opacity: 0.6; }
+.attachment-chip button:hover { background: rgb(255 255 255 / 12%); opacity: 1; }
+.attachment-chip button svg { width: 0.8rem; height: 0.8rem; }
+.vox-shell[data-vox-theme="daylight"] .attachment-chip { border-color: rgb(24 33 46 / 12%); background: rgb(255 255 255 / 55%); }
+.vox-shell[data-vox-theme="daylight"] .attachment-chip button:hover { background: rgb(24 33 46 / 10%); }

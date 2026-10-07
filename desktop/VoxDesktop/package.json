@@ -1,6 +1,6 @@
 {
   "name": "vox-desktop",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Vox desktop companion with secure local Codex and smart-home bridges",
   "author": "Vox",
   "private": true,
