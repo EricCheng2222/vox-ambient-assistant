@@ -190,9 +190,12 @@ html[data-vox-theme="daylight"] body,
   .vox-shell[data-vox-theme="daylight"] .composer-form { margin-top: 0.75rem; }
   .vox-shell[data-vox-theme="daylight"] .suggestion-row { justify-content: center; }
 
-  /* Panels are a drawer on the right, opened on purpose. */
-  .vox-shell[data-vox-theme="daylight"] .interface-grid:has(> .dash) { max-width: 68rem; grid-template-columns: minmax(0, 1fr) 19rem; column-gap: 1.5rem; }
-  .vox-shell[data-vox-theme="daylight"] .interface-grid > .dash { grid-column: 2; grid-row: 1 / span 2; padding: 0.25rem 0 0; }
+  /* Panels are a drawer on the left, opened on purpose; its button sits on that side too. */
+  .vox-shell[data-vox-theme="daylight"] .interface-grid:has(> .dash) { max-width: 68rem; grid-template-columns: 19rem minmax(0, 1fr); column-gap: 1.5rem; }
+  .vox-shell[data-vox-theme="daylight"] .interface-grid > .dash { grid-column: 1; grid-row: 1 / span 2; padding: 0.25rem 0 0; }
+  .vox-shell[data-vox-theme="daylight"] .interface-grid:has(> .dash) > :is(.voice-console, .conversation-console) { grid-column: 2; }
+  .vox-shell[data-vox-theme="daylight"] .transcript-actions { width: 100%; justify-content: space-between; }
+  .vox-shell[data-vox-theme="daylight"] .transcript-actions > :only-child:not([aria-pressed]) { margin-left: auto; }
 
   /* Showing something: the stage takes the left, the conversation the right. */
   .vox-shell[data-vox-theme="daylight"] .interface-grid:has(.talk-stage) {
