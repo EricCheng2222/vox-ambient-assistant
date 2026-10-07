@@ -1,0 +1,4 @@
+[submodule "velo"]
+	path = velo
+	url = git@github.com:EricCheng2222/V-LO.git
+	branch = vox

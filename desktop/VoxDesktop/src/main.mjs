@@ -1702,7 +1702,38 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
+// Errors nothing else caught. While the app is closing (windows and web
+// views are being torn down, and a late event can touch one that is gone)
+// they are only written to the log; at any other time the user is told, and
+// Vox keeps running.
+let shuttingDown = false;
+async function logMainError(kind, error) {
+  try {
+    const folder = path.join(app.getPath("logs"));
+    await mkdir(folder, { recursive: true });
+    const text = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    await writeFile(path.join(folder, "main-errors.log"), `${new Date().toISOString()} ${kind}${shuttingDown ? " (while closing)" : ""}\n${text}\n\n`, { flag: "a" });
+  } catch {
+    // Logging must never be what breaks.
+  }
+}
+process.on("uncaughtException", (error) => {
+  void logMainError("uncaughtException", error);
+  if (shuttingDown) return;
+  dialog.showErrorBox("Vox ran into a problem", `Vox is still running. If something stopped working, quit and reopen it.\n\n${error instanceof Error ? error.message : String(error)}`);
+});
+process.on("unhandledRejection", (reason) => {
+  void logMainError("unhandledRejection", reason);
+});
+
 app.on("before-quit", () => {
+  shuttingDown = true;
+  // Web views go first, so nothing they emit later reaches a closed window.
+  try {
+    stageBrowser?.close();
+  } catch {
+    // Already gone.
+  }
   pageWatch?.closeAll();
   // Stop acting on commands now; the saved choice is restored at next launch.
   remoteControlArmed = false;

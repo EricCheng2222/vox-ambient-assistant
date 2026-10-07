@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ExternalLink, Loader2, RotateCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, ExternalLink, Lock, RotateCw, X } from "lucide-react";
 
 import { stageBrowserBridge, type StageBrowserState } from "@/lib/stage-browser";
 
@@ -40,16 +40,28 @@ export function StageBrowser({ url, hidden }: { url: string; hidden: boolean }) 
     const report = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        const rect = slot?.getBoundingClientRect();
+        // The native page can't be clipped by CSS, so it is given only the part
+        // of its slot that is inside the browser frame and the window.
+        const slotRect = slot?.getBoundingClientRect();
+        const frame = slot?.closest(".vx-reader")?.getBoundingClientRect();
+        const rect = slotRect
+          ? (() => {
+              const left = Math.max(slotRect.left, frame?.left ?? slotRect.left, 0);
+              const top = Math.max(slotRect.top, frame?.top ?? slotRect.top, 0);
+              const right = Math.min(slotRect.right, frame?.right ?? slotRect.right, window.innerWidth);
+              const bottom = Math.min(slotRect.bottom, (frame?.bottom ?? slotRect.bottom) - 6, window.innerHeight);
+              return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+            })()
+          : null;
         const visible = Boolean(rect) && !hidden && !covered && document.visibilityState === "visible";
-        void bridge
-          .layout(visible, rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : { x: 0, y: 0, width: 0, height: 0 })
-          .catch(() => undefined);
+        void bridge.layout(visible, rect ?? { x: 0, y: 0, width: 0, height: 0 }).catch(() => undefined);
       });
     };
     report();
     const resize = new ResizeObserver(report);
     if (slot) resize.observe(slot);
+    const frameElement = slot?.closest(".vx-reader");
+    if (frameElement) resize.observe(frameElement);
     window.addEventListener("resize", report);
     window.addEventListener("scroll", report, true);
     document.addEventListener("visibilitychange", report);
@@ -66,9 +78,13 @@ export function StageBrowser({ url, hidden }: { url: string; hidden: boolean }) 
   if (!bridge) return null;
   const shownUrl = state?.url || url;
   let host = shownUrl;
+  let path = "";
+  let secure = false;
   try {
     const parsed = new URL(shownUrl);
-    host = `${parsed.hostname.replace(/^www\./, "")}${parsed.pathname === "/" ? "" : parsed.pathname}`;
+    host = parsed.hostname.replace(/^www\./, "");
+    path = parsed.pathname === "/" ? "" : parsed.pathname;
+    secure = parsed.protocol === "https:";
   } catch {
     // Show it as it is.
   }
@@ -76,33 +92,39 @@ export function StageBrowser({ url, hidden }: { url: string; hidden: boolean }) 
   return (
     <div className="vx-browser">
       <div className="vx-browser-bar">
+        <div className="vx-browser-nav">
+          <button type="button" className="vx-browser-button" aria-label="Back" disabled={!state?.canGoBack} onClick={() => void bridge.command("back")}>
+            <ArrowLeft aria-hidden="true" />
+          </button>
+          <button type="button" className="vx-browser-button" aria-label="Forward" disabled={!state?.canGoForward} onClick={() => void bridge.command("forward")}>
+            <ArrowRight aria-hidden="true" />
+          </button>
+        </div>
+        <div className="vx-browser-address" title={shownUrl}>
+          {secure ? <Lock aria-hidden="true" /> : null}
+          <span className="vx-browser-url">
+            <strong>{host}</strong>
+            {path ? <span>{path}</span> : null}
+          </span>
+          <button
+            type="button"
+            className="vx-browser-button vx-browser-reload"
+            aria-label={state?.loading ? "Stop loading" : "Reload"}
+            onClick={() => void bridge.command(state?.loading ? "stop" : "reload")}
+          >
+            {state?.loading ? <X aria-hidden="true" /> : <RotateCw aria-hidden="true" />}
+          </button>
+        </div>
         <button
           type="button"
           className="vx-browser-button"
-          aria-label="Back"
-          disabled={!state?.canGoBack}
-          onClick={() => void bridge.command("back")}
+          aria-label="Open in your browser"
+          title="Open in your browser"
+          onClick={() => void bridge.command("external")}
         >
-          <ArrowLeft aria-hidden="true" />
+          <ExternalLink aria-hidden="true" />
         </button>
-        <button
-          type="button"
-          className="vx-browser-button"
-          aria-label="Forward"
-          disabled={!state?.canGoForward}
-          onClick={() => void bridge.command("forward")}
-        >
-          <ArrowRight aria-hidden="true" />
-        </button>
-        <button type="button" className="vx-browser-button" aria-label="Reload" onClick={() => void bridge.command("reload")}>
-          {state?.loading ? <Loader2 aria-hidden="true" className="animate-spin" /> : <RotateCw aria-hidden="true" />}
-        </button>
-        <span className="vx-browser-address" title={shownUrl}>
-          {host}
-        </span>
-        <button type="button" className="vx-browser-button vx-browser-external" onClick={() => void bridge.command("external")}>
-          <ExternalLink aria-hidden="true" /> Safari
-        </button>
+        {state?.loading ? <span className="vx-browser-progress" aria-hidden="true" /> : null}
       </div>
       <div ref={slotRef} className="vx-browser-slot" aria-label={state?.title || "Web page"} role="region">
         {covered ? <p className="vx-browser-paused">The page is hidden while a panel is open.</p> : null}

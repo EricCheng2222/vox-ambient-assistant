@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { finishConnection, mailServerUrl, McpConnectionError } from "@/lib/mcp-client";
+import { finishConnection, mailServerUrl, McpConnectionError, veloServerUrl } from "@/lib/mcp-client";
 
 // The MCP server's sign-in returns here. The connection is completed only from
 // a browser signed in to the Vox account that started it: the page submits the
@@ -58,6 +58,9 @@ export async function GET(request: Request) {
     if (response.ok && result.service === "mail") {
       document.getElementById("done-text").textContent = "Vox can now read and manage your email. It asks you out loud before it sends or deletes anything. Close this tab and start a new conversation in Vox, then ask “any new email?”";
     }
+    if (response.ok && result.service === "velo") {
+      document.getElementById("done-text").textContent = "Vox now keeps your VÉLO notebook. Close this tab and start a new conversation in Vox, then tell it what you did: “I did 20 push-ups.”";
+    }
     if (response.ok) show("done"); else fail(result.error || "The connection could not be completed.");
   }
   document.getElementById("signin-form").addEventListener("submit", async (event) => {
@@ -93,7 +96,7 @@ export async function POST(request: Request) {
   try {
     const serverUrl = await finishConnection(auth.user.id, state, code);
     return Response.json(
-      { connected: true, service: serverUrl === mailServerUrl() ? "mail" : "flashcards" },
+      { connected: true, service: serverUrl === mailServerUrl() ? "mail" : serverUrl === veloServerUrl() ? "velo" : "flashcards" },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

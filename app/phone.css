@@ -1,0 +1,168 @@
+/*
+ * Phone layout. Talk is a single screen, like a messaging app: a compact
+ * voice bar on top, the conversation in the middle (newest at the bottom),
+ * and the message box always in reach above the tab bar. Everything else
+ * (panels, Today) lives behind the tabs instead of under the conversation.
+ */
+@media (max-width: 639px) {
+  .vox-shell .interface-grid {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: var(--talk-height, calc(100dvh - 8.5rem));
+    overflow: hidden;
+  }
+  .vox-shell .interface-grid[hidden] { display: none; }
+
+  /* ---- Voice bar ---- */
+  .vox-shell .voice-console {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    min-height: 0;
+    max-height: 68%;
+    overflow-y: auto;
+    padding: 0.5rem 1rem 0.6rem;
+    scrollbar-width: none;
+  }
+  .vox-shell .voice-console::before,
+  .vox-shell .voice-console .holo-edge,
+  .vox-shell .voice-console .holo-telemetry,
+  .vox-shell .voice-console .waveform { display: none; }
+  .vox-shell .voice-stage {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 0.75rem;
+    row-gap: 0.4rem;
+    max-width: none;
+    margin: 0;
+  }
+  .vox-shell .voice-stage > * { grid-column: 1 / -1; margin: 0; }
+  .vox-shell .voice-stage > .holo-core-stage {
+    grid-column: 1;
+    grid-row: 1;
+    /* The orb is drawn at full size and shown small. */
+    zoom: 0.42;
+  }
+  .vox-shell .voice-stage > .voice-status {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    text-align: left;
+  }
+  .vox-shell .voice-status > p:first-child {
+    overflow: hidden;
+    font-size: 1rem;
+    letter-spacing: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .vox-shell .voice-status > p + p {
+    display: -webkit-box;
+    overflow: hidden;
+    min-height: 0;
+    margin-top: 0.1rem;
+    font-size: 0.76rem;
+    line-height: 1.3;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  .vox-shell .voice-status > button { margin-top: 0.35rem; }
+  .vox-shell .voice-stage > .voice-controls {
+    grid-column: 3;
+    grid-row: 1;
+    width: auto;
+    gap: 0.4rem;
+  }
+  .vox-shell .voice-controls .voice-primary-action {
+    width: auto;
+    max-width: none;
+    height: 2.6rem;
+    padding: 0 1rem;
+    font-size: 0.85rem;
+  }
+  /* The camera row only takes space while the camera is in use. */
+  .vox-shell .camera-block { min-height: 0; }
+  .vox-shell .camera-block[data-active="false"] { display: none; }
+  /* The voice bar stays on top; what Vox is showing comes under it. */
+  .vox-shell .voice-console > .voice-stage,
+  .vox-shell .voice-console:has(.talk-stage) > .voice-stage { order: -1; flex: none; margin: 0; transform: none; }
+  .vox-shell .talk-stage { height: auto; margin: 0.6rem 0 0; }
+
+  /* ---- Conversation ---- */
+  .vox-shell .conversation-console {
+    flex: 1;
+    min-height: 0;
+    border-top-width: 1px;
+    padding: 0.5rem 1rem 0.6rem;
+  }
+  .vox-shell .transcript-header { align-items: center; }
+  .vox-shell .transcript-header > div:first-child > p:first-child {
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    opacity: 0.6;
+  }
+  .vox-shell .transcript-header > div:first-child > p + p { display: none; }
+  .vox-shell .conversation-stream {
+    display: flex;
+    flex: 1;
+    flex-direction: column-reverse;
+    gap: 0.55rem;
+    min-height: 0;
+    margin-top: 0.4rem;
+    padding-right: 0;
+  }
+  .vox-shell .conversation-stream > * { flex: none; margin-top: 0 !important; margin-bottom: 0 !important; }
+  .vox-shell .conversation-stream[hidden] { display: none; }
+  .vox-shell .empty-transcript {
+    min-height: 0;
+    margin: auto 0;
+    padding: 1rem;
+  }
+  .vox-shell .composer-form { flex: none; margin-top: 0.5rem; padding-bottom: 0; }
+  /* Suggestions stay on one line and scroll sideways. */
+  .vox-shell .suggestion-row {
+    flex: none;
+    flex-wrap: nowrap;
+    margin: 0.5rem -1rem 0;
+    overflow-x: auto;
+    padding: 0 1rem;
+    scrollbar-width: none;
+  }
+  .vox-shell .suggestion-row::-webkit-scrollbar { display: none; }
+  .vox-shell .suggestion-chip { flex: none; }
+
+  /* ---- Polish ---- */
+  .vox-shell[data-vox-theme] .voice-console {
+    min-height: 0;
+    padding: 0.5rem 1rem 0.6rem;
+  }
+  .vox-shell[data-vox-theme="holographic"] .voice-stage > .holo-core-stage { zoom: 0.3; }
+  /* A short button leaves the status its room. */
+  .vox-shell .voice-controls .voice-primary-action {
+    min-width: 0;
+    padding: 0 0.85rem;
+    font-size: 0.8rem;
+    letter-spacing: 0;
+  }
+  .vox-shell .voice-controls .voice-primary-action svg { display: none; }
+  .vox-shell .voice-status > p:first-child { font-size: 0.95rem; text-transform: none; }
+  /* One quiet row above the conversation: its name, and Clear. */
+  .vox-shell .transcript-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 1.75rem;
+    gap: 0.5rem;
+    text-align: left;
+  }
+  .vox-shell .transcript-header > div:first-child { min-width: 0; flex: 1; }
+  .vox-shell .transcript-actions { margin: 0; }
+  .vox-shell .transcript-clear { padding: 0.25rem 0.5rem; }
+  .vox-shell .message-source-toggle { display: none; }
+  .vox-shell .conversation-stream .message { padding: 0.65rem 0.8rem; }
+}

@@ -47,11 +47,12 @@ config.durable_objects = {
     },
   ],
 };
-// Direct links to the Vox Flash Cards and Vox Mail Workers: Workers on one account cannot
+// Direct links to the Vox Flash Cards, Vox Mail, and VÉLO Workers: Workers on one account cannot
 // fetch each other's workers.dev URLs, so server-to-server calls use this.
 config.services = [
   { binding: "FLASHCARDS", service: process.env.FLASHCARDS_WORKER_NAME?.trim() || "vox-flashcards" },
   { binding: "MAIL", service: process.env.MAIL_WORKER_NAME?.trim() || "vox-mail" },
+  { binding: "VELO", service: process.env.VELO_WORKER_NAME?.trim() || "vox-velo" },
 ];
 // Every minute: place phone calls for reminders that asked to be delivered by call.
 // Every hour: the overnight owner-profile update (cloudflare/worker-entry.mjs

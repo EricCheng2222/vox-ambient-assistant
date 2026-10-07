@@ -23,6 +23,21 @@ export function mailServerUrl() {
   return process.env.MAIL_MCP_URL?.trim() || DEFAULT_MAIL_MCP_URL;
 }
 
+// VÉLO, the user's training and food notebook, rewritten for Vox as a Worker
+// in the family (the velo/ submodule): signed in with the Vox account.
+const DEFAULT_VELO_MCP_URL = "https://vox-velo.ericcheng306.workers.dev/mcp";
+
+export function veloServerUrl() {
+  return process.env.VELO_MCP_URL?.trim() || DEFAULT_VELO_MCP_URL;
+}
+
+/** The permissions Vox asks a server for when connecting. */
+function connectionScope(serverUrl: string) {
+  if (serverUrl === mailServerUrl()) return "mail";
+  if (serverUrl === veloServerUrl()) return "velo";
+  return "flashcards";
+}
+
 export class McpConnectionError extends Error {}
 
 function bytesToBase64Url(bytes: Uint8Array) {
@@ -76,14 +91,16 @@ async function decrypt(ciphertext: string, iv: string) {
  */
 // Workers on the same account reach each other through service bindings.
 export function serverFetch(url: string, init?: RequestInit) {
-  const bindings = env as { FLASHCARDS?: Fetcher; MAIL?: Fetcher };
+  const bindings = env as { FLASHCARDS?: Fetcher; MAIL?: Fetcher; VELO?: Fetcher };
   const host = new URL(url).host;
   const binding =
     host === new URL(flashcardsServerUrl()).host
       ? bindings.FLASHCARDS
       : host === new URL(mailServerUrl()).host
         ? bindings.MAIL
-        : undefined;
+        : host === new URL(veloServerUrl()).host
+          ? bindings.VELO
+          : undefined;
   if (binding) return binding.fetch(new Request(url, init));
   return fetch(url, init);
 }
@@ -193,7 +210,7 @@ export async function beginConnection(ownerId: string, serverUrl: string, voxOri
     code_challenge: await sha256(verifier),
     code_challenge_method: "S256",
     resource: metadata.resource,
-    scope: serverUrl === mailServerUrl() ? "mail" : "flashcards",
+    scope: connectionScope(serverUrl),
   }).toString();
   return url.toString();
 }

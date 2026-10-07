@@ -42,7 +42,7 @@ for (const rule of css.split("}\n").map((block) => block.split("{")[0].trim()).f
   }
 }
 // The dashboard column only exists in Daylight, for a signed-in account.
-assert.match(page, /\{theme === "daylight" && todayAvailable && \(\n\s+<DashboardPanels/u);
+assert.match(page, /\{theme === "daylight" && todayAvailable && !compactScreen && \(\n\s+<DashboardPanels/u);
 // One-click connect: the button names the provider and Vox passes it on.
 assert.match(panels, /openMailConnection\(\{ provider: "google" \}\)/u);
 assert.match(mailRoute, /started\.searchParams\.set\("provider", body\.provider\)/u);
@@ -51,6 +51,6 @@ console.log("Daylight theme checks passed.");
 {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   // In Daylight the conversation always has the middle, whatever was last chosen elsewhere.
-  assert.match(page, /const sidePanelSwitch = todayAvailable && theme !== "daylight";\n\s+const showingToday = sidePanelSwitch && sidePanel === "today";/u);
+  assert.match(page, /const sidePanelSwitch = todayAvailable && theme !== "daylight" && !phoneScreen;\n\s+const showingToday = sidePanelSwitch && sidePanel === "today";/u);
   console.log("Daylight keeps the conversation in the middle.");
 }

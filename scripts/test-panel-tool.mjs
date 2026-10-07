@@ -126,6 +126,8 @@ assert.deepEqual(panelRequestFromToolArguments(JSON.stringify({ kind: "tasks", t
 {
   const { ownDataKindFor } = await import("../lib/panel-tool.ts");
   assert.equal(ownDataKindFor("Calendar schedule"), "calendar");
+  assert.equal(ownDataKindFor("Calendar Schedule"), "calendar", "the title of a panel Vox once made as a web look-up");
+  assert.equal(ownDataKindFor("my calendar schedule for today"), null, "longer requests go to the model, which has the calendar kind");
   assert.equal(ownDataKindFor("我的行事曆"), "calendar");
   assert.equal(ownDataKindFor("my to-do list"), "tasks");
   assert.equal(ownDataKindFor("new messages"), "messages");

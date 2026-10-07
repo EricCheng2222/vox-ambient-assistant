@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import QRCode from "qrcode";
 import type {
   CSSProperties,
@@ -183,6 +183,8 @@ import {
 import { playHudCue, type HudCue, setHudVolume } from "@/lib/hud-sounds";
 import { FlashcardsConnection, openFlashcardsConnection } from "@/components/flashcards-connection";
 import { MailConnection, openMailConnection } from "@/components/mail-connection";
+import { VeloConnection } from "@/components/velo-connection";
+import { VELO_CONFIRMED_TOOLS, VELO_UNCONFIRMED_TOOLS, VELO_VOICE_INSTRUCTIONS } from "@/lib/velo";
 import { PhoneTexts } from "@/components/phone-texts";
 import { ProfileCard } from "@/components/profile-card";
 import { DashboardPanels, PANELS_CHANGED_EVENT, SavedPanels } from "@/components/dashboard-panels";
@@ -1212,6 +1214,24 @@ function Waveform({
   );
 }
 
+function subscribeToNothing() {
+  return () => undefined;
+}
+
+/** Whether a CSS media query matches; false while rendering on the server. */
+function useMediaQuery(query: string) {
+  return useSyncExternalStore(
+    (onChange) => {
+      if (typeof window === "undefined") return subscribeToNothing();
+      const list = window.matchMedia(query);
+      list.addEventListener("change", onChange);
+      return () => list.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia(query).matches,
+    () => false,
+  );
+}
+
 export default function Home() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [connectionMode, setConnectionMode] = useState<ConnectionMode | null>(null);
@@ -1292,6 +1312,35 @@ export default function Home() {
   // A quiet session: started by typing, so Vox neither listens nor speaks
   // until the user unmutes. Everything else works as in a spoken one.
   const quietSessionRef = useRef(false);
+  // Phone and tablet widths, for the parts of the layout CSS alone can't move.
+  const phoneScreen = useMediaQuery("(max-width: 639px)");
+  const compactScreen = useMediaQuery("(max-width: 1023px)");
+  // On a phone, Talk fills exactly the space between the header and the tab
+  // bar (and stays above the keyboard), so the message box is always in reach.
+  useEffect(() => {
+    const grid = interfaceGridRef.current;
+    if (!grid) return;
+    const apply = () => {
+      if (!phoneScreen || view !== "talk") {
+        grid.style.removeProperty("--talk-height");
+        return;
+      }
+      const tabs = document.querySelector(".vx-tabbar")?.getBoundingClientRect().height ?? 0;
+      const top = grid.getBoundingClientRect().top + window.scrollY;
+      const visible = window.visualViewport?.height ?? window.innerHeight;
+      const keyboardOpen = window.innerHeight - visible > 120;
+      grid.style.setProperty("--talk-height", `${Math.max(280, Math.round(visible - top - (keyboardOpen ? 0 : tabs)))}px`);
+    };
+    apply();
+    window.addEventListener("resize", apply);
+    window.visualViewport?.addEventListener("resize", apply);
+    const timer = window.setTimeout(apply, 400);
+    return () => {
+      window.removeEventListener("resize", apply);
+      window.visualViewport?.removeEventListener("resize", apply);
+      window.clearTimeout(timer);
+    };
+  }, [phoneScreen, view, authState]);
   const [stage, setStage] = useState<StageContent | null>(null);
   const [stageSourceIndex, setStageSourceIndex] = useState(0);
   const [stagePage, setStagePage] = useState<StagePage | null>(null);
@@ -1438,6 +1487,7 @@ export default function Home() {
   // The user's email (Vox Mail MCP) and the flash cards while studying, as
   // tools of the live session.
   const mailToolRef = useRef<Record<string, unknown> | null>(null);
+  const veloToolRef = useRef<Record<string, unknown> | null>(null);
   const flashcardsToolRef = useRef<Record<string, unknown> | null>(null);
   const pendingMailApprovalRef = useRef<{ id: string; requestedAt: number } | null>(null);
   // Acting on a web page for the user: the last look at it, how many steps
@@ -2741,6 +2791,7 @@ export default function Home() {
       macTaskInstruction(),
       studyModeRef.current ? STUDY_PERSONA_INSTRUCTIONS : "",
       mailToolRef.current ? MAIL_VOICE_INSTRUCTIONS : "",
+      veloToolRef.current ? VELO_VOICE_INSTRUCTIONS : "",
       STAGE_VOICE_INSTRUCTIONS,
       stageBrowserBridge() ? STAGE_READ_INSTRUCTIONS : "",
       connectionMode === "cloud" ? PANEL_VOICE_INSTRUCTIONS : "",
@@ -3031,6 +3082,7 @@ export default function Home() {
       browserAgentBridge() ? BROWSER_LOOK_TOOL : null,
       browserAgentBridge() ? BROWSER_ACT_TOOL : null,
       mailToolRef.current,
+      veloToolRef.current,
       flashcardsToolRef.current,
     ].filter(Boolean);
   }
@@ -3061,6 +3113,32 @@ export default function Home() {
     }
   }
 
+  /** Gives the live session the user's VÉLO notebook, when they have connected it. */
+  async function attachVeloTools(channel: RTCDataChannel) {
+    try {
+      const response = await fetch("/api/velo/token", { method: "POST" });
+      if (!response.ok) return;
+      const access = (await response.json()) as { token?: string; serverUrl?: string };
+      if (!access.token || !access.serverUrl) return;
+      if (channelRef.current !== channel || channel.readyState !== "open") return;
+      veloToolRef.current = {
+        type: "mcp",
+        server_label: "velo",
+        server_url: access.serverUrl,
+        authorization: access.token,
+        // Replacing the training plan waits for the user's spoken yes.
+        require_approval: {
+          always: { tool_names: [...VELO_CONFIRMED_TOOLS] },
+          never: { tool_names: [...VELO_UNCONFIRMED_TOOLS] },
+        },
+      };
+      channel.send(JSON.stringify({ type: "session.update", session: { type: "realtime", tools: sessionTools() } }));
+      refreshRealtimeContext();
+    } catch {
+      // VÉLO stays unavailable for this conversation.
+    }
+  }
+
   /** After email tools run, the live model continues with their results. */
   function continueAfterMailTools() {
     const ids = mailAwaitingCallsRef.current;
@@ -3080,8 +3158,8 @@ export default function Home() {
             voiceInstructions(),
             responseLanguageInstruction(selectResponseLanguage("", messagesRef.current)),
             more
-              ? "The email tool results are now in the conversation. Continue the user's request: use another email tool only if it is still needed; otherwise answer briefly for listening. Don't repeat an action you already took."
-              : "The email tool results are now in the conversation. Answer the user now from what you have, briefly, for listening.",
+              ? "The tool results (email, Google account, or VÉLO) are now in the conversation. Continue the user's request: use another tool only if it is still needed; otherwise answer briefly for listening. Don't repeat an action you already took."
+              : "The tool results are now in the conversation. Answer the user now from what you have, briefly, for listening.",
           ].join("\n\n"),
         },
       }),
@@ -3154,7 +3232,7 @@ export default function Home() {
           instructions: [
             voiceInstructions(),
             responseLanguageInstruction(selectResponseLanguage("", messagesRef.current)),
-            "The user said yes. Carry out the approved email action now, exactly as approved, then say briefly that it's done.",
+            "The user said yes. Carry out the approved action now, exactly as approved, then say briefly that it's done.",
           ].join("\n\n"),
         },
       }),
@@ -3222,6 +3300,12 @@ export default function Home() {
       // The choice lasts for this session only.
     }
   }
+
+  // Local development only: lets a test put content on the stage without a conversation.
+  useEffect(() => {
+    if (window.location.hostname !== "localhost") return;
+    (window as { __voxShowStage?: (next: StageContent) => void }).__voxShowStage = (next) => showStage(next);
+  });
 
   /** Puts what Vox is explaining on the stage (Talk view). */
   function showStage(next: StageContent) {
@@ -6892,6 +6976,7 @@ export default function Home() {
         refreshRealtimeContext();
         seedConversationCarryover(channel);
         void attachMailTools(channel);
+        void attachVeloTools(channel);
         const pendingStudy = pendingStudyRef.current;
         if (pendingStudy) void beginStudy(pendingStudy.request, pendingStudy.deck);
         // A suggestion tapped before connecting is asked once the session has settled.
@@ -6958,6 +7043,7 @@ export default function Home() {
     answerSpeechRef.current?.stop();
     answerSpeechRef.current = null;
     mailToolRef.current = null;
+    veloToolRef.current = null;
     flashcardsToolRef.current = null;
     pendingMailApprovalRef.current = null;
     mailAwaitingCallsRef.current = null;
@@ -7480,7 +7566,8 @@ export default function Home() {
   const todayProps = {
     onBrief: briefMe,
     panels:
-      connectionMode === "cloud" && authState === "authenticated" && theme !== "daylight" ? (
+      // Daylight keeps panels beside the conversation; on smaller screens they live in Today.
+      connectionMode === "cloud" && authState === "authenticated" && (theme !== "daylight" || compactScreen) ? (
         <SavedPanels live={liveMessages} onOpenPage={openPageOnStage} />
       ) : undefined,
     briefing: today,
@@ -7504,7 +7591,8 @@ export default function Home() {
   const todayAvailable = connectionMode === "cloud" && authState === "authenticated";
   const stageBrowserAvailable = desktopPersonalAvailable && Boolean(stageBrowserBridge());
   // Daylight keeps the conversation in the middle; its panels sit beside it.
-  const sidePanelSwitch = todayAvailable && theme !== "daylight";
+  // On a phone, Today is one tap away in the tab bar; no second switch here.
+  const sidePanelSwitch = todayAvailable && theme !== "daylight" && !phoneScreen;
   const showingToday = sidePanelSwitch && sidePanel === "today";
   const conversationUnread = showingToday && messages.length > conversationSeen;
 
@@ -7631,7 +7719,7 @@ export default function Home() {
           } as CSSProperties
         }
       >
-        {theme === "daylight" && todayAvailable && (
+        {theme === "daylight" && todayAvailable && !compactScreen && (
           <DashboardPanels
             briefing={today}
             waiting={todayWaiting}
@@ -7858,7 +7946,7 @@ export default function Home() {
               </p>
             )}
 
-            <div className="mt-6 flex w-full items-center justify-center gap-3 sm:mt-7 sm:w-auto">
+            <div className="voice-controls mt-6 flex w-full items-center justify-center gap-3 sm:mt-7 sm:w-auto">
               {!connected ? (
                 <Button
                   size="lg"
@@ -8155,6 +8243,7 @@ export default function Home() {
           {connectionMode === "cloud" && authState === "authenticated" && (
             <SettingsGroup title="Connected accounts">
                 {connectionMode === "cloud" && authState === "authenticated" && <MailConnection />}
+                {connectionMode === "cloud" && authState === "authenticated" && <VeloConnection />}
                 {connectionMode === "cloud" && authState === "authenticated" && (
                   <FlashcardsConnection
                     studying={studying}

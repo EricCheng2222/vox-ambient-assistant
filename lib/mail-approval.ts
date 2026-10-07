@@ -148,6 +148,15 @@ export function describeMailApproval(
   if (name === "trash_drive_file") {
     return zh ? "要把這個雲端硬碟檔案移到垃圾桶嗎？說「好」確定，或說「不要」取消。" : "Move that Drive file to the trash? Say yes to continue, or no to cancel.";
   }
+  if (name === "delete_item") {
+    return zh ? "要把這筆紀錄從 VÉLO 刪掉嗎？說「好」確定，或說「不要」取消。" : "Delete that entry from VÉLO? Say yes to continue, or no to cancel.";
+  }
+  if (name === "set_plan") {
+    const title = typeof args.title === "string" ? args.title.replace(/\s+/g, " ").trim().slice(0, 120) : "";
+    return zh
+      ? `要把 VÉLO 裡目前的訓練計畫換成${title ? `「${title}」` : "新的計畫"}嗎？原本的計畫會被封存。說「好」確定，或說「不要」取消。`
+      : `Replace your current training plan in VÉLO with ${title ? `"${title}"` : "the new one"}? The current plan is archived. Say yes to continue, or no to cancel.`;
+  }
   return null;
 }
 
@@ -165,6 +174,10 @@ export function mailApprovalTitle(name: string, language: MailApprovalLanguage) 
       return zh ? "刪除待辦" : "Delete this task";
     case "trash_drive_file":
       return zh ? "把檔案移到垃圾桶" : "Move this file to the trash";
+    case "set_plan":
+      return zh ? "更換訓練計畫" : "Replace your training plan";
+    case "delete_item":
+      return zh ? "刪除這筆紀錄" : "Delete this entry";
     default:
       return zh ? "寄出這封信" : "Send this email";
   }

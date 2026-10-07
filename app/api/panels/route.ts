@@ -3,7 +3,48 @@ import { defaultPanelRefresh, isOwnDataPanel, MAX_DASHBOARD_PANELS, panelRefresh
 import { buildPanel, PanelBuildError } from "@/lib/panel-builder";
 import { editedPanelContent, isPanelEdit, newPanelContent } from "@/lib/panel-input";
 import { countPanels, createPanel, getPanel, listPanels, PanelLimitError, removePanel, updatePanel } from "@/lib/panel-store";
+import { ownDataKindFor } from "@/lib/panel-tool";
 import { API_BUDGET_MESSAGE } from "@/lib/provider-error";
+import type { DashboardPanel, OwnDataPanelKind } from "@/lib/dashboard";
+
+const OWN_DATA_TITLES: Record<OwnDataPanelKind, string> = { messages: "Messages", calendar: "Calendar", tasks: "To do" };
+
+/**
+ * A web look-up panel that is really about the user's own data ("Calendar
+ * schedule") can never work: the web can't see their calendar. Such panels
+ * become the live panel of that kind (or go, if there already is one).
+ */
+async function repairOwnDataPanels(ownerId: string, panels: DashboardPanel[]): Promise<DashboardPanel[]> {
+  const repaired: DashboardPanel[] = [];
+  const kinds = new Set(panels.map((panel) => panel.kind));
+  for (const panel of panels) {
+    const own = panel.kind === "web" ? (ownDataKindFor(panel.question) ?? ownDataKindFor(panel.title)) : null;
+    // A web panel with nothing to look up is left over from a kind that no longer exists.
+    if (panel.kind === "web" && !panel.question.trim()) {
+      await removePanel(ownerId, panel.id);
+      continue;
+    }
+    if (!own) {
+      repaired.push(panel);
+      continue;
+    }
+    if (kinds.has(own)) {
+      await removePanel(ownerId, panel.id);
+      continue;
+    }
+    kinds.add(own);
+    const next = await updatePanel(ownerId, panel.id, {
+      kind: own,
+      title: OWN_DATA_TITLES[own],
+      question: "",
+      blocks: [],
+      sources: [],
+      refreshMinutes: defaultPanelRefresh(own),
+    });
+    repaired.push(next ?? panel);
+  }
+  return repaired;
+}
 
 // Dashboard panels. A "web" panel is something the user asked Vox to keep an
 // eye on: adding or refreshing one looks its question up on the web and stores
@@ -42,7 +83,9 @@ export async function GET(request: Request) {
   const auth = await requireUser(request);
   if ("response" in auth) return auth.response;
   try {
-    return Response.json({ panels: await listPanels(auth.user.id) }, { headers: noStore });
+    const panels = await listPanels(auth.user.id);
+    const repaired = await repairOwnDataPanels(auth.user.id, panels).catch(() => panels);
+    return Response.json({ panels: repaired }, { headers: noStore });
   } catch (error) {
     console.error("Listing panels failed", error instanceof Error ? error.message : "unknown");
     return Response.json({ error: "Couldn’t load your panels right now." }, { status: 503, headers: noStore });
@@ -73,9 +116,28 @@ export async function POST(request: Request) {
     return Response.json({ error: "Unknown kind of panel." }, { status: 400, headers: noStore });
   }
 
+  const question = typeof body.question === "string" ? body.question.replace(/\s+/gu, " ").trim() : "";
+  // "My schedule", "to-do list", "messages": the user's own data, never a web look-up.
+  const own = ownDataKindFor(question);
+  if (own) {
+    try {
+      const existing = (await listPanels(auth.user.id)).find((panel) => panel.kind === own);
+      if (existing) return Response.json({ panel: existing }, { status: 200, headers: noStore });
+      const panel = await createPanel(auth.user.id, {
+        kind: own,
+        title: OWN_DATA_TITLES[own],
+        question: "",
+        blocks: [],
+        sources: [],
+        refreshMinutes: defaultPanelRefresh(own),
+      });
+      return Response.json({ panel }, { status: 201, headers: noStore });
+    } catch (error) {
+      return failure("Adding a panel", error, SAVE_MESSAGE);
+    }
+  }
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return Response.json({ error: "Not configured." }, { status: 503, headers: noStore });
-  const question = typeof body.question === "string" ? body.question.replace(/\s+/gu, " ").trim() : "";
   if (question.length < 3 || question.length > 200) {
     return Response.json({ error: "Say what to keep an eye on, in 3 to 200 characters." }, { status: 400, headers: noStore });
   }

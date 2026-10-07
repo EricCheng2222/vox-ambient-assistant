@@ -405,3 +405,13 @@ html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
 .vox-shell[data-vox-theme="daylight"] .suggestion-chip:hover:not(:disabled) { background: var(--dl-glass-strong); }
 .vox-shell[data-vox-theme="daylight"] .suggestion-chip:disabled { opacity: 0.5; cursor: default; }
 .vox-shell[data-vox-theme="daylight"] .suggestion-chip:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px; }
+
+/* ---- Stage in Daylight: calm, no instrument panel ---- */
+.vox-shell[data-vox-theme="daylight"] .vx-stage-reactor { display: none; }
+.vox-shell[data-vox-theme="daylight"] .vx-stage-heading .vx-hud { color: var(--dl-ink-3); font-size: 0.7rem; letter-spacing: 0.06em; }
+.vox-shell[data-vox-theme="daylight"] .vx-stage-title { font-size: 1.35rem; letter-spacing: -0.015em; }
+.vox-shell[data-vox-theme="daylight"] .vx-reader { border: 0; background: var(--dl-glass-strong); backdrop-filter: blur(22px) saturate(1.2); }
+.vox-shell[data-vox-theme="daylight"] .vx-reader-live { box-shadow: 0 24px 60px -34px rgb(24 33 46 / 45%); }
+.vox-shell[data-vox-theme="daylight"] .vx-block { border: 0; background: var(--dl-glass); backdrop-filter: blur(22px) saturate(1.2); }
+.vox-shell[data-vox-theme="daylight"] .vx-block .vx-hud { color: var(--dl-ink-3); font-size: 0.7rem; letter-spacing: 0.05em; }
+.vox-shell[data-vox-theme="daylight"] .vx-facts dd { font-family: inherit; font-size: 0.86rem; font-weight: 600; }

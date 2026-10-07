@@ -1,0 +1,196 @@
+/*
+ * The stage: what Vox is showing while it talks. A page (the Mac app's live
+ * browser, or a readable version elsewhere) gets the room, in a proper
+ * browser frame; what Vox pulled out of it sits beside it on a wide stage
+ * and as a strip of cards beneath it on a narrow one.
+ */
+.vx-stage { container: stage / inline-size; }
+
+/* One source needs no tab: the address bar already names it. */
+.vx-stage[data-single-source="true"] .vx-tabs { display: none; }
+
+/* ---- Browser frame ---- */
+.vx-reader { border-radius: 16px; overflow: hidden; }
+.vx-reader-live { box-shadow: 0 24px 60px -32px rgb(0 0 0 / 55%); }
+.vx-browser-bar {
+  position: relative;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 0;
+}
+.vx-browser-nav { display: flex; flex: none; }
+.vx-browser-button {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 50%;
+  color: color-mix(in oklab, var(--foreground) 72%, transparent);
+}
+.vx-browser-button svg { width: 0.95rem; height: 0.95rem; }
+.vx-browser-address {
+  display: flex;
+  height: 2.1rem;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.3rem 0 0.85rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+.vx-browser-address > svg { width: 0.72rem; height: 0.72rem; flex: none; opacity: 0.55; }
+.vx-browser-url { min-width: 0; flex: 1; overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.vx-browser-url strong { color: var(--foreground); font-weight: 600; }
+.vx-browser-url span { opacity: 0.6; }
+.vx-browser-reload { min-width: 1.7rem; height: 1.7rem; flex: none; }
+.vx-browser-reload svg { width: 0.8rem; height: 0.8rem; }
+.vx-browser-progress {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0;
+  left: 0.75rem;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 2px;
+}
+.vx-browser-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: 2px;
+  background: var(--vx-accent, var(--primary));
+  animation: vx-browser-load 1.1s ease-in-out infinite;
+}
+@keyframes vx-browser-load {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(260%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vx-browser-progress::after { width: 100%; animation: none; opacity: 0.5; }
+}
+/* The page is a rounded card set into the frame. */
+.vx-browser-slot { margin: 0 6px 6px; border-radius: 10px; overflow: hidden; background: #fff; }
+
+/* ---- Readable page (web, iPhone, iPad) ---- */
+.vx-reader-bar { gap: 0.5rem; border-bottom: 0; padding: 0.5rem 0.6rem; }
+.vx-reader-path {
+  display: block;
+  height: 2.1rem;
+  padding: 0 0.9rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: 0.8rem;
+  line-height: 2.1rem;
+  text-align: center;
+}
+.vx-reader-bar .vx-btn { min-height: 2.1rem; border-radius: 999px; }
+.vx-reader-scroll { padding: 0.9rem 1.15rem 1.4rem; }
+.vx-reader-title { font-size: 1.25rem; line-height: 1.3; letter-spacing: -0.01em; }
+.vx-reader-image { border-radius: 12px; }
+
+/* ---- What Vox pulled out ---- */
+.vx-block { border-radius: 14px; padding: 0.85rem 1rem; }
+/* A label stays whole ("Dates", not "Date s"); the value takes the wrapping. */
+.vx-facts > div { align-items: flex-start; gap: 0.9rem; }
+.vx-facts dt { flex: none; max-width: 46%; overflow-wrap: normal; word-break: keep-all; }
+.vx-facts dd { overflow-wrap: anywhere; }
+.vx-blocks { scrollbar-width: none; }
+.vx-blocks::-webkit-scrollbar { display: none; }
+
+/* ---- Narrow stage: the page on top, the cards in a strip beneath ---- */
+@container stage (max-width: 859px) {
+  .vx-stage-body { flex-direction: column; gap: 0.8rem; }
+  .vx-stage[data-has-sources="true"] .vx-reader { min-height: 0; flex: 1 1 auto; }
+  .vx-stage[data-has-sources="true"] .vx-blocks { flex: none; overflow: visible; margin: 0; padding: 0; }
+  .vx-stage[data-has-sources="true"] .vx-blocks-grid {
+    display: flex;
+    flex-direction: row;
+    gap: 0.6rem;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+  .vx-stage[data-has-sources="true"] .vx-blocks-grid::-webkit-scrollbar { display: none; }
+  .vx-stage[data-has-sources="true"] .vx-blocks-grid > * {
+    flex: 1 0 min(17.5rem, 82%);
+    max-height: 14rem;
+    overflow-y: auto;
+    scroll-snap-align: start;
+    scrollbar-width: none;
+  }
+  /* A single card takes the full width. */
+  .vx-stage[data-has-sources="true"] .vx-blocks-grid > :only-child { flex-basis: 100%; }
+}
+@container stage (min-width: 860px) {
+  .vx-stage[data-has-sources="true"] .vx-reader { flex: 1.8; }
+  .vx-stage[data-has-sources="true"] .vx-blocks { flex: 1; max-width: 23rem; }
+}
+
+/* Where the stage has no fixed height (tablets, phones), the page gets one. */
+@media (max-width: 1023px) {
+  .vx-stage[data-has-sources="true"] .vx-reader { height: clamp(19rem, 54vh, 34rem); flex: none; }
+  .vx-stage[data-has-sources="true"] .vx-reader-scroll { overflow-y: auto; overscroll-behavior-y: contain; }
+}
+@media (max-width: 639px) {
+  .vx-stage { gap: 0.7rem; padding: 0.25rem 0 0.5rem; }
+  .vx-stage-head { gap: 0.6rem; }
+  .vx-stage-reactor { display: none; }
+  .vx-stage-title { font-size: 1.05rem; }
+  .vx-stage[data-has-sources="true"] .vx-reader { height: clamp(11rem, 27vh, 17rem); }
+  .vx-stage[data-has-sources="true"] .vx-blocks-grid > * { max-height: 9.5rem; }
+  .vx-reader-scroll { padding: 0.6rem 0.9rem 1rem; }
+  .vx-reader-title { font-size: 1.05rem; }
+  /* The button keeps its icon; its name is in the label. */
+  .vx-reader-bar .vx-btn { width: 2.1rem; flex: none; justify-content: center; overflow: hidden; padding: 0; font-size: 0; }
+  .vx-reader-bar .vx-btn svg { margin: 0; }
+  .vx-stage-head .vx-btn { min-height: 2rem; padding: 0 0.7rem; font-size: 0.8rem; }
+}
+/* The live page never asks for more room than its frame has. */
+.vx-browser-slot { min-height: 0; }
+
+/*
+ * With something on the stage, the stage takes the room and the voice
+ * controls become one compact bar beneath it, so nothing sits on top of the
+ * page or the cards.
+ */
+@media (min-width: 640px) {
+  .vox-shell .voice-console:has(.talk-stage) {
+    justify-content: flex-start;
+    gap: 0.9rem;
+    padding-top: 1.5rem;
+    padding-bottom: 1.1rem;
+  }
+  .vox-shell .voice-console:has(.talk-stage) > .talk-stage {
+    height: auto;
+    min-height: min(58vh, 32rem);
+    flex: 1 1 0;
+    margin-bottom: 0;
+  }
+  .vox-shell .voice-console:has(.talk-stage) > .voice-stage {
+    display: grid;
+    width: 100%;
+    max-width: none;
+    flex: none;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 0.9rem;
+    row-gap: 0.4rem;
+    margin: 0;
+    padding: 0 0.25rem;
+    transform: none;
+  }
+  .vox-shell .voice-console:has(.talk-stage) > .voice-stage > * { grid-column: 1 / -1; margin: 0; }
+  .vox-shell .voice-console:has(.talk-stage) > .voice-stage > .holo-core-stage { grid-column: 1; grid-row: 1; zoom: 0.36; }
+  .vox-shell[data-vox-theme="holographic"] .voice-console:has(.talk-stage) > .voice-stage > .holo-core-stage { zoom: 0.26; }
+  .vox-shell .voice-console:has(.talk-stage) > .voice-stage > .voice-status { grid-column: 2; grid-row: 1; min-width: 0; text-align: left; }
+  .vox-shell .voice-console:has(.talk-stage) .voice-status > p:first-child { font-size: 1rem; }
+  .vox-shell .voice-console:has(.talk-stage) .voice-status > p + p { min-height: 0; margin-top: 0.1rem; font-size: 0.78rem; }
+  .vox-shell .voice-console:has(.talk-stage) > .voice-stage > .voice-controls { grid-column: 3; grid-row: 1; width: auto; }
+  .vox-shell .voice-console:has(.talk-stage) :is(.waveform, .holo-telemetry) { display: none; }
+  .vox-shell .voice-console:has(.talk-stage) .camera-block { min-height: 0; }
+  .vox-shell .voice-console:has(.talk-stage) .camera-block[data-active="false"] { display: none; }
+}

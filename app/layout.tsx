@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./redesign.css";
+import "./stage.css";
 import "./daylight.css";
+import "./phone.css";
 import "leaflet/dist/leaflet.css";
 
 export const metadata: Metadata = {

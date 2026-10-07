@@ -306,6 +306,8 @@ export function StageView({
       aria-labelledby={titleId}
       data-speaking={speaking ? "true" : "false"}
       data-has-sources={hasSources ? "true" : "false"}
+      data-single-source={sources.length === 1 ? "true" : "false"}
+      data-live={source && browser ? "true" : "false"}
     >
       <header className="vx-stage-head">
         <Reactor />

@@ -150,8 +150,16 @@ export function registerStageBrowser({ requireTrustedVoxSender, getWindow, getVo
   }
 
   function sendState() {
+    try {
+      sendStateNow();
+    } catch {
+      // A view was closed between the event and now; there is nobody to tell.
+    }
+  }
+
+  function sendStateNow() {
     const vox = getVoxView();
-    if (!vox || vox.webContents.isDestroyed()) return;
+    if (!vox || !vox.webContents || vox.webContents.isDestroyed()) return;
     const contents = view?.webContents;
     vox.webContents.send("vox-browser:state", contents && !contents.isDestroyed()
       ? {
@@ -180,6 +188,8 @@ export function registerStageBrowser({ requireTrustedVoxSender, getWindow, getVo
     view.setBackgroundColor("#ffffff");
     // A size before it is first placed, so the page lays out even while hidden.
     view.setBounds({ x: 0, y: 0, width: 1100, height: 800 });
+    // The page sits inside the stage's browser frame as a rounded card.
+    view.setBorderRadius?.(10);
     const contents = view.webContents;
     // Links that would open a new window open here instead.
     contents.setWindowOpenHandler(({ url }) => {
