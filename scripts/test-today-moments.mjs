@@ -95,6 +95,17 @@ function unreadJson(messages, extra = {}) {
     TAIPEI,
   );
   assert.deepEqual(events.map((event) => event.id), ["allday", "running", "soon", "late", "tomorrow"], "soonest first; ended ones are dropped");
+  // The same invitation in two of the user's accounts stays two entries; each has its own reply.
+  const twoAccounts = parse.parseEventsJson(
+    JSON.stringify({
+      events: ["me@gmail.com", "work@gmail.com", "me@gmail.com"].map((account) => ({ id: "inv", title: "Review", start: "2026-10-07T15:00:00+08:00", allDay: false, account, response: "needs_reply", organizer: "Amy", attendees: 2 })),
+    }),
+    NOW,
+    TAIPEI,
+  );
+  assert.deepEqual(twoAccounts.map((event) => event.account), ["me@gmail.com", "work@gmail.com"]);
+  assert.equal(twoAccounts[0].response, "needs_reply");
+  assert.equal(twoAccounts[0].attendees, 2);
   assert.deepEqual(events[0], { id: "allday", title: "Dad’s birthday", start: "2026-10-07", end: "2026-10-08", allDay: true, location: null, account: "" });
   assert.deepEqual(events[3], { id: "late", title: "Dinner", start: "2026-10-07T11:00:00.000Z", end: "2026-10-07T13:00:00.000Z", allDay: false, location: "Din Tai Fung", account: "me@gmail.com" });
   assert.equal(events[4].title, "(untitled event)");

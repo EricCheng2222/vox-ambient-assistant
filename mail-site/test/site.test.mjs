@@ -150,7 +150,7 @@ const textOf = async (name, args) => {
   assert.deepEqual(
     tools.map((tool) => tool.name),
     ["list_accounts", "search_email", "read_email", "read_thread", "list_labels", "unread_summary", "create_draft", "send_email", "reply_email", "forward_email", "send_draft", "modify_email", "trash_email", "untrash_email",
-      "list_events", "create_event", "update_event", "invite_to_event", "delete_event", "list_tasks", "create_task", "update_task", "delete_task",
+      "list_events", "create_event", "update_event", "invite_to_event", "respond_to_event", "delete_event", "list_tasks", "create_task", "update_task", "delete_task",
       "search_contacts", "create_contact", "search_drive", "read_drive_file", "create_drive_file", "trash_drive_file"],
   );
   const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));

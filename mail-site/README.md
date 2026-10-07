@@ -59,22 +59,33 @@ So from Vox, "Connect Gmail" is: Vox → Google's consent screen → Vox.
 
 ### The rest of a Google account
 
-For a connected Google account: `list_events`, `create_event`, `update_event`, `invite_to_event`, `delete_event`, `list_tasks`, `create_task`, `update_task`, `delete_task`, `search_contacts`, `create_contact`, `search_drive`, `read_drive_file`, `create_drive_file`, and `trash_drive_file`.
+For a connected Google account: `list_events`, `create_event`, `update_event`, `invite_to_event`, `respond_to_event`, `delete_event`, `list_tasks`, `create_task`, `update_task`, `delete_task`, `search_contacts`, `create_contact`, `search_drive`, `read_drive_file`, `create_drive_file`, and `trash_drive_file`.
 
 - Each takes an optional `account` (the Google address). Without it, the first Google account that allows that service is used.
 - `list_accounts` says, for each Google account, which of calendar, tasks, contacts, and drive it allows.
+- **More than one Google account.**
+  - Without `account`, `list_events`, `list_tasks`, `search_contacts`, and `search_drive` cover every connected Google account that allows them. Results are merged (events by start, tasks by due date, `max` applies to the merged list), and each one names its account: the `account` field in JSON, and `account=` on each line of the text when the user has more than one Google account.
+  - One account failing (access expired, a missing permission, a Google error) doesn't lose the others: the text ends with `(Note: couldn't read <account>: <why>)`, and the JSON gains `"problems":[{"account","message"}]`, present only when there is one. When every account fails, the call is the error, with its `needs_google_access:` prefix where that applies.
+  - An invitation that reached two accounts is listed once per account, since each has its own reply. Only the same event on two calendars of one account is merged.
+  - Tools that take an id (`update_event`, `invite_to_event` with `id`, `respond_to_event`, `delete_event`, `update_task`, `delete_task`, `read_drive_file`, `trash_drive_file`) look for it in each Google account when `account` is left out. Found in more than one, the error names them and asks for `account` (`read_drive_file` just reads it). Pass the `account` shown with the item to skip the lookup.
+  - `create_event`, `invite_to_event` without `id`, `create_task`, `create_contact`, and `create_drive_file` use the first Google account that allows it unless `account` is given, and their answer names the account.
+  - With `account`, or with one Google account, every tool behaves as it did.
 - **Missing access.** A tool that needs a permission the account doesn't have returns an error whose text starts with `needs_google_access:` (for example `needs_google_access: Reconnect Google in Vox Mail to allow calendar access.`). The same prefix is used when Google answers 403 for a missing scope or an API that isn't enabled, and when the Google account needs reconnecting. With no Google account at all, the text starts with `no_google_account:`.
 - **Calendar.**
   - `list_events` reads the calendars ticked in the user's Google Calendar, from now through 7 days unless `from` and `to` say otherwise. A time without an offset is in the user's own time zone, and a date for `to` includes that whole day.
   - `create_event` and `update_event` never have guests and never email anyone (`sendUpdates=none`). Only `invite_to_event` adds guests, and Google emails them (`sendUpdates=all`).
   - All-day events use dates, and `end` is the event's last day (Google's own API uses the day after).
+  - `respond_to_event` `{id, response, calendar?, account?, note?}` answers an invitation: it sets the user's own reply (`accepted`, `declined`, or `tentative`) and Google tells the organizer (`sendUpdates=all`), as Google Calendar does. Only the user's own guest entry changes (`note` becomes its comment). It fails when the user isn't a guest of the event, such as their own event. Its description says to call it only after the user has said whether they're going.
   - `calendar` is a calendar's name or id; the default is the primary calendar.
 - **Tasks.** `list` is a task list's name or id. `update_task` and `delete_task` need it. Google Tasks keeps only the date of a due date.
 - **Contacts.** `search_contacts` sends Google's warm-up request first. "Other contacts" (people the user has emailed) are searched only when the grant includes `contacts.other.readonly`, which the connect flow does not ask for.
 - **Drive.** `read_drive_file` exports Google Docs and Slides as text and Sheets as CSV (the first sheet), downloads plain-text files, and refuses everything else. `create_drive_file` makes a Google Doc from plain text. `trash_drive_file` moves a file to the trash; nothing is deleted for good.
 - `invite_to_event`, `delete_event`, `delete_task`, and `trash_drive_file` say in their descriptions that they need the user's spoken confirmation.
 - `format: "json"` on `list_events` and `list_tasks` returns only a JSON string:
-  - `{"events":[{"id","title","start","end","allDay","location","account","calendar"}]}`. `start` and `end` are ISO date-times with an offset, or `YYYY-MM-DD` for all-day events; `end` and `location` may be `null`; `calendar` is the calendar's name.
+  - `{"events":[{"id","title","start","end","allDay","location","account","calendar","response","organizer","attendees"}]}`. `start` and `end` are ISO date-times with an offset, or `YYYY-MM-DD` for all-day events; `end` and `location` may be `null`; `calendar` is the calendar's name.
+    - `response` is the user's own reply: `accepted`, `declined`, `tentative`, `needs_reply` (not answered yet), or `own` when there is nothing to answer: the user organizes the event, or isn't one of its guests (which includes every event with no guests).
+    - `organizer` is the organizer's name or email (at most 80 characters, `""` when unknown), and `attendees` is how many other people are invited (rooms aren't counted).
+    - The readable text adds an "Invitation … hasn't answered yet" line to events whose `response` is `needs_reply`.
   - `{"tasks":[{"id","title","due","completed","list","listId","account"}]}`. `due` is `YYYY-MM-DD` or `null`.
 
 ## Setup (once)

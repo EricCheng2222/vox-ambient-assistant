@@ -258,6 +258,9 @@ export function parseUnreadJson(raw: string): UnreadJson | null {
  * list_events {format:"json"} output: events that have not ended, soonest
  * first by the user's clock, at most 12. Null when the reply is not that JSON.
  */
+type EventResponse = NonNullable<TodayCalendar["events"][number]["response"]>;
+const EVENT_RESPONSES = new Set<string>(["accepted", "declined", "tentative", "needs_reply", "own"]);
+
 export function parseEventsJson(raw: string, now: Date, timeZone: string): TodayCalendar["events"] | null {
   const parsed = jsonObject(raw);
   if (!parsed || !Array.isArray(parsed.events)) return null;
@@ -265,7 +268,9 @@ export function parseEventsJson(raw: string, now: Date, timeZone: string): Today
   const events: Array<{ key: string; event: TodayCalendar["events"][number] }> = [];
   for (const item of objects(parsed.events)) {
     const id = opaqueId(item.id);
-    if (!id || events.some((entry) => entry.event.id === id)) continue;
+    // The same invitation in two of the user's accounts is two entries: each has its own reply.
+    const owner = (typeof item.account === "string" ? cleanEmail(item.account) : null) ?? "";
+    if (!id || events.some((entry) => entry.event.id === id && (entry.event.account === owner || !owner || !entry.event.account))) continue;
     const allDay = item.allDay === true;
     let start: string;
     let end: string | null;
@@ -298,6 +303,9 @@ export function parseEventsJson(raw: string, now: Date, timeZone: string): Today
         allDay,
         location: field(item.location, 200) || null,
         account: (typeof item.account === "string" ? cleanEmail(item.account) : null) ?? "",
+        ...(EVENT_RESPONSES.has(item.response as string) ? { response: item.response as EventResponse } : {}),
+        ...(typeof item.organizer === "string" && item.organizer.trim() ? { organizer: field(item.organizer, 80) } : {}),
+        ...(Number.isInteger(item.attendees) && (item.attendees as number) >= 0 ? { attendees: Math.min(item.attendees as number, 500) } : {}),
       },
     });
   }

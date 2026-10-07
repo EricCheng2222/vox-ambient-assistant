@@ -247,7 +247,11 @@ export function TodayPanel({
   const [showOtherMail, setShowOtherMail] = useState(false);
   const showConnectMail = Boolean(briefing && mail && !mail.connected);
 
-  const moments = briefing?.now ?? [];
+  // With events from more than one account, each row says which.
+  const multipleAccounts = new Set((briefing?.calendar.events ?? []).map((event) => event.account).filter(Boolean)).size > 1;
+  // An event with something to settle is listed once, not again as a moment.
+  const prep = (briefing?.prep ?? []).slice(0, 4);
+  const moments = (briefing?.now ?? []).filter((moment) => !(moment.kind === "event" && prep.some((item) => item.eventId === moment.id)));
   const calendar = briefing?.calendar;
   const events = calendar?.connected ? calendar.events.slice(0, compact ? 4 : 8) : [];
   const tasks = briefing?.tasks;
@@ -261,6 +265,7 @@ export function TodayPanel({
   const hasContent =
     waitingCount > 0 ||
     moments.length > 0 ||
+    prep.length > 0 ||
     events.length > 0 ||
     openTasks.length > 0 ||
     decks.length > 0 ||
@@ -370,7 +375,7 @@ export function TodayPanel({
           </section>
         ) : null}
 
-        {moments.length > 0 ? (
+        {moments.length > 0 || prep.length > 0 ? (
           <section className="vx-section" aria-labelledby={ids.now}>
             <SectionHead
               as={Sub}
@@ -378,6 +383,18 @@ export function TodayPanel({
               label={momentHeading(new Date().getHours())}
               action={onBrief ? { label: "Brief me", ariaLabel: "Ask Vox to brief you", onClick: onBrief } : undefined}
             />
+            {prep.map((item) => (
+              <div key={item.id} className="vx-card" data-tone={item.kind === "leave" ? "amber" : "cyan"}>
+                <div className="vx-card-when">{item.kind === "leave" ? "Go" : item.kind === "rsvp" ? "Reply" : "Where"}</div>
+                <div className="vx-card-body">
+                  <div className="vx-card-title">{plain(item.title)}</div>
+                  <div className="vx-card-detail">
+                    {plain(item.why, 140)}
+                    {multipleAccounts && item.account ? `  ·  ${plain(item.account, 60)}` : ""}
+                  </div>
+                </div>
+              </div>
+            ))}
             {moments.map((moment) => (
               <div key={`${moment.kind}-${moment.id}`} className="vx-card" data-tone="cyan">
                 <div className="vx-card-when">{MOMENT_LABEL[moment.kind]}</div>
@@ -406,7 +423,11 @@ export function TodayPanel({
                   <div className="vx-row">
                     <span className="vx-row-when">{eventTime(event.start, event.allDay, todayKey)}</span>
                     <span className="vx-row-main">{plain(event.title) || "(no title)"}</span>
-                    {event.location ? <span className="vx-row-meta">{plain(event.location, 40)}</span> : null}
+                    {event.location || (multipleAccounts && event.account) ? (
+                      <span className="vx-row-meta">
+                        {[plain(event.location, 40), multipleAccounts ? plain(event.account, 40) : ""].filter(Boolean).join("  ·  ")}
+                      </span>
+                    ) : null}
                   </div>
                 </li>
               ))}

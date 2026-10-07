@@ -48,6 +48,7 @@ const cloudApiMethods = new Map([
   ["/api/stage/page", new Set(["GET"])],
   ["/api/today", new Set(["GET"])],
   ["/api/weather", new Set(["GET"])],
+  ["/api/trip", new Set(["GET"])],
 ]);
 
 const strippedRequestHeaders = new Set([

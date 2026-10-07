@@ -202,6 +202,8 @@ import {
   type PageLook,
 } from "@/lib/browser-agent";
 import { headsUpInstruction, momentKey, nextHeadsUp, suggestionsFor } from "@/lib/proactive";
+import { prepInstruction } from "@/lib/event-prep";
+import { PLAN_TRIP_TOOL, TRIP_VOICE_INSTRUCTIONS, tripArguments, tripStage, tripToolOutput, type TripPlan } from "@/lib/trip-tool";
 import { matchPanel, PANEL_TOOL, PANEL_VOICE_INSTRUCTIONS, panelRequestFromToolArguments, REMOVE_PANEL_TOOL } from "@/lib/panel-tool";
 import type { DashboardPanel } from "@/lib/dashboard";
 import { watchablePageUrl } from "@/lib/dashboard";
@@ -2742,6 +2744,7 @@ export default function Home() {
       STAGE_VOICE_INSTRUCTIONS,
       stageBrowserBridge() ? STAGE_READ_INSTRUCTIONS : "",
       connectionMode === "cloud" ? PANEL_VOICE_INSTRUCTIONS : "",
+      connectionMode === "cloud" ? TRIP_VOICE_INSTRUCTIONS : "",
       connectionMode === "cloud" && pageWatchBridge() ? PAGE_WATCH_VOICE_INSTRUCTIONS : "",
       browserAgentBridge() ? BROWSER_AGENT_VOICE_INSTRUCTIONS : "",
       formatNowContext(todayRef.current),
@@ -3022,6 +3025,7 @@ export default function Home() {
       connectionMode === "cloud" ? FIND_DEVICES_TOOL : null,
       connectionMode === "cloud" ? PANEL_TOOL : null,
       connectionMode === "cloud" ? REMOVE_PANEL_TOOL : null,
+      connectionMode === "cloud" ? PLAN_TRIP_TOOL : null,
       connectionMode === "cloud" && pageWatchBridge() ? WATCH_PAGE_TOOL : null,
       connectionMode === "cloud" && pageWatchBridge() ? READ_WATCHED_TOOL : null,
       browserAgentBridge() ? BROWSER_LOOK_TOOL : null,
@@ -3399,6 +3403,20 @@ export default function Home() {
           const result = await browserAgentBridge()?.act(request).catch(() => null);
           lastPageLookRef.current = null;
           output = result ? `${result.message}${result.ok ? " Look at the page again before the next step." : ""}` : "The page couldn't be reached.";
+        }
+      } else if (call.name === "plan_trip") {
+        readPage = true;
+        const trip = tripArguments(call.arguments);
+        if (!trip) {
+          output = "Say where the trip is to.";
+        } else {
+          const query = new URLSearchParams({ to: trip.destination, ...(trip.arriveBy ? { arrive: trip.arriveBy } : {}) });
+          const plan = await fetch(`/api/trip?${query}`, { cache: "no-store" })
+            .then((response) => (response.ok ? (response.json() as Promise<TripPlan>) : null))
+            .catch(() => null);
+          const shown = plan ? tripStage(plan, trip.destination) : null;
+          if (shown) showStage(shown);
+          output = tripToolOutput(plan, trip.destination);
         }
       } else if (call.name === "create_panel") {
         readPage = true;
@@ -5041,7 +5059,7 @@ export default function Home() {
    * when it spoke.
    */
   function offerHeadsUp(currentInitiative: Initiative, now: number) {
-    if (themeRef.current !== "daylight" || (currentInitiative !== "balanced" && currentInitiative !== "social")) return false;
+    if (currentInitiative !== "balanced" && currentInitiative !== "social") return false;
     const channel = channelRef.current;
     const opening = lastUserActivityRef.current === sessionStartRef.current;
     const quietMs = opening ? 2_500 : currentInitiative === "social" ? 12_000 : 20_000;
@@ -5063,6 +5081,35 @@ export default function Home() {
     }
     const moments = todayRef.current?.now ?? [];
     const store = mentionedToday();
+    // In every theme: a coming event with something to settle, or time to set
+    // off (raised within 45 minutes of leaving, not hours ahead).
+    const prep = (todayRef.current?.prep ?? []).find(
+      (item) => !store.mentioned.has(item.id) && (item.kind !== "leave" || (item.leaveAt ? Date.parse(item.leaveAt) - now <= 45 * 60_000 : false)),
+    );
+    if (prep) {
+      store.add(prep.id);
+      headsUpAtRef.current = now;
+      lastAssistantAtRef.current = now;
+      proactiveCountRef.current += 1;
+      channel.send(
+        JSON.stringify({
+          type: "response.create",
+          response: {
+            metadata: { vox_kind: "proactive" },
+            instructions: [
+              voiceInstructions(),
+              responseLanguageInstruction(selectResponseLanguage("", messagesRef.current)),
+              prepInstruction(prep),
+              "Don't mention timers, proactive mode, or how you chose this.",
+            ].join("\n\n"),
+          },
+        }),
+      );
+      setConnectionState("thinking");
+      return true;
+    }
+    // The rest of what matters now is brought up only in the proactive theme.
+    if (themeRef.current !== "daylight") return false;
     const moment = nextHeadsUp(moments, store.mentioned);
     if (!moment) return false;
     store.add(momentKey(moment));
@@ -6614,7 +6661,7 @@ export default function Home() {
         const stageCalls = (event.response?.output ?? []).filter(
           (item) =>
             item.type === "function_call" &&
-            ["show_on_stage", "read_stage_page", "find_my_devices", "create_panel", "remove_panel", "watch_page", "read_watched_page", "browser_look", "browser_act"].includes(item.name ?? ""),
+            ["show_on_stage", "read_stage_page", "find_my_devices", "create_panel", "remove_panel", "watch_page", "read_watched_page", "browser_look", "browser_act", "plan_trip"].includes(item.name ?? ""),
         );
         if (stageCalls.length) void handleStageCalls(stageCalls, event.response?.output?.at(-1)?.type === "function_call");
         if (!studyKind.startsWith("study_")) {

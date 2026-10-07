@@ -57,7 +57,34 @@ export type TodayCalendar = {
     allDay: boolean;
     location: string | null;
     account: string;
+    /** The user's own answer to an invitation; "own" when there is nothing to answer. */
+    response?: "accepted" | "declined" | "tentative" | "needs_reply" | "own";
+    organizer?: string;
+    /** How many other people are invited. */
+    attendees?: number;
   }>;
+};
+
+/**
+ * Something about a coming event that Vox should settle with the user ahead
+ * of time: an invitation they haven't answered, a meeting with no place, or
+ * when to leave to get there.
+ */
+export type TodayPrep = {
+  /** `${kind}:${eventId}:${account}` */
+  id: string;
+  eventId: string;
+  /** The Google account the event is in; actions on it must name this account. */
+  account: string;
+  kind: "rsvp" | "location" | "leave";
+  title: string;
+  /** "Not answered yet", "No place set", "Leave by 14:20, about 25 min by car". */
+  why: string;
+  /** For "leave": when to set off, and what that is based on. */
+  leaveAt?: string;
+  travelMinutes?: number;
+  from?: { label: string; lat: number; lon: number };
+  to?: { label: string; lat: number; lon: number };
 };
 
 /** Google Tasks that are open and due within a week or overdue, at most 12. */
@@ -88,5 +115,7 @@ export type TodayBriefing = {
   tasks: TodayTasks;
   /** At most 4, most important first; empty when nothing needs attention. */
   now: TodayMoment[];
+  /** Coming events to settle or set off for, soonest first; at most 6. */
+  prep?: TodayPrep[];
   generatedAt: string;
 };

@@ -1,7 +1,11 @@
 import { requireUser } from "@/lib/auth";
 import { callMcpTools, type McpToolResult } from "@/lib/mcp-call";
 import { flashcardsServerUrl, mailServerUrl } from "@/lib/mcp-client";
-import type { TodayBriefing, TodayCalendar, TodayFlashcards, TodayMail, TodayMoment, TodayTasks } from "@/lib/today";
+import { buildEventPrep, isPhysicalPlace, LEAVE_WINDOW_MS, leaveReminderTitle, prepCandidates, type Travel } from "@/lib/event-prep";
+import { listLocationDevices } from "@/lib/location-store";
+import { createReminder, listReminders, postponeReminder } from "@/lib/reminder-store";
+import type { TodayBriefing, TodayCalendar, TodayFlashcards, TodayMail, TodayMoment, TodayPrep, TodayTasks } from "@/lib/today";
+import { currentPlace, planTravel } from "@/lib/trip";
 import { askJev } from "@/lib/today-jev";
 import { buildCandidates, chooseMoments, triageUnread } from "@/lib/today-moments";
 import {
@@ -177,6 +181,54 @@ async function chooseNow(ownerId: string, parts: Parameters<typeof buildCandidat
   }
 }
 
+/**
+ * Coming events to settle or set off for. Works out the drive to the next few
+ * events that are somewhere, from where the user's phone last was, and keeps
+ * a "time to leave" reminder in step with each. Never fails the briefing.
+ */
+async function eventPrep(ownerId: string, calendar: TodayCalendar, now: Date, timeZone: string): Promise<TodayPrep[]> {
+  try {
+    if (!calendar.connected || !calendar.events.length) return [];
+    const somewhere = prepCandidates(calendar.events, now, LEAVE_WINDOW_MS)
+      .filter((event) => isPhysicalPlace(event.location))
+      .slice(0, 3);
+    const travel = new Map<string, Travel>();
+    if (somewhere.length) {
+      const from = currentPlace(await listLocationDevices(ownerId).catch(() => []), now.getTime());
+      const trips = await Promise.all(somewhere.map((event) => planTravel(from, event.location as string)));
+      trips.forEach((trip, index) => {
+        if (trip) travel.set(somewhere[index].id, trip);
+      });
+    }
+    const prep = buildEventPrep(calendar.events, travel, now, timeZone);
+    await syncLeaveReminders(ownerId, prep, now).catch((error) => {
+      console.error("Today: leave reminders failed", error instanceof Error ? error.message : "unknown");
+    });
+    return prep;
+  } catch (error) {
+    console.error("Today: event prep failed", error instanceof Error ? error.message : "unknown");
+    return [];
+  }
+}
+
+/** One pending reminder per trip, at the time to set off; moved when the estimate moves. */
+async function syncLeaveReminders(ownerId: string, prep: TodayPrep[], now: Date) {
+  const leaving = prep.filter((item) => item.kind === "leave" && item.leaveAt && Date.parse(item.leaveAt) - now.getTime() > 2 * 60_000);
+  if (!leaving.length) return;
+  const existing = await listReminders(ownerId);
+  for (const item of leaving) {
+    const title = leaveReminderTitle(item.title);
+    const leaveAt = item.leaveAt as string;
+    const found = existing.find((reminder) => reminder.title === title);
+    if (!found) {
+      await createReminder(ownerId, { title, notes: item.why, dueAt: leaveAt });
+    } else if (found.status === "pending" && Math.abs(Date.parse(found.dueAt) - Date.parse(leaveAt)) > 4 * 60_000) {
+      // The drive got longer or shorter, or the event moved.
+      await postponeReminder(ownerId, found.id, leaveAt);
+    }
+  }
+}
+
 export async function GET(request: Request) {
   const auth = await requireUser(request);
   if ("response" in auth) return auth.response;
@@ -184,11 +236,10 @@ export async function GET(request: Request) {
   const timeZone = validTimeZone(new URL(request.url).searchParams.get("tz"));
   const now = new Date();
   const [mailSite, flashcards] = await Promise.all([readMailSite(auth.user.id, now, timeZone), readFlashcards(auth.user.id)]);
-  const briefing: TodayBriefing = {
-    ...mailSite,
-    flashcards,
-    now: await chooseNow(auth.user.id, { ...mailSite, flashcards }, now, timeZone),
-    generatedAt: now.toISOString(),
-  };
+  const [chosen, prep] = await Promise.all([
+    chooseNow(auth.user.id, { ...mailSite, flashcards }, now, timeZone),
+    eventPrep(auth.user.id, mailSite.calendar, now, timeZone),
+  ]);
+  const briefing: TodayBriefing = { ...mailSite, flashcards, now: chosen, prep, generatedAt: now.toISOString() };
   return Response.json(briefing, { headers: { "Cache-Control": "no-store" } });
 }

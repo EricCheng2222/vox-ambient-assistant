@@ -594,7 +594,9 @@ export function DashboardPanels({
 
   const soon = reminders.filter((reminder) => reminder.soon);
   const mail = briefing?.mail;
-  const moments = briefing?.now ?? [];
+  // An event with something to settle is listed once, not again as a moment.
+  const prep = (briefing?.prep ?? []).slice(0, 3);
+  const moments = (briefing?.now ?? []).filter((moment) => !(moment.kind === "event" && prep.some((item) => item.eventId === moment.id)));
   const heading = momentHeading(new Date().getHours());
 
   return (
@@ -637,7 +639,7 @@ export function DashboardPanels({
         </section>
       )}
 
-      {(waiting.length > 0 || soon.length > 0 || moments.length > 0) && (
+      {(waiting.length > 0 || soon.length > 0 || moments.length > 0 || prep.length > 0) && (
         <section className="dash-panel" aria-labelledby="dash-now">
           <h2 id="dash-now" className={`dash-kicker${waiting.length > 0 ? " is-amber" : ""}`}>
             {waiting.length > 0 ? "Waiting on you" : heading}
@@ -661,6 +663,15 @@ export function DashboardPanels({
                 <div>
                   <strong>{plain(reminder.title, 80)}</strong>
                   <span>{reminder.repeat ? `${reminder.when} · ${plain(reminder.repeat, 60)}` : reminder.when}</span>
+                </div>
+              </li>
+            ))}
+            {prep.map((item) => (
+              <li key={item.id} className="dash-moment">
+                <CalendarDays aria-hidden="true" />
+                <div>
+                  <strong>{plain(item.title, 80)}</strong>
+                  <span>{plain(item.why, 100)}</span>
                 </div>
               </li>
             ))}
