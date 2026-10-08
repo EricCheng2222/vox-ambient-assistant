@@ -80,6 +80,11 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
     cancelEnrollment: () => ipcRenderer.invoke("vox-voice-filter:enroll-cancel"),
     forget: () => ipcRenderer.invoke("vox-voice-filter:forget"),
   },
+  // Websites the user signed in to in the built-in browser: yes or no per site, and signing out.
+  accounts: {
+    status: (checks) => ipcRenderer.invoke("vox-accounts:status", Array.isArray(checks) ? checks.slice(0, 80) : []),
+    signOut: (domains) => ipcRenderer.invoke("vox-accounts:sign-out", Array.isArray(domains) ? domains.slice(0, 4) : []),
+  },
   // Pages the user asked Vox to keep an eye on, read from the built-in browser's profile.
   watch: {
     read: (url) => ipcRenderer.invoke("vox-watch:read", typeof url === "string" ? url.slice(0, 2_000) : ""),

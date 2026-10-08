@@ -40,6 +40,7 @@ import { registerVoiceFilter } from "./voice-filter.mjs";
 import { registerWelcomeHome } from "./welcome-home.mjs";
 import { registerStageBrowser } from "./stage-browser.mjs";
 import { registerPageWatch } from "./page-watch.mjs";
+import { registerWebAccounts } from "./web-accounts.mjs";
 import {
   availableSmartHomeAdapters,
   configureSmartHomeDevice,
@@ -1687,6 +1688,7 @@ app.whenReady().then(async () => {
   welcomeHome = registerWelcomeHome({ requireTrustedVoxSender, readSettings, saveSettings, pairing: unlockedRemotePairing });
   stageBrowser = registerStageBrowser({ requireTrustedVoxSender, getWindow: () => mainWindow, getVoxView: () => voxView });
   pageWatch = registerPageWatch({ requireTrustedVoxSender });
+  registerWebAccounts({ requireTrustedVoxSender });
   // Installed-app discovery is useful for voice routing, but it must never sit
   // on the first conversational turn's latency path.
   void installedApps().catch(() => undefined);

@@ -185,6 +185,8 @@ import { playHudCue, type HudCue, setHudVolume } from "@/lib/hud-sounds";
 import { FlashcardsConnection, openFlashcardsConnection } from "@/components/flashcards-connection";
 import { MailConnection, openMailConnection } from "@/components/mail-connection";
 import { VeloConnection } from "@/components/velo-connection";
+import { WebAccounts } from "@/components/web-accounts";
+import { webAccountBridge, webAccountsInstruction } from "@/lib/web-accounts";
 import { VELO_CONFIRMED_TOOLS, VELO_UNCONFIRMED_TOOLS, VELO_VOICE_INSTRUCTIONS } from "@/lib/velo";
 import { PhoneTexts } from "@/components/phone-texts";
 import { ProfileCard } from "@/components/profile-card";
@@ -1528,6 +1530,8 @@ export default function Home() {
   // tools of the live session.
   const mailToolRef = useRef<Record<string, unknown> | null>(null);
   const veloToolRef = useRef<Record<string, unknown> | null>(null);
+  // The websites the user is signed in to inside the Mac app's browser.
+  const webAccountIdsRef = useRef<string[]>([]);
   // While OpenAI re-reads the tool servers after a session update, replies wait.
   const toolListingUntilRef = useRef(0);
   const toolListingsRef = useRef(0);
@@ -2843,6 +2847,7 @@ export default function Home() {
       connectionMode === "cloud" ? TRIP_VOICE_INSTRUCTIONS : "",
       connectionMode === "cloud" && pageWatchBridge() ? PAGE_WATCH_VOICE_INSTRUCTIONS : "",
       browserAgentBridge() ? BROWSER_AGENT_VOICE_INSTRUCTIONS : "",
+      browserAgentBridge() && webAccountBridge() ? webAccountsInstruction(webAccountIdsRef.current) : "",
       formatNowContext(todayRef.current),
     ]
       .filter(Boolean)
@@ -8521,6 +8526,15 @@ export default function Home() {
             <SettingsGroup title="Connected accounts">
                 {connectionMode === "cloud" && authState === "authenticated" && <MailConnection />}
                 {connectionMode === "cloud" && authState === "authenticated" && <VeloConnection />}
+                <WebAccounts
+                  onSignIn={(url, name) => {
+                    setView("talk");
+                    openPageOnStage(url, name);
+                  }}
+                  onChange={(ids) => {
+                    webAccountIdsRef.current = ids;
+                  }}
+                />
                 {connectionMode === "cloud" && authState === "authenticated" && (
                   <FlashcardsConnection
                     studying={studying}
