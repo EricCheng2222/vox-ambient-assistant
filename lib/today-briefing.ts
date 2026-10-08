@@ -16,7 +16,7 @@ import {
   parseUnreadSummary,
   tasksPart,
 } from "@/lib/today-parse";
-import { categorizeUnread, type MailCategory } from "@/lib/mail-category";
+import { categorizeUnread, type MailCategory, reconcileImportance } from "@/lib/mail-category";
 import { loadMailCategories, loadMailVerdicts, loadNowDecision, saveMailCategories, saveMailVerdicts, saveNowDecision, signatureDigest } from "@/lib/today-store";
 import { localClock } from "@/lib/today-time";
 
@@ -58,7 +58,14 @@ async function unreadSplit(ownerId: string, messages: Parameters<typeof triageUn
     const category = categories.get(message.id);
     return category ? { ...message, category } : message;
   };
-  const unread = important.map(tagged);
+  // The category has the last word on automated mail (see reconcileImportance).
+  const unread = important
+    .map(tagged)
+    .flatMap((message) => {
+      const importance = reconcileImportance(message.importance, (message as { category?: MailCategory }).category);
+      return importance === "skip" ? [] : [{ ...message, importance }];
+    })
+    .sort((a, b) => Number(b.importance === "needs_you") - Number(a.importance === "needs_you"));
   const shown = new Set(unread.map((message) => message.id));
   const other = messages
     .filter((message) => !shown.has(message.id))

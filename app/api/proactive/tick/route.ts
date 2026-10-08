@@ -6,7 +6,8 @@ import { getOwnerTextDestination, listProactiveTextOwnerIds } from "@/lib/phone-
 import { getUserPreferences } from "@/lib/preference-store";
 import { proactiveTextStore } from "@/lib/proactive-text-store";
 import { ownerLanguage, voxLink } from "@/lib/proactive-texts";
-import { runProactiveTick, writeBriefingText } from "@/lib/proactive-tick";
+import { runProactiveTick } from "@/lib/proactive-tick";
+import { layoutBriefingText } from "@/lib/proactive-texts";
 import { reminderTimeZone } from "@/lib/reminder-store";
 import { schedulerAuthorized } from "@/lib/scheduler-auth";
 import { buildBriefing } from "@/lib/today-briefing";
@@ -41,7 +42,8 @@ export async function POST(request: Request) {
         const result = await callMcpTool(ownerId, veloServerUrl(), "get_today");
         return result && !result.isError ? result.text : null;
       },
-      write: (summary, language) => writeBriefingText(summary, language, { apiKey: process.env.OPENAI_API_KEY }),
+      // Laid out by code: headed sections, one item per line, the same shape every day.
+      write: async (summary, language) => layoutBriefingText(summary, language),
       send: createOwnerTexter({ destinationFor: getOwnerTextDestination }),
       appendToConversation: (ownerId, id, text) => appendAssistantNote(ownerId, { id, text }),
       // The deployment's public address, as already configured for Twilio.

@@ -113,3 +113,19 @@ export function categoryCounts(categories: Array<MailCategory | undefined>) {
   for (const category of categories) if (category) counts.set(category, (counts.get(category) ?? 0) + 1);
   return [...counts].sort((a, b) => b[1] - a[1] || MAIL_CATEGORIES.indexOf(a[0]) - MAIL_CATEGORIES.indexOf(b[0]));
 }
+
+/**
+ * Importance as shown, once the kind of email is known. The importance call
+ * sometimes takes an automated message at its word ("action required",
+ * "just for you"); the category settles it: marketing and newsletters are
+ * never shown as needing the owner, and automated notices, receipts, and
+ * sign-in alerts are at most worth a look.
+ */
+export function reconcileImportance(
+  importance: "needs_you" | "worth_reading",
+  category: MailCategory | undefined,
+): "needs_you" | "worth_reading" | "skip" {
+  if (category === "promotions" || category === "newsletters") return "skip";
+  if (category === "notifications" || category === "orders" || category === "security") return "worth_reading";
+  return importance;
+}

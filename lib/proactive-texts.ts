@@ -163,8 +163,10 @@ export function smsSafe(value: string) {
     .replace(/[*`~|<>\\]|_{2,}/gu, "")
     .split("\n")
     .map((line) => line.replace(/^\s*(?:#{1,6}|[-•·]|\d+[.)])\s+/u, "").replace(/[^\S\n]+/gu, " ").trim())
-    .filter(Boolean)
-    .join("\n");
+    .join("\n")
+    // One blank line between sections survives; more, or any at the ends, do not.
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
 }
 
 function cut(value: string, max: number) {
@@ -610,6 +612,50 @@ function person(item: { from: string | null; subject: string }, language: Respon
  * reached or answers with something unusable. Sentences are added in order
  * of importance for as long as they fit.
  */
+/**
+ * The briefing or review as it is texted: short headed sections with one
+ * item per line, so it can be read at a glance on a lock screen. Sections
+ * that don't fit are left off whole, never cut mid-line.
+ */
+export function layoutBriefingText(summary: MorningSummary | EveningSummary, language: ResponseLanguage, maxChars = MAX_TEXT_CHARS) {
+  const zh = isMandarin(language);
+  const allDay = zh ? "整天" : "All day";
+  const time = (value: string) => (value === "all day" ? allDay : value);
+  const sections: string[] = [];
+  const section = (heading: string, lines: string[], more = 0) => {
+    if (!lines.length) return;
+    const rest = more > 0 ? [zh ? `還有 ${more} 項` : `and ${more} more`] : [];
+    sections.push([heading, ...lines, ...rest].join("\n"));
+  };
+  // Someone else's words stay inside quotation marks, here and in the conversation copy.
+  const mailLine = (item: { from: string | null; subject: string }) =>
+    item.from ? `${item.from}${zh ? "：" : ": "}${quote(item.subject, language)}` : quote(item.subject, language);
+  const taskLine = (task: { title: string; status: "overdue" | "due today" }) =>
+    `${task.title}${task.status === "overdue" ? (zh ? "（已過期）" : " (overdue)") : ""}`;
+
+  if (summary.kind === "morning") {
+    sections.push(zh ? `早安，${summary.weekday}` : `Good morning, ${summary.weekday}`);
+    section(zh ? "今天" : "Today", summary.events.slice(0, 5).map((event) => `${time(event.time)} ${event.title}`), summary.eventCount - Math.min(5, summary.events.length));
+    section(zh ? "需要你處理" : "Needs you", summary.needsReply.slice(0, 3).map(mailLine), summary.needsReplyCount - Math.min(3, summary.needsReply.length));
+    section(zh ? "還沒回覆的邀請" : "Invitations to answer", summary.invitations.slice(0, 2).map((item) => `${quote(item.title, language)}${zh ? "，" : ", "}${item.when}`));
+    section(zh ? "待辦" : "To do", summary.tasks.slice(0, 3).map(taskLine), summary.taskCount - Math.min(3, summary.tasks.length));
+    const extras = [
+      summary.cardsDue ? (zh ? `${summary.cardsDue} 張字卡到期` : `${summary.cardsDue} flash cards due`) : "",
+      summary.overnightEmails ? (zh ? `昨晚到現在 ${summary.overnightEmails} 封新信` : `${summary.overnightEmails} new ${summary.overnightEmails === 1 ? "email" : "emails"} overnight`) : "",
+    ].filter(Boolean);
+    if (extras.length) sections.push(extras.join(zh ? "，" : ", "));
+  } else {
+    sections.push(zh ? `今天的回顧，${summary.weekday}` : `Evening review, ${summary.weekday}`);
+    section(zh ? "還在等你" : "Still waiting on you", summary.openEmails.slice(0, 3).map(mailLine), summary.openEmailCount - Math.min(3, summary.openEmails.length));
+    section(zh ? "待辦" : "To do", summary.tasks.slice(0, 3).map(taskLine), summary.taskCount - Math.min(3, summary.tasks.length));
+    if (summary.tomorrowFirst) section(zh ? "明天第一件事" : "First thing tomorrow", [`${time(summary.tomorrowFirst.time)} ${summary.tomorrowFirst.title}`]);
+    if (summary.notebook) {
+      section(zh ? "今天的紀錄" : "Logged today", summary.notebook.logged ? summary.notebook.lines.slice(0, 3) : [zh ? "今天沒有記錄" : "Nothing logged today"]);
+    }
+  }
+  return joinWithin(sections, "\n\n", maxChars);
+}
+
 export function fallbackBriefingText(summary: MorningSummary | EveningSummary, language: ResponseLanguage, maxChars = MAX_TEXT_CHARS) {
   const zh = isMandarin(language);
   const parts: string[] = [];

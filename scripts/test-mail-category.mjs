@@ -46,4 +46,17 @@ const failed = await categorizeUnread([message("a")], {
 assert.equal(failed.size, 0);
 
 assert.deepEqual(categoryCounts(["promotions", "people", "promotions", undefined, "newsletters"]), [["promotions", 2], ["people", 1], ["newsletters", 1]]);
+// The category has the last word on automated mail.
+{
+  const { reconcileImportance } = await import("../lib/mail-category.ts");
+  assert.equal(reconcileImportance("needs_you", "promotions"), "skip", "an offer is never something that needs the owner");
+  assert.equal(reconcileImportance("worth_reading", "newsletters"), "skip");
+  assert.equal(reconcileImportance("needs_you", "security"), "worth_reading", "a sign-in notice is worth a look at most");
+  assert.equal(reconcileImportance("needs_you", "notifications"), "worth_reading");
+  assert.equal(reconcileImportance("needs_you", "orders"), "worth_reading");
+  assert.equal(reconcileImportance("needs_you", "money"), "needs_you", "a bill that will fail still needs them");
+  assert.equal(reconcileImportance("needs_you", "people"), "needs_you");
+  assert.equal(reconcileImportance("needs_you", undefined), "needs_you");
+  assert.equal(reconcileImportance("worth_reading", "work"), "worth_reading");
+}
 console.log("Mail category checks passed.");

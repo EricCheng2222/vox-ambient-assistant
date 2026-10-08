@@ -295,7 +295,7 @@ const prep = (kind, eventId, title) => ({ id: `${kind}:${eventId}:me@example.com
   // Whatever wrote the body, what goes out is plain text with no link but Vox's own.
   assert.equal(
     texts.finalizeText("## Good morning 🌞\n\n- **Standup** at 09:30\n1. Reply to amy@example.com\nSee http://evil.example/a or evil.com\u0007", LINK),
-    `Good morning\nStandup at 09:30\nReply to\nSee or\n${LINK}`,
+    `Good morning\n\nStandup at 09:30\nReply to\nSee or\n${LINK}`,
   );
   assert.equal(texts.voxLink("https://vox.example/api/twilio"), "https://vox.example");
   for (const bad of ["http://vox.example", "javascript:alert(1)", "https://user:pw@vox.example", "", null, "vox.example"]) assert.equal(texts.voxLink(bad), null, String(bad));
@@ -1087,6 +1087,29 @@ const needsYou = (subjects) => (ownerId, timeZone, now) =>
   assert.match(worker, /https:\/\/vox\.internal\/api\/proactive\/tick/u);
   assert.match(worker, /context\.waitUntil\(dispatchReminderCalls\(env, context\)\);\n[^\n]*\n\s+if \(proactiveTickDue\(event\)\) \{\n\s+context\.waitUntil\(\n\s+runProactiveTick\(env, context\)\.catch\(/u);
   assert.ok(worker.indexOf("event?.cron === PROFILE_CRON") < worker.indexOf("proactiveTickDue(event)) {"), "the hourly event returns before it");
+}
+
+// The layout that is texted: headed sections, one item per line, other people's words in quotation marks.
+{
+  const morning = {
+    kind: "morning", weekday: "Thursday",
+    events: [{ time: "10:00", title: "雲地整合LLM @600A" }, { time: "14:00", title: "AP Memory" }], eventCount: 2,
+    needsReply: [{ from: "Amy Chen", subject: "Dinner Saturday?" }], needsReplyCount: 1,
+    invitations: [{ title: "Lab meeting", when: "today 12:30" }],
+    tasks: [{ title: "Submit rotation log", status: "overdue" }], taskCount: 1,
+    cardsDue: 12, overnightEmails: 3,
+  };
+  assert.equal(
+    texts.finalizeText(texts.layoutBriefingText(morning, "english"), LINK),
+    ["Good morning, Thursday", "", "Today", "10:00 雲地整合LLM @600A", "14:00 AP Memory", "", "Needs you", 'Amy Chen: "Dinner Saturday?"', "", "Invitations to answer", '"Lab meeting", today 12:30', "", "To do", "Submit rotation log (overdue)", "", "12 flash cards due, 3 new emails overnight", LINK].join("\n"),
+  );
+  const zh = texts.layoutBriefingText(morning, "taiwan_mandarin");
+  assert.match(zh, /^早安，Thursday\n\n今天\n10:00 雲地整合LLM @600A\n14:00 AP Memory\n\n需要你處理\nAmy Chen：「Dinner Saturday\?」/u);
+  // A section that doesn't fit is left off whole.
+  const tight = texts.layoutBriefingText(morning, "english", 80);
+  assert.ok(tight.length <= 80 && !tight.includes("Needs you") && tight.endsWith("14:00 AP Memory"));
+  const evening = { kind: "evening", weekday: "Thursday", openEmails: [], openEmailCount: 0, tasks: [], taskCount: 0, tomorrowFirst: { time: "09:00", title: "Clinic" }, notebook: { logged: true, lines: ["push-ups 150 reps"] } };
+  assert.equal(texts.layoutBriefingText(evening, "english"), "Evening review, Thursday\n\nFirst thing tomorrow\n09:00 Clinic\n\nLogged today\npush-ups 150 reps");
 }
 
 console.log("Proactive text checks passed.");
