@@ -1,6 +1,6 @@
 // Answers from the web-search model come with link markup meant for a
 // rendered page: "([site.com](https://site.com/page?utm_source=openai))".
-// Vox shows plain text and puts the pages on the stage, so the markup goes.
+// For plain-text contexts that cannot render citation links.
 
 /** The answer as plain words: citation links removed, named links reduced to their names. */
 export function withoutLinkMarkup(text: string) {

@@ -1,5 +1,4 @@
 import { answerText, backgroundState, fetchBackground, isJobId, settleAnswerJob, startAnswerJob, touchAnswerJob, type BackgroundPayload } from "@/lib/answer-jobs";
-import { withoutLinkMarkup } from "@/lib/answer-text";
 import { askFirstAvailable, EXPERT_MODELS } from "@/lib/models";
 import { requireUser } from "@/lib/auth";
 import { earlierMessages, parseRecentMessages } from "@/lib/conversation-context";
@@ -226,7 +225,7 @@ export async function POST(request: Request) {
     // timer leaves the answer in the conversation.
     await touchAnswerJob(key, new Date().toISOString());
   }
-  const answer = jobId ? answerText(finished) : withoutLinkMarkup(readOutputText(payload));
+  const answer = jobId ? answerText(finished) : readOutputText(payload).trim();
   if (!isWeb) {
     return Response.json({ answer, model }, { headers: { "Cache-Control": "no-store" } });
   }

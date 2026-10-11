@@ -2,7 +2,6 @@ import { and, eq, inArray, like, lt } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { answerJobs } from "@/db/schema";
-import { withoutLinkMarkup } from "@/lib/answer-text";
 
 // Answers that outlive the request that asked for them. The model works in
 // the provider's background mode; whoever is there when it finishes gets the
@@ -28,7 +27,8 @@ export function answerText(payload: Output) {
       .filter((item) => item.type === "output_text")
       .map((item) => item.text ?? "")
       .join("\n");
-  return withoutLinkMarkup(raw.trim());
+  // Preserve citations for the conversation; speechText removes them only for speech.
+  return raw.trim();
 }
 
 /** Whether the background answer has stopped, one way or another. */

@@ -142,6 +142,6 @@ try {
 const answer = gptAnswer("A question", "Offer. [Official](https://fixture.example/offer?utm_source=openai) [Again](https://fixture.example/offer) [Bad](javascript:alert)", true);
 assert.equal(answer.stage.sources.length, 1);
 assert.equal(answer.stage.sources[0].url, "https://fixture.example/offer");
-assert.ok(!answer.answer.includes("[Official]"));
+assert.ok(answer.answer.includes("[Official](https://fixture.example/offer?utm_source=openai)"), "the conversation keeps named source links");
 assert.equal(gptAnswer("Q", "Plain answer", false).stage, undefined);
 console.log("GPT task ownership, tool policies, MCP transport, SDK lifecycle and sources checks passed.");

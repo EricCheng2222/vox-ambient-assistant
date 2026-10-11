@@ -474,7 +474,7 @@ export function appPage(mcpUrl: string) {
     document.querySelector(".study-stage").classList.toggle("has-more", due > 1);
     $("due-number").textContent = String(due);
     $("due-text").textContent = due === 1 ? "card to review" : "cards to review";
-    const deckLabel = studyDeckId ? splitName(deckName(studyDeckId)).title : "All decks";
+    const deckLabel = current ? splitName(deckName(current.deck_id)).title : studyDeckId ? splitName(deckName(studyDeckId)).title : "All decks";
     $("card-deck").textContent = deckLabel;
     $("card-deck-back").textContent = deckLabel;
     $("card-side-front").textContent = result.repeat ? "Missed earlier, try again" : "Question";
@@ -503,7 +503,7 @@ export function appPage(mcpUrl: string) {
     const card = current;
     current = null;
     $("grades").hidden = true;
-    try { clearError(); await tool("grade_card", { card_id: card.card_id, rating }); await Promise.all([loadNext(), loadDecks()]); }
+    try { clearError(); await tool("grade_card", { card_id: card.card_id, review_id: card.review_id, rating, deck: studyDeckId || "" }); await Promise.all([loadNext(), loadDecks()]); }
     catch (error) { current = card; setFlipped(true); fail(error); }
   }
 
@@ -513,7 +513,7 @@ export function appPage(mcpUrl: string) {
     current = null;
     try {
       clearError();
-      await tool("skip_card", { card_id: card.card_id });
+      await tool("skip_card", { card_id: card.card_id, review_id: card.review_id, deck: studyDeckId || "" });
       await loadNext();
       if (current && current.card_id === card.card_id) toast("That’s the last card due right now.");
     } catch (error) { current = card; fail(error); }

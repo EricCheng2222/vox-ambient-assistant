@@ -28,6 +28,14 @@ assert.deepEqual(answerBlocks("-5 degrees tonight"), [{ kind: "text", text: "-5 
 assert.deepEqual(answerBlocks("找到三間：\n- 水岸飯店：NT$5,660 起，4.4 分\n- 探戈飯店 — 7,217 元")[1].items, [{ lead: "水岸飯店", detail: "NT$5,660 起，4.4 分" }, { lead: "探戈飯店", detail: "7,217 元" }]);
 assert.deepEqual(answerBlocks(""), []);
 
+// Citation labels and URL punctuation never split a list item.
+assert.deepEqual(answerBlocks("- [Source: hotel — report](https://example.com/a_(b))\n- Other source")[0].items[0], {
+  lead: "", detail: "[Source: hotel — report](https://example.com/a_(b))",
+});
+assert.deepEqual(answerBlocks("- [Hotel](https://example.com/) — NT$25,152\n- Other hotel")[0].items[0], {
+  lead: "[Hotel](https://example.com/)", detail: "NT$25,152",
+});
+
 // Amounts of money are picked out; other numbers are left alone.
 assert.deepEqual(withAmounts("from NT$5,660, rated 4.4/5"), [{ text: "from ", amount: false }, { text: "NT$5,660", amount: true }, { text: ", rated 4.4/5", amount: false }]);
 assert.deepEqual(withAmounts("£14.19 then 7,217 元").filter((run) => run.amount).map((run) => run.text), ["£14.19", "7,217 元"]);

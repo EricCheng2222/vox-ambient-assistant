@@ -4,6 +4,7 @@ import { now } from "./util.ts";
 export class FlashcardError extends Error {}
 
 export type StudyFocus = "due" | "hard";
+type StudyTurn = { cardId: string; reviewId: string; deckId: string | null; focus: StudyFocus; state: "pending" | "graded" | "skipped" };
 
 /** After this many new cards, a card missed earlier today comes back once. */
 export const REPEAT_MISSED_EVERY = 10;
@@ -288,6 +289,73 @@ export class FlashcardStore {
       .bind(this.ownerId, deckId ?? null, stamp)
       .first<{ n: number }>();
     return Number(due?.n ?? 0);
+  }
+
+  private async studyTurn() {
+    return this.db.prepare("SELECT card_id AS cardId, review_id AS reviewId, deck_id AS deckId, focus, state FROM study_turns WHERE owner_id = ?1")
+      .bind(this.ownerId).first<StudyTurn>();
+  }
+
+  /** Claim one card atomically; another fetch (even from another client) resumes it. */
+  async nextStudyCard(deckId?: string, at = new Date(), focus: StudyFocus = "due"): Promise<{ card: Card | null; reviewId?: string; dueRemaining: number; repeat?: boolean; nextDueAt?: string | null }> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const turn = await this.studyTurn();
+      if (turn?.state === "pending") {
+        try {
+          const card = await this.card(turn.cardId);
+          const { start } = await this.studyDay(at);
+          return { card, reviewId: turn.reviewId, dueRemaining: await this.dueCount(turn.deckId ?? undefined, at.toISOString()), repeat: Boolean(card.seenAt && card.seenAt >= start) };
+        } catch (error) {
+          if (!(error instanceof FlashcardError)) throw error;
+          // A deleted card cannot be reviewed. Do not clear a newer presentation.
+          await this.db.prepare("DELETE FROM study_turns WHERE owner_id = ?1 AND review_id = ?2")
+            .bind(this.ownerId, turn.reviewId).run();
+          continue;
+        }
+      }
+      const next = await this.nextDueCard(deckId, at, focus);
+      if (!next.card) return next;
+      // The candidate may have been graded since selection. Claim only its unchanged version.
+      await this.db.prepare(`INSERT INTO study_turns (owner_id, card_id, review_id, deck_id, focus, state)
+        SELECT ?1, id, ?3, ?4, ?5, 'pending' FROM cards
+        WHERE owner_id = ?1 AND id = ?2 AND due_at <= ?6 AND updated_at = ?7 AND seen_at IS ?8
+        ON CONFLICT(owner_id) DO UPDATE SET card_id = excluded.card_id, review_id = excluded.review_id,
+          deck_id = excluded.deck_id, focus = excluded.focus, state = 'pending' WHERE study_turns.state <> 'pending'`)
+        .bind(this.ownerId, next.card.id, crypto.randomUUID(), deckId ?? null, focus, at.toISOString(), next.card.updatedAt, next.card.seenAt).run();
+    }
+    throw new FlashcardError("The active review changed. Call next_card to resume it.");
+  }
+
+  /** A review and its gate transition commit together. Stale tokens cannot change scheduling. */
+  async resolveStudyCard(cardId: string, reviewId: string, rating: FlashcardRating | "skip", at = new Date()) {
+    const turn = await this.studyTurn();
+    if (!reviewId || turn?.state !== "pending" || turn.cardId !== cardId || turn.reviewId !== reviewId) {
+      throw new FlashcardError("Grade or skip only the active card, using its review_id. Call next_card to resume it.");
+    }
+    const card = await this.card(cardId);
+    const { day, start } = await this.studyDay(at);
+    const stamp = at.toISOString();
+    const active = "EXISTS (SELECT 1 FROM study_turns WHERE owner_id = ?1 AND card_id = ?2 AND review_id = ?3 AND state = 'pending')";
+    const statements = [this.db.prepare(`UPDATE users SET since_repeat = CASE WHEN ?5 THEN 0 WHEN since_repeat_day = ?4 THEN since_repeat + 1 ELSE 1 END,
+      since_repeat_day = ?4 WHERE id = ?1 AND ${active}`)
+      .bind(this.ownerId, cardId, reviewId, day, card.seenAt && card.seenAt >= start ? 1 : 0)];
+    const schedule = rating === "skip" ? null : scheduleReview(card, rating, at);
+    if (schedule) {
+      statements.push(this.db.prepare(`INSERT INTO reviews (id, owner_id, card_id, deck_id, rating, interval_before, interval_after, reviewed_at)
+        SELECT ?3, ?1, ?2, ?4, ?5, ?6, ?7, ?8 WHERE ${active}`)
+        .bind(this.ownerId, cardId, reviewId, card.deckId, rating, card.intervalDays, schedule.intervalDays, stamp));
+      statements.push(this.db.prepare(`UPDATE cards SET ease = ?4, interval_days = ?5, reps = ?6, lapses = ?7, due_at = ?8,
+        last_reviewed_at = ?9, seen_at = ?9, updated_at = ?9 WHERE owner_id = ?1 AND id = ?2 AND ${active}`)
+        .bind(this.ownerId, cardId, reviewId, schedule.ease, schedule.intervalDays, schedule.reps, schedule.lapses, schedule.dueAt, stamp));
+    } else {
+      statements.push(this.db.prepare(`UPDATE cards SET seen_at = ?4 WHERE owner_id = ?1 AND id = ?2 AND ${active}`)
+        .bind(this.ownerId, cardId, reviewId, stamp));
+    }
+    statements.push(this.db.prepare("UPDATE study_turns SET state = ?4 WHERE owner_id = ?1 AND card_id = ?2 AND review_id = ?3 AND state = 'pending'")
+      .bind(this.ownerId, cardId, reviewId, rating === "skip" ? "skipped" : "graded"));
+    const results = await this.db.batch(statements);
+    if (!results.at(-1)?.meta.changes) throw new FlashcardError("That review was already completed. Call next_card to resume the active card.");
+    return { card: { ...card, ...(schedule ?? {}) }, deckId: turn.deckId ?? undefined, focus: turn.focus };
   }
 
   /** Counts new cards toward the next repeat; showing a card again resets it. */

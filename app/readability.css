@@ -1,4 +1,14 @@
 /* Shared reading defaults, after the desktop and phone layout rules. */
+.vox-shell[data-vox-theme="daylight"] .answer-link {
+  color: var(--dl-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  overflow-wrap: anywhere;
+}
+.vox-shell[data-vox-theme="daylight"] .answer-link:hover { text-decoration-thickness: 2px; }
+.vox-shell[data-vox-theme="daylight"] .answer-link:focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 3px; border-radius: 2px; }
+
 .vox-shell[data-vox-theme="daylight"] {
   font-size: 1rem;
   line-height: 1.5;

@@ -65,32 +65,18 @@ assert.equal(site.protectedResourceMetadata(origin).resource, "https://cards.exa
 assert.equal(site.isAllowedRedirectUri("https://vox.example/api/connections/callback"), true);
 assert.equal(site.isAllowedRedirectUri("http://evil.example/cb"), false);
 
-// Reviews only count when they are recorded: the tools say so, and several can be recorded at once.
+// The MCP contract requires one active review and a presentation token.
 {
   const { callTool, FLASHCARD_TOOLS, FLASHCARD_SERVER_INSTRUCTIONS } = await import("../flashcards-site/src/mcp.ts");
-  const { FlashcardError } = await import("../flashcards-site/src/store.ts");
   const tool = (name) => FLASHCARD_TOOLS.find((item) => item.name === name);
   assert.match(FLASHCARD_SERVER_INSTRUCTIONS, /not graded is not counted as reviewed/u);
   assert.match(FLASHCARD_SERVER_INSTRUCTIONS, /Never quiz from list_cards/u);
   assert.match(tool("list_cards").description, /records nothing/u);
   assert.deepEqual(tool("grade_card").annotations, { readOnlyHint: false, destructiveHint: false, openWorldHint: false });
-  assert.equal(tool("grade_cards").inputSchema.properties.reviews.maxItems, 30);
-  const graded = [];
-  const store = {
-    gradeCard: async (cardId, rating) => {
-      if (cardId === "gone") throw new FlashcardError("That card no longer exists.");
-      graded.push(`${cardId}:${rating}`);
-      return { id: cardId, dueAt: "2026-10-12T00:00:00.000Z" };
-    },
-    nextDueCard: async () => ({ card: { id: "next", front: "Q", back: "A", notes: null, reps: 0, lapses: 0 }, dueRemaining: 7 }),
-  };
-  const result = await callTool(store, "grade_cards", { reviews: [{ card_id: "a", rating: "good" }, { card_id: "b", rating: "again" }, { card_id: "a", rating: "easy" }, { card_id: "c", rating: "perfect" }, { card_id: "gone", rating: "good" }] });
-  assert.deepEqual(graded, ["a:good", "b:again"], "each card once; a repeat in the same list is not a second review");
-  assert.deepEqual(result.graded.map((item) => item.card_id), ["a", "b"]);
-  assert.deepEqual(result.failed, [{ card_id: "c", error: "Rating must be again, hard, good, or easy." }, { card_id: "gone", error: "That card no longer exists." }]);
-  assert.equal(result.next.card.card_id, "next");
-  assert.match(result.next.reminder, /until you do, the review is not recorded/u);
-  await assert.rejects(() => callTool(store, "grade_cards", { reviews: [] }), /Give the reviews to record/u);
+  assert.ok(tool("grade_card").inputSchema.required.includes("review_id"));
+  assert.ok(tool("skip_card").inputSchema.required.includes("review_id"));
+  assert.equal(tool("grade_cards").inputSchema.properties.reviews.maxItems, 1);
+  await assert.rejects(() => callTool({}, "grade_cards", { reviews: [{ card_id: "a", rating: "good" }, { card_id: "b", rating: "good" }] }), /Bulk grading is not allowed/u);
 }
 
 console.log("Flash-card checks passed.");

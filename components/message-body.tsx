@@ -1,7 +1,8 @@
 import { answerBlocks, withAmounts } from "@/lib/answer-layout";
+import { answerLinks } from "@/lib/answer-links";
 
 /** Amounts of money in a line, made to stand out a little so prices can be compared at a glance. */
-function Line({ text }: { text: string }) {
+function Amounts({ text }: { text: string }) {
   return (
     <>
       {withAmounts(text).map((run, index) =>
@@ -15,6 +16,14 @@ function Line({ text }: { text: string }) {
       )}
     </>
   );
+}
+
+function Line({ text }: { text: string }) {
+  return answerLinks(text).map((run, index) => run.href ? (
+    <a key={index} className="answer-link" href={run.href} title={run.href} target="_blank" rel="noopener noreferrer">
+      <Amounts text={run.text} />
+    </a>
+  ) : <Amounts key={index} text={run.text} />);
 }
 
 /**
@@ -44,7 +53,7 @@ export function MessageBody({ text, onChoose }: { text: string; /** The user tap
                     {choice}
                   </button>
                 ) : (
-                  <span key={choiceIndex}>{choice}</span>
+                  <span key={choiceIndex}><Line text={choice} /></span>
                 ),
               )}
             </div>
@@ -55,7 +64,7 @@ export function MessageBody({ text, onChoose }: { text: string; /** The user tap
           <List key={index} className="answer-list" data-named={block.items.some((item) => item.lead) ? "" : undefined}>
             {block.items.map((item, itemIndex) => (
               <li key={itemIndex}>
-                {item.lead ? <span className="answer-lead">{item.lead}</span> : null}
+                {item.lead ? <span className="answer-lead"><Line text={item.lead} /></span> : null}
                 <span className="answer-detail">
                   <Line text={item.detail} />
                 </span>

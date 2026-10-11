@@ -1,4 +1,6 @@
-// How a written reply is laid out on screen. Vox's replies are plain text;
+import { answerLinkRanges } from "./answer-links.ts";
+
+// How a written reply is laid out on screen. Vox's replies are text with inline citations;
 // when one lists options or steps it puts each on its own line starting with
 // "- ", name first, then " — " and the details. This reads that back into
 // paragraphs and lists, so a list of hotels looks like a list and not a wall
@@ -29,9 +31,14 @@ const MAX_LEAD = 64;
 
 function item(line: string): AnswerItem {
   const text = line.replace(/\*\*(.+?)\*\*/gu, "$1").trim();
+  // Separators inside source labels and URLs belong to the citation.
+  let separators = text;
+  for (const link of answerLinkRanges(text)) {
+    separators = separators.slice(0, link.start) + " ".repeat(link.end - link.start) + separators.slice(link.end);
+  }
   // "Name — details" or "Name: details". A colon inside a time or a ratio is not a separator.
-  const dash = /\s[—–]\s/u.exec(text);
-  const colon = /:\s|：\s?/u.exec(text);
+  const dash = /\s[—–]\s/u.exec(separators);
+  const colon = /:\s|：\s?/u.exec(separators);
   const cut = dash && dash.index <= MAX_LEAD ? { at: dash.index, size: dash[0].length } : colon && colon.index <= MAX_LEAD && colon.index > 0 ? { at: colon.index, size: colon[0].length } : null;
   if (!cut) return { lead: "", detail: text };
   const detail = text.slice(cut.at + cut.size).trim();
@@ -96,4 +103,4 @@ export function withAmounts(text: string): Array<{ text: string; amount: boolean
 
 /** Told to whatever writes a reply that will be read rather than heard. */
 export const WRITTEN_LAYOUT_INSTRUCTION =
-  "This reply will be read on a screen, not spoken. Write plain text laid out for reading: a short opening sentence, then, when you give options, results, or steps, one per line starting with “- ”, with the name first, then “ — ” and the key facts (price, rating, the one reason it matters), kept to a line or two each. Put any caveat or next question in a short closing line. Leave a blank line between parts. No headings, tables, bold, links, or other markup. A simple answer stays a sentence or two with no list. When you ask the user to choose, or tell them about something they can act on, do not leave it as an open question: under it give two or three choices, each on its own line starting with “→ ” and written as the short thing the user would say to have you do it (“→ Read it to me”, “→ Draft a reply saying yes”, “→ Remind me tonight”). Offer only what you can actually do, and make each choice the one that gets the thing resolved.";
+  "This reply will be read on a screen, not spoken. Write plain text laid out for reading: a short opening sentence, then, when you give options, results, or steps, one per line starting with “- ”, with the name first, then “ — ” and the key facts (price, rating, the one reason it matters), kept to a line or two each. Put any caveat or next question in a short closing line. Leave a blank line between parts. No headings, tables, bold, or other formatting. Cite web sources with named Markdown links like [source name](https://example.com/page), instead of bare addresses. A simple answer stays a sentence or two with no list. When you ask the user to choose, or tell them about something they can act on, do not leave it as an open question: under it give two or three choices, each on its own line starting with “→ ” and written as the short thing the user would say to have you do it (“→ Read it to me”, “→ Draft a reply saying yes”, “→ Remind me tonight”). Offer only what you can actually do, and make each choice the one that gets the thing resolved.";
