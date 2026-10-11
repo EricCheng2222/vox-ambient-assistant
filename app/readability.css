@@ -1,0 +1,42 @@
+/* Shared reading defaults, after the desktop and phone layout rules. */
+.vox-shell[data-vox-theme="daylight"] {
+  font-size: 1rem;
+  line-height: 1.5;
+  letter-spacing: normal;
+}
+
+.vox-shell[data-vox-theme="daylight"] :is(.composer input, .composer textarea) {
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.vox-shell[data-vox-theme="daylight"] :is(.text-xs, .settings-row-detail, .dash-note, .dash-rows span, .dash-facts dt, .vx-block .vx-hud) {
+  font-size: 0.875rem;
+}
+.vox-shell[data-vox-theme="daylight"] :is(.text-sm, .dash-text, .dash-list, .dash-rows strong) {
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+
+.vox-shell[data-vox-theme="daylight"] :is(.processing-line, .mac-task-status) {
+  color: var(--dl-ink-2);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  opacity: 1;
+}
+.vox-shell[data-vox-theme="daylight"] :is(.processing-elapsed, .message-receipt, .check-in-detail, .check-in-more, .settings-group-empty) {
+  color: var(--dl-ink-3);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  opacity: 1;
+}
+.vox-shell[data-vox-theme="daylight"] .check-in-question { font-size: 1rem; line-height: 1.5; }
+.vox-shell[data-vox-theme="daylight"] :is(.check-in-reply, .check-in-quiet button) { font-size: 0.875rem; }
+.vox-shell[data-vox-theme="daylight"] .check-in-quiet button { color: var(--dl-ink-2); opacity: 1; }
+.vox-shell[data-vox-theme="daylight"] .voice-status > p + p { color: var(--dl-ink-3); font-size: 0.875rem; }
+.vox-shell[data-vox-theme="daylight"] .transcript-clear { color: var(--dl-ink-3); opacity: 1; }
+
+/* Secondary text stays opaque so its contrast doesn't depend on the sky. */
+html[data-vox-theme="daylight"] :is([class*=" text-white/7"], [class*=" text-white/8"], [class*=" text-white/9"], [class^="text-white/7"], [class^="text-white/8"]) {
+  color: var(--dl-ink-2);
+}

@@ -36,14 +36,14 @@ button, select, textarea { font: inherit; }
 
 .desktop-context, .desktop-actions { display: flex; align-items: center; }
 .desktop-label {
-  color: rgba(222, 247, 255, 0.28);
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.2em;
+  color: #b8c8d1;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
 }
 
 .desktop-actions { gap: 10px; -webkit-app-region: no-drag; }
-.connection-state { display: flex; align-items: center; gap: 7px; color: rgba(222, 247, 255, 0.46); font-size: 11px; }
+.connection-state { display: flex; align-items: center; gap: 7px; color: #c9d5dc; font-size: 12px; }
 .connection-state i { width: 6px; height: 6px; border-radius: 50%; background: #80eece; box-shadow: 0 0 10px #80eece; }
 .connection-state.is-busy i { background: #f4ff74; box-shadow: 0 0 10px #f4ff74; }
 .connection-state.is-error i { background: #ff766c; box-shadow: 0 0 10px #ff766c; }

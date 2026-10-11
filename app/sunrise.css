@@ -1,36 +1,23 @@
 /*
  * Sunrise: the look of the light theme (its id stays "daylight"). One calm
  * column under a morning sky: the orb is the sun, the conversation sits
- * beneath it as plain text, and the message box rests at the bottom. Two
- * typefaces carry it: Bricolage Grotesque for the few things said large,
- * Hanken Grotesk for everything read. Layout for phones is in phone.css.
+ * beneath it as plain text, and the message box rests at the bottom.
+ * The system font keeps conversation and controls familiar and legible.
+ * Layout for phones is in phone.css.
  */
-@font-face {
-  font-family: "Bricolage Grotesque";
-  font-style: normal;
-  font-weight: 400 700;
-  font-display: swap;
-  src: url("/fonts/bricolage-grotesque.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Hanken Grotesk";
-  font-style: normal;
-  font-weight: 400 700;
-  font-display: swap;
-  src: url("/fonts/hanken-grotesk.woff2") format("woff2");
-}
 
 html[data-vox-theme="daylight"] {
   /* Ink and paper, as bare channels, so a tone can swap them (see Sunset). */
   --ink-rgb: 31 37 50;
   --paper-rgb: 255 255 255;
-  --sun-text: "Hanken Grotesk", "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
-  --sun-display: "Bricolage Grotesque", "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
+  --sun-text: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
+  --sun-display: var(--sun-text);
   --sun-gold: #f6a94a;
   --sun-ember: #ee7f52;
   --dl-ink: rgb(var(--ink-rgb));
-  --dl-ink-2: rgb(var(--ink-rgb) / 74%);
-  --dl-ink-3: rgb(var(--ink-rgb) / 60%);
+  --dl-ink-2: #384354;
+  --dl-ink-3: #4a5668;
+  --muted-foreground: var(--dl-ink-3);
   --dl-line: rgb(var(--ink-rgb) / 11%);
   --dl-glass: rgb(var(--paper-rgb) / 58%);
   --dl-glass-strong: rgb(var(--paper-rgb) / 82%);
@@ -116,7 +103,12 @@ html[data-vox-theme="daylight"] body,
   background: transparent;
 }
 .vox-shell[data-vox-theme="daylight"] .message-user { background: rgb(var(--paper-rgb) / 72%); }
-.vox-shell[data-vox-theme="daylight"] .message .message-copy { font-size: 1rem; line-height: 1.6; }
+.vox-shell[data-vox-theme="daylight"] .message .message-copy {
+  font-size: 1.0625rem;
+  line-height: 1.7;
+  font-weight: 400;
+  letter-spacing: normal;
+}
 .vox-shell[data-vox-theme="daylight"] .conversation-stream { gap: 0.9rem; }
 .vox-shell[data-vox-theme="daylight"] .composer {
   min-height: 3.25rem;
@@ -230,16 +222,16 @@ html[data-vox-theme="daylight"] body,
  */
 html[data-vox-theme="daylight"][data-vox-tone="sunset"] {
   color-scheme: dark;
-  --ink-rgb: 248 236 226;
+  --ink-rgb: 241 243 247;
   --paper-rgb: 38 28 60;
   --sun-gold: #f5a25a;
   --sun-ember: #e2574c;
   --dl-ink: rgb(var(--ink-rgb));
-  --dl-ink-2: rgb(var(--ink-rgb) / 88%);
-  --dl-ink-3: rgb(var(--ink-rgb) / 74%);
+  --dl-ink-2: #d8dce5;
+  --dl-ink-3: #b8bfce;
   --dl-line: rgb(var(--ink-rgb) / 16%);
   --background: #1b1836;
-  --muted-foreground: rgb(var(--ink-rgb) / 72%);
+  --muted-foreground: var(--dl-ink-3);
   --dl-glass: rgb(34 25 56 / 50%);
   --dl-glass-strong: rgb(36 27 58 / 86%);
   --dl-accent: #ffb48c;
@@ -249,8 +241,8 @@ html[data-vox-theme="daylight"][data-vox-tone="sunset"] {
 }
 .vox-shell[data-vox-theme="daylight"][data-vox-tone="sunset"] {
   background:
-    radial-gradient(42rem 26rem at 50% 4.5rem, rgb(226 87 76 / 30%), transparent 70%),
-    linear-gradient(180deg, #15132e 0%, #231b48 26%, #43275d 50%, #7c3562 70%, #bd4f5c 85%, #e98556 95%, #f6ad66 100%);
+    radial-gradient(42rem 26rem at 50% 4.5rem, rgb(226 87 76 / 8%), transparent 70%),
+    linear-gradient(180deg, #151725 0%, #202033 45%, #292335 75%, #332537 100%);
   background-attachment: fixed;
 }
 /* Colours that were chosen to read on a pale sky, re-chosen for a dark one. */
@@ -329,7 +321,7 @@ html[data-vox-theme="daylight"][data-vox-tone="sunset"] :is([data-slot="sheet-ov
 }
 .vox-shell[data-vox-theme="daylight"] .answer-list[data-named] > li:last-child { border-bottom: 1px solid rgb(var(--ink-rgb) / 13%); }
 .vox-shell[data-vox-theme="daylight"] .answer-lead { font-weight: 620; letter-spacing: -0.005em; }
-.vox-shell[data-vox-theme="daylight"] .answer-list[data-named] .answer-detail { color: rgb(var(--ink-rgb) / 74%); font-size: 0.94em; line-height: 1.5; }
+.vox-shell[data-vox-theme="daylight"] .answer-list[data-named] .answer-detail { color: var(--dl-ink-2); font-size: 1em; line-height: 1.65; }
 /* Plain points and steps: a quiet marker, no rules. */
 .vox-shell[data-vox-theme="daylight"] .answer-list:not([data-named]) { gap: 0.4rem; }
 .vox-shell[data-vox-theme="daylight"] .answer-list:not([data-named]) > li { position: relative; padding-left: 1.35rem; }

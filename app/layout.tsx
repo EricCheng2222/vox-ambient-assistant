@@ -5,6 +5,7 @@ import "./stage.css";
 import "./daylight.css";
 import "./sunrise.css";
 import "./phone.css";
+import "./readability.css";
 import "leaflet/dist/leaflet.css";
 
 export const metadata: Metadata = {
