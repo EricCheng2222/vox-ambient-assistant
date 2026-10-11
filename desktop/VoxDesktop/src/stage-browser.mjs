@@ -14,6 +14,8 @@ import { createVault, fieldKind, vaultHost } from "./secure-vault.mjs";
 
 const PARTITION = "persist:vox-browser";
 const MAX_READ_CHARACTERS = 20_000;
+// Web pages share the window with the conversation, so use a compact scale.
+const PAGE_ZOOM_FACTOR = 0.8;
 
 export function isBrowsableUrl(value) {
   try {
@@ -282,6 +284,11 @@ export function registerStageBrowser({ requireTrustedVoxSender, getWindow, getVo
     // The page sits inside the stage's browser frame as a rounded card.
     view.setBorderRadius?.(10);
     const contents = view.webContents;
+    contents.setZoomFactor(PAGE_ZOOM_FACTOR);
+    // Chromium remembers zoom by origin; keep new sites and reloads compact too.
+    for (const name of ["did-navigate", "dom-ready"]) {
+      contents.on(name, () => contents.setZoomFactor(PAGE_ZOOM_FACTOR));
+    }
     // Links that would open a new tab open here instead. A pop-up a page
     // opens for itself ("Continue with Google", a payment step) gets a small
     // window of its own, in the same profile, so it can hand its result back.
