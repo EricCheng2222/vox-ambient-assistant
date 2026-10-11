@@ -4,6 +4,12 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("voxLocalCodex", {
   available: true,
+  onTaskEvent: (listener) => {
+    if (typeof listener !== "function") return () => undefined;
+    const handler = (_event, value) => listener(value);
+    ipcRenderer.on("vox-task:event", handler);
+    return () => ipcRenderer.removeListener("vox-task:event", handler);
+  },
   // Vox checking on itself, repairing what it safely can, and updating after a full regression run.
   health: {
     check: () => ipcRenderer.invoke("vox-health:check"),
@@ -66,11 +72,13 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
   resolveApp: (text) => ipcRenderer.invoke("vox-desktop:resolve-app", typeof text === "string" ? text.slice(0, 12000) : ""),
   runTask: (request) =>
     ipcRenderer.invoke("vox-codex:voice-run", {
+      taskId: typeof request?.taskId === "string" ? request.taskId.slice(0, 36) : "",
       prompt: typeof request?.prompt === "string" ? request.prompt : "",
     }),
   openWorkspace: () => ipcRenderer.invoke("vox-desktop:open-workspace"),
   runDesktopControl: (request) =>
     ipcRenderer.invoke("vox-desktop:control", {
+      taskId: typeof request?.taskId === "string" ? request.taskId.slice(0, 36) : "",
       prompt: typeof request?.prompt === "string" ? request.prompt : "",
       appId: typeof request?.appId === "string" ? request.appId : "",
       intent: request?.intent === "interact" ? "interact" : "launch",

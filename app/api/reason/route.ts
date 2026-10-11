@@ -84,6 +84,7 @@ export async function POST(request: Request) {
     recentMessages?: unknown;
     jobId?: unknown;
     written?: unknown;
+    eventStream?: unknown;
   };
   // With a job id the answer is worked out in the background, so it survives
   // the app going away: whoever is there when it finishes gets it.
@@ -193,6 +194,11 @@ export async function POST(request: Request) {
     const key = `${auth.user.id}:${jobId}`;
     const responseId = finished.id;
     await startAnswerJob(auth.user.id, jobId, responseId, new Date().toISOString());
+    // The event subscriber watches the durable job, rather than keeping this
+    // POST open. Disconnecting the subscriber never cancels the provider job.
+    if (body.eventStream === true) {
+      return Response.json({ pending: true }, { status: 202, headers: { "Cache-Control": "no-store" } });
+    }
     const until = Date.now() + (isExpert ? 120_000 : 60_000);
     let state = backgroundState(finished);
     for (let polls = 1; state === "working" && Date.now() < until; polls += 1) {

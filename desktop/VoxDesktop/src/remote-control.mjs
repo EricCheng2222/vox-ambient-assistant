@@ -58,14 +58,22 @@ export function decryptRemoteCommand(secret, deviceId, envelope, now = Date.now(
   return payload;
 }
 
-export function encryptRemoteResult(secret, deviceId, commandId, result) {
+function encrypt(secret, deviceId, commandId, result, purpose) {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", decode(secret), iv);
-  cipher.setAAD(associatedData(deviceId, commandId, "result"));
+  cipher.setAAD(associatedData(deviceId, commandId, purpose));
   const ciphertext = Buffer.concat([
     cipher.update(JSON.stringify(result), "utf8"),
     cipher.final(),
     cipher.getAuthTag(),
   ]);
   return { ciphertext: ciphertext.toString("base64url"), iv: iv.toString("base64url") };
+}
+
+export function encryptRemoteResult(secret, deviceId, commandId, result) {
+  return encrypt(secret, deviceId, commandId, result, "result");
+}
+
+export function encryptRemoteTaskProgress(secret, deviceId, commandId, events) {
+  return encrypt(secret, deviceId, commandId, { version: 1, events }, "progress");
 }

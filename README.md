@@ -242,6 +242,30 @@ VOX_DESKTOP_DEV_URL=http://localhost:5173 npm start
 - `migrations/` — Cloudflare D1 schema
 - `scripts/` — tests and deployment preparation
 
+### Task events
+
+Long-running reasoning/web answers, local Codex work, and Mac website tasks share
+an [AG-UI](https://github.com/ag-ui-protocol/ag-ui) event adapter in
+`packages/task-events`. Each task has its own thread and public activity labels.
+Cloud answers support an authenticated SSE subscription through
+`GET /api/answer-jobs?id=…` with `Accept: text/event-stream`; interrupted streams
+fall back to the existing durable polling path. The answer text arrives when
+the background job finishes, rather than token by token.
+
+Desktop task events use the existing preload bridge. Paired devices receive
+bounded event snapshots through the encrypted command relay when the server
+advertises support at command pickup. Progress is
+disposable: completion events do not confirm delivery, disconnecting a stream
+does not cancel work, and existing result storage, speech, approval checks, and
+Personal-mode boundaries retain ownership. Browser attempts that need sign-in,
+approval, or user input end with that status; they do not claim resumable AG-UI
+interrupt support. Older clients can still use the original result APIs.
+
+Run `npm run test:task-events` to check schema compatibility, task isolation,
+stream recovery, browser approval stops, and encrypted progress. Desktop builds
+must include the local `@vox/task-events` package; rebuild the desktop app to
+enable its event bridge. There is no database migration for these adapters.
+
 ## Security model
 
 - Cloud sessions use signed, expiring, HttpOnly cookies scoped to opaque user IDs.

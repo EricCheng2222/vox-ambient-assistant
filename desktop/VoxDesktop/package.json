@@ -1,6 +1,6 @@
 {
   "name": "vox-desktop",
-  "version": "0.9.45",
+  "version": "0.9.46",
   "description": "Vox desktop companion with secure local Codex and smart-home bridges",
   "author": "Vox",
   "private": true,
@@ -17,7 +17,9 @@
     "beacon": "xcrun swiftc -O -target arm64-apple-macos12 -o resources/bin/vox-beacon native/vox-beacon.swift"
   },
   "dependencies": {
+    "@ag-ui/core": "1.0.2",
     "@openai/codex-sdk": "0.155.1",
+    "@vox/task-events": "file:../../packages/task-events",
     "bonjour-service": "^1.4.4",
     "mqtt": "^5.16.0",
     "sherpa-onnx-node": "1.13.8"

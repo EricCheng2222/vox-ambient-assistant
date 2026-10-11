@@ -5,6 +5,7 @@ import {
   getRemoteCommand,
   listPendingRemoteCommands,
   startRemoteCommand,
+  updateRemoteTaskProgress,
 } from "@/lib/remote-device-store";
 
 const noStore = { "Cache-Control": "no-store" };
@@ -63,12 +64,19 @@ export async function PATCH(request: Request) {
     }
     const started = await startRemoteCommand(auth.user.id, { id, deviceId });
     if (!started) return Response.json({ error: "Command is unavailable." }, { status: 409, headers: noStore });
-    return Response.json({ started: true }, { headers: noStore });
+    return Response.json({ started: true, taskEvents: 1 }, { headers: noStore });
   }
   const resultCiphertext = typeof body?.resultCiphertext === "string" ? body.resultCiphertext : "";
   const resultIv = typeof body?.resultIv === "string" ? body.resultIv : "";
   if (!idPattern.test(id) || !idPattern.test(deviceId) || !encodedPattern.test(resultCiphertext) || !encodedPattern.test(resultIv) || resultCiphertext.length > 320_000 || resultIv.length > 128) {
     return Response.json({ error: "Invalid encrypted result." }, { status: 400, headers: noStore });
+  }
+  if (body?.action === "progress") {
+    const updated = await updateRemoteTaskProgress(auth.user.id, { id, deviceId, resultCiphertext, resultIv });
+    return Response.json({ updated }, { status: updated ? 200 : 409, headers: noStore });
+  }
+  if (body?.action !== undefined && body.action !== "complete") {
+    return Response.json({ error: "Invalid command action." }, { status: 400, headers: noStore });
   }
   const completed = await completeRemoteCommand(auth.user.id, { id, deviceId, resultCiphertext, resultIv });
   if (!completed) return Response.json({ error: "Command is unavailable." }, { status: 409, headers: noStore });

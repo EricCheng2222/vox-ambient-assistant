@@ -259,3 +259,12 @@ export async function completeRemoteCommand(
     );
   return Number(result.meta.changes ?? 0) > 0;
 }
+
+/** Disposable encrypted progress uses the result slots while running. A
+ * completed result is immutable to progress, including late/retried writes.
+ */
+export async function updateRemoteTaskProgress(ownerId: string, input: { id: string; deviceId: string; resultCiphertext: string; resultIv: string }) {
+  const result = await getDb().update(remoteCommands).set({ resultCiphertext: input.resultCiphertext, resultIv: input.resultIv })
+    .where(and(eq(remoteCommands.ownerId, ownerId), eq(remoteCommands.deviceId, input.deviceId), eq(remoteCommands.id, input.id), eq(remoteCommands.status, "running"), gt(remoteCommands.expiresAt, new Date().toISOString())));
+  return Number(result.meta.changes ?? 0) > 0;
+}

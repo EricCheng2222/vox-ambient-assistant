@@ -1,5 +1,7 @@
 import { ANSWER_GIVE_UP_MS, answerText, backgroundState, fetchBackground, forgetBackground, getAnswerJob, isJobId, markAnswerJobSeen, settleAnswerJob, touchAnswerJob } from "@/lib/answer-jobs";
 import { requireUser } from "@/lib/auth";
+import { taskEventResponse } from "@/lib/task-event-stream";
+import { collectSources, type ResponsesPayload } from "@/lib/stage-answer";
 
 // The app asking after an answer it started and lost touch with (it was put
 // in the background, or the connection dropped). If the answer is ready it is
@@ -13,7 +15,19 @@ export async function GET(request: Request) {
   if ("response" in auth) return auth.response;
   const jobId = new URL(request.url).searchParams.get("id");
   if (!isJobId(jobId)) return Response.json({ error: "Which answer?" }, { status: 400, headers: noStore });
-  const job = await getAnswerJob(auth.user.id, jobId);
+  const initial = await getAnswerJob(auth.user.id, jobId);
+  if (!initial) return Response.json({ status: "unknown" }, { status: 404, headers: noStore });
+  if (request.headers.get("Accept")?.includes("text/event-stream") && initial.responseId.startsWith("resp_")) {
+    return taskEventResponse(jobId, async () => {
+      const response = await answerStatus(auth.user.id, jobId);
+      return response.json();
+    }, request.signal);
+  }
+  return answerStatus(auth.user.id, jobId);
+}
+
+async function answerStatus(ownerId: string, jobId: string) {
+  const job = await getAnswerJob(ownerId, jobId);
   if (!job) return Response.json({ status: "unknown" }, { status: 404, headers: noStore });
   if (job.status !== "running") return Response.json({ status: job.status }, { headers: noStore });
   // A task on the user's Mac: it reports for itself.
@@ -37,7 +51,9 @@ export async function GET(request: Request) {
     return Response.json({ status: "failed" }, { headers: noStore });
   }
   // Handed over, not yet confirmed: the app confirms with POST once it has shown it.
-  return Response.json({ status: "done", answer: answerText(payload) }, { headers: noStore });
+  const sources = collectSources(payload as ResponsesPayload);
+  const stage = sources.length ? { id: jobId, title: "Sources", sources, blocks: [], createdAt: Date.parse(job.createdAt) } : undefined;
+  return Response.json({ status: "done", answer: answerText(payload), ...(stage ? { stage } : {}) }, { headers: noStore });
 }
 
 /** The app confirming it received and showed an answer. From here the server's timer leaves the job alone. */

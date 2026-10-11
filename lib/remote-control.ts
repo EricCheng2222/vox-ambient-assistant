@@ -1,6 +1,7 @@
 export type RemoteMacCommand =
   | {
       kind: "desktop_control";
+      taskId?: string;
       prompt: string;
       appId: string;
       intent: "launch" | "interact";
@@ -9,7 +10,7 @@ export type RemoteMacCommand =
   | { kind: "open_workspace" }
   | { kind: "smart_home"; prompt: string; deviceId?: string }
   | { kind: "phone_mac"; prompt: string }
-  | { kind: "local_codex"; prompt: string }
+  | { kind: "local_codex"; prompt: string; taskId?: string }
   // The websites signed in on the Mac, used from the phone or tablet.
   | { kind: "browser"; op: "look"; open?: string }
   | { kind: "browser"; op: "act"; request: { ref?: number; action: string; text?: string } }
@@ -60,7 +61,7 @@ function claimText(deviceId: string, claimId: string, label: string) {
   return `vox-pair-claim-v1\n${deviceId}\n${claimId}\n${label}`;
 }
 
-function associatedData(deviceId: string, commandId: string, purpose: "command" | "result") {
+function associatedData(deviceId: string, commandId: string, purpose: "command" | "result" | "progress") {
   return encoder.encode(`vox-remote-${purpose}-v1:${deviceId}:${commandId}`);
 }
 
@@ -147,5 +148,15 @@ export async function decryptRemoteResult(
     ok: boolean;
     answer?: string;
     error?: string;
+    events?: unknown[];
   };
+}
+
+/** Progress cannot be substituted for a result or replayed for another command. */
+export async function decryptRemoteTaskProgress(pairing: StoredRemoteMacPairing, commandId: string, ciphertext: string, iv: string) {
+  const plaintext = await crypto.subtle.decrypt({
+    name: "AES-GCM", iv: base64UrlToBytes(iv), additionalData: associatedData(pairing.deviceId, commandId, "progress"),
+  }, await aesKey(pairing.secret), base64UrlToBytes(ciphertext));
+  const payload = JSON.parse(decoder.decode(plaintext)) as { version?: number; events?: unknown };
+  return payload.version === 1 && Array.isArray(payload.events) ? payload.events.slice(-12) : [];
 }

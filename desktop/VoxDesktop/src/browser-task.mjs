@@ -14,6 +14,8 @@
 // that step changed nothing, and when the steps run out it asks once more for
 // the best answer from what was found instead of reporting only that it stopped.
 
+import { createTaskRun } from "@vox/task-events";
+
 export const MAX_TASK_STEPS = 20;
 export const MAX_TASK_MS = 4 * 60_000;
 /** A step that changed nothing may be taken this many times; after that it is refused. */
@@ -102,6 +104,19 @@ export function isHumanCheck(look) {
  * Resolves to { status, answer, url, steps }.
  */
 export async function runBrowserTask(task, deps) {
+  const run = createTaskRun({ taskId: task?.taskId || crypto.randomUUID(), kind: "browser", emit: (event) => deps.onTaskEvent?.(event) });
+  run.start();
+  try {
+    const result = await runBrowserTaskSteps(task, deps, run);
+    run.finish(result.answer, { status: result.status, steps: result.steps, ...(result.partial ? { partial: true } : {}) });
+    return result;
+  } catch (error) {
+    run.fail("The browser task could not finish.", deps.signal?.aborted ? "CANCELLED" : "TASK_FAILED");
+    throw error;
+  }
+}
+
+async function runBrowserTaskSteps(task, deps, run) {
   const goal = clip(task?.goal, 1_200);
   // What was said just before, so the server can tell what "that day" refers to.
   const context = String(task?.context ?? "").trim().slice(0, 1_500);
@@ -122,11 +137,14 @@ export async function runBrowserTask(task, deps) {
   // What was done, step by step, goes back with the result: when a task goes wrong, this says where.
   const finish = (result) => ({ ...result, trail: history.slice(-24).map((entry) => clip(`${entry.did}${entry.result ? ` -> ${entry.result}` : ""}`, 150)) });
   if (task?.url && isHttps(task.url)) {
+    run.progress("Opening a page");
     await deps.open(task.url);
     await deps.wait(2_500);
     history.push({ did: `opened ${hostOf(task.url)}` });
   }
   while (steps < MAX_TASK_STEPS && refusals < MAX_REFUSALS && deps.now() - started < MAX_TASK_MS) {
+    deps.signal?.throwIfAborted();
+    run.progress("Reading the page");
     const look = await deps.look();
     url = look?.url ?? url;
     // What the last step did, said plainly, and counted when it was nothing.
@@ -145,6 +163,7 @@ export async function runBrowserTask(task, deps) {
       return finish({ status: "need_sign_in", answer: zh ? `${hostOf(url)} 要求登入。` : `${hostOf(url)} is asking you to sign in.`, url, steps });
     }
     let step;
+    run.progress("Planning the next step");
     try {
       step = (await deps.next(question(look, { stepsLeft: MAX_TASK_STEPS - steps - 1 })))?.step;
     } catch {
@@ -152,6 +171,7 @@ export async function runBrowserTask(task, deps) {
     }
     if (!step) return finish({ status: "stopped", answer: zh ? "中途無法決定下一步。" : "It couldn't work out the next step partway through.", url, steps });
     steps += 1;
+    deps.signal?.throwIfAborted();
     if (step.action === "done") return finish({ status: "done", answer: answerText(step.answer, 2_400) || (zh ? "完成了。" : "Done."), url, steps });
     if (step.action === "need_user") return finish({ status: "need_user", answer: clip(step.answer, 600) || (zh ? "需要你的協助。" : "It needs you."), url, steps });
     const scrolling = step.action === "scroll_down" || step.action === "scroll_up";
@@ -177,6 +197,7 @@ export async function runBrowserTask(task, deps) {
       }
       before = look;
       lastKey = key;
+      run.progress("Opening a page");
       await deps.open(step.url);
       await deps.wait(2_500);
       history.push({ did: `opened ${hostOf(step.url)}` });
@@ -196,6 +217,7 @@ export async function runBrowserTask(task, deps) {
     }
     before = look;
     lastKey = key;
+    run.progress(({ click: "Clicking on the page", type: "Typing into a field", select: "Selecting an option", press_enter: "Submitting a field", scroll_down: "Scrolling the page", scroll_up: "Scrolling the page" })[step.action] || "Working on the page");
     const result = await deps.act({ action: step.action, ref: step.ref ?? undefined, text: step.text ?? "" });
     history.push({ did: scrolling ? step.action.replace("_", " ") : `${step.action.replace("_", " ")} “${label}”${step.action === "type" ? ` with “${clip(step.text, 60)}”` : ""}`, result: clip(result?.message, 120) });
     // The page refused a secret field: only the user can fill that in.
@@ -207,6 +229,7 @@ export async function runBrowserTask(task, deps) {
   // Out of steps or time. What was found on the way is still worth having:
   // one last question, answered from the page as it stands.
   try {
+    run.progress("Collecting what was found");
     const look = await deps.look();
     url = look?.url ?? url;
     const last = (await deps.next(question(look, { stepsLeft: 0, final: true })))?.step;

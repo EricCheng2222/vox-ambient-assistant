@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import QRCode from "qrcode";
+import { useTaskProgress } from "@/hooks/use-task-progress";
+import { readTaskEventResponse } from "@/lib/task-event-client";
+import { decryptRemoteTaskProgress } from "@/lib/remote-control";
 import type {
   CSSProperties,
   FormEvent,
@@ -616,6 +619,7 @@ declare global {
       deletePlace?: (name: string) => Promise<string[]>;
     };
     readonly voxLocalCodex?: {
+      onTaskEvent?: (listener: (event: unknown) => void) => () => void;
       available: boolean;
       getConnectionStatus?: () => Promise<{
         mode: ConnectionMode | null;
@@ -678,7 +682,7 @@ declare global {
         prompt: string;
       }) => Promise<{ answer?: string }>;
       resolveApp?: (text: string) => Promise<{ id: `installed:${string}`; name: string; appOnly: boolean } | null>;
-      runTask: (request: { prompt: string }) => Promise<{
+      runTask: (request: { prompt: string; taskId?: string }) => Promise<{
         canceled: boolean;
         answer?: string;
       }>;
@@ -687,6 +691,7 @@ declare global {
         name?: string;
       }>;
       runDesktopControl: (request: {
+        taskId?: string;
         mode?: "fast" | "standard";
         prompt: string;
         appId: string;
@@ -1500,6 +1505,8 @@ export default function Home() {
   // Work that carries on when the app is put away: remembered so that on return
   // the app can say it is still running, and collect the result.
   const [workingJobs, setWorkingJobs] = useState<WorkingJob[]>([]);
+  const { tasks: taskProgress, register: registerTaskProgress, forget: forgetTaskProgress, accept: acceptTaskEvent } = useTaskProgress();
+  useEffect(() => window.voxLocalCodex?.onTaskEvent?.(acceptTaskEvent), [acceptTaskEvent]);
   // Jobs a request in this page is still waiting on (it will handle the result itself).
   const liveJobsRef = useRef<Set<string>>(new Set());
   const workingJobsRef = useRef<WorkingJob[]>([]);
@@ -1515,9 +1522,14 @@ export default function Home() {
     void fetch("/api/answer-jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }).catch(() => undefined);
   }
   useEffect(() => {
-    queueMicrotask(() => setWorkingJobs(loadWorkingJobs()));
-  }, []);
+    queueMicrotask(() => {
+      const jobs = loadWorkingJobs();
+      for (const job of jobs) registerTaskProgress(job.id);
+      setWorkingJobs(jobs);
+    });
+  }, [registerTaskProgress]);
   function trackJob(job: WorkingJob) {
+    registerTaskProgress(job.id);
     liveJobsRef.current.add(job.id);
     setWorkingJobs((current) => {
       const next = [...current.filter((item) => item.id !== job.id), job];
@@ -1526,6 +1538,7 @@ export default function Home() {
     });
   }
   function untrackJob(id: string) {
+    forgetTaskProgress(id);
     liveJobsRef.current.delete(id);
     setWorkingJobs((current) => {
       const next = current.filter((item) => item.id !== id);
@@ -3062,13 +3075,13 @@ export default function Home() {
     const queuedPayload = (await queued.json().catch(() => ({}))) as { error?: string };
     if (!queued.ok) throw new MacSaid(queuedPayload.error ?? "The Mac did not accept the command.");
     onQueued?.({ commandId, deviceId: pairing.deviceId });
-    return awaitRemoteMacResult(pairing, commandId);
+    return awaitRemoteMacResult(pairing, commandId, "taskId" in command ? command.taskId : undefined);
   }
 
   // Waits for a relayed command's encrypted result. The Mac must pick the
   // command up within its queue window; once it reports "running", the wait
   // extends to the server's deadline so long Computer Use tasks can finish.
-  async function awaitRemoteMacResult(pairing: StoredRemoteMacPairing, commandId: string) {
+  async function awaitRemoteMacResult(pairing: StoredRemoteMacPairing, commandId: string, taskId?: string) {
     remoteResultPollsRef.current.add(commandId);
     try {
       let deadline = Date.now() + 125_000;
@@ -3112,11 +3125,16 @@ export default function Home() {
             command.resultCiphertext,
             command.resultIv,
           );
+          for (const event of result.events ?? []) acceptTaskEvent(event, taskId || commandId);
           if (!result.ok) throw new MacSaid(result.error ?? "The Mac could not complete the command.");
           return { canceled: false, answer: result.answer ?? "The Mac completed the command." };
         }
         const expiresAt = command?.expiresAt ? Date.parse(command.expiresAt) : Number.NaN;
         if (command?.status === "running") {
+          if (command.resultCiphertext && command.resultIv) {
+            const events = await decryptRemoteTaskProgress(pairing, commandId, command.resultCiphertext, command.resultIv).catch(() => []);
+            for (const event of events) acceptTaskEvent(event, taskId || commandId);
+          }
           delay = 2_000;
           if (Number.isFinite(expiresAt)) deadline = Math.max(deadline, expiresAt + 5_000);
         } else if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
@@ -3150,6 +3168,7 @@ export default function Home() {
   }
 
   function endMacTask(taskId: string) {
+    forgetTaskProgress(taskId);
     macTasksRef.current.delete(taskId);
     writePersistedMacTasks(readPersistedMacTasks().filter((task) => task.id !== taskId));
     publishMacTasks();
@@ -3199,7 +3218,7 @@ export default function Home() {
     prompt: string;
     language: ResponseLanguage;
     isCurrentTurn: () => boolean;
-    run: (onQueued: (queued: { commandId: string; deviceId: string }) => void) => Promise<T>;
+    run: (onQueued: (queued: { commandId: string; deviceId: string }) => void, taskId: string) => Promise<T>;
   }): Promise<MacTaskOutcome<T>> {
     const task: MacTask = {
       id: crypto.randomUUID(),
@@ -3209,13 +3228,14 @@ export default function Home() {
       progressNoted: false,
     };
     macTasksRef.current.set(task.id, task);
+    registerTaskProgress(task.id);
     publishMacTasks();
     try {
       const result = await options.run((queued) => {
         task.commandId = queued.commandId;
         task.deviceId = queued.deviceId;
         persistMacTask(task);
-      });
+      }, task.id);
       endMacTask(task.id);
       if (options.isCurrentTurn()) return { current: true, result };
       queueMacTaskReport({
@@ -3257,7 +3277,8 @@ export default function Home() {
         macTasksRef.current.set(saved.id, { ...saved, progressNoted: true });
         publishMacTasks();
       }
-      void awaitRemoteMacResult(pairing, saved.commandId)
+      registerTaskProgress(saved.id);
+      void awaitRemoteMacResult(pairing, saved.commandId, saved.id)
         .then((result) => {
           endMacTask(saved.id);
           queueMacTaskReport({
@@ -6255,9 +6276,10 @@ export default function Home() {
           prompt: completeText,
           language: turnLanguage,
           isCurrentTurn,
-          run: () =>
+          run: (_onQueued, taskId) =>
             runWithFrontVoice("desktop_control", () =>
               desktop.runDesktopControl({
+                taskId,
                 mode: "fast",
                 appId: "safari",
                 intent: "interact",
@@ -6681,7 +6703,7 @@ export default function Home() {
           throw new Error("Desktop control is not available.");
         }
         const desktopRequest = {
-          mode: pendingDesktopAction.computerUseMode,
+          mode: pendingDesktopAction.computerUseMode ?? "standard",
           prompt: withTaskContext(`Current user request: ${pendingDesktopAction.prompt}`),
           appId: pendingDesktopAction.control.appId,
           intent: pendingDesktopAction.control.intent,
@@ -6690,11 +6712,11 @@ export default function Home() {
           prompt: pendingDesktopAction.prompt,
           language: pendingDesktopAction.language,
           isCurrentTurn,
-          run: (onQueued) =>
+          run: (onQueued, taskId) =>
             runWithFrontVoice("desktop_control", () =>
               typeof desktopBridge?.runDesktopControl === "function"
-                ? desktopBridge.runDesktopControl(desktopRequest)
-                : sendRemoteMacCommand({ kind: "desktop_control", ...desktopRequest }, onQueued),
+                ? desktopBridge.runDesktopControl({ ...desktopRequest, taskId })
+                : sendRemoteMacCommand({ kind: "desktop_control", ...desktopRequest, taskId }, onQueued),
             ),
         });
         if (!tracked.current) return;
@@ -6951,7 +6973,7 @@ export default function Home() {
         if (!isCurrentTurn()) return;
         if ("opened" in result && !result.opened) throw new Error("The selected folder could not be opened.");
         const openedName = "name" in result ? result.name : undefined;
-        desktopContextRef.current = { control: { appId: "finder", appName: "Finder", intent: "interact" }, prompt: completeText, answer: result.answer ?? `Opened selected folder ${openedName ?? ""} in Finder.`, at: Date.now() };
+        desktopContextRef.current = { control: { appId: "finder", appName: "Finder", intent: "interact" }, prompt: completeText, answer: ("answer" in result ? result.answer : undefined) ?? `Opened selected folder ${openedName ?? ""} in Finder.`, at: Date.now() };
         sendTurnResponse(
           "desktop_action_completed",
           turnLanguage === "taiwan_mandarin"
@@ -6986,11 +7008,11 @@ export default function Home() {
             prompt: completeText,
             language: turnLanguage,
             isCurrentTurn,
-            run: (onQueued) =>
+            run: (onQueued, taskId) =>
               runWithFrontVoice("desktop_control", () =>
                 bridge?.available
-                  ? bridge.runDesktopControl(desktopRequest)
-                  : sendRemoteMacCommand({ kind: "desktop_control", ...desktopRequest }, onQueued),
+                  ? bridge.runDesktopControl({ ...desktopRequest, taskId })
+                  : sendRemoteMacCommand({ kind: "desktop_control", ...desktopRequest, taskId }, onQueued),
               ),
           });
           const result = tracked.result;
@@ -7083,11 +7105,11 @@ export default function Home() {
           prompt: completeText,
           language: turnLanguage,
           isCurrentTurn,
-          run: (onQueued) =>
+          run: (onQueued, taskId) =>
             runWithFrontVoice(selectedRoute, () =>
               localCodex?.available
-                ? localCodex.runTask({ prompt: withTaskContext(completeText) })
-                : sendRemoteMacCommand({ kind: "local_codex", prompt: withTaskContext(completeText) }, onQueued),
+                ? localCodex.runTask({ prompt: withTaskContext(completeText), taskId })
+                : sendRemoteMacCommand({ kind: "local_codex", prompt: withTaskContext(completeText), taskId }, onQueued),
             ),
         });
         if (!tracked.current) return;
@@ -8355,11 +8377,24 @@ export default function Home() {
       answerJobIdsRef.current.set(payload.answer, jobId);
       return Response.json(payload);
     };
-    const first = await fetch("/api/reason", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, jobId, written: quietSessionRef.current }) }).catch(() => null);
+    const first = await fetch("/api/reason", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, jobId, written: quietSessionRef.current, eventStream: true }) }).catch(() => null);
     if (first && first.status !== 202) {
       if (!first.ok) return first;
       const payload = (await first.json().catch(() => ({}))) as { answer?: string; stage?: unknown; model?: string };
       return payload.answer ? hand(payload) : Response.json(payload);
+    }
+    // Subscribe when supported. An interrupted stream falls back to the same
+    // durable polling path used after suspension or with an older server.
+    if (first?.status === 202) {
+      const observed = await fetch(`/api/answer-jobs?id=${jobId}`, { headers: { Accept: "text/event-stream" }, cache: "no-store", signal: AbortSignal.timeout(65_000) })
+        .then((response) => readTaskEventResponse(response, jobId, (event) => acceptTaskEvent(event, jobId)))
+        .catch(() => undefined);
+      if (observed?.status === "completed" && observed.answer) {
+        const stage = observed.result?.stage as StageContent | undefined;
+        return hand({ answer: typeof observed.result?.answer === "string" ? observed.result.answer : observed.answer, ...(stage ? { stage: { ...stage, title: typeof body.text === "string" ? body.text.trim().slice(0, 120) : stage.title } } : {}) });
+      }
+      if (observed?.status === "delivered") throw new AnswerAlreadyDelivered();
+      if (observed?.status === "failed") return failure();
     }
     // Away, cut off, or simply taking long: the answer is still being worked out.
     const until = Date.now() + 6 * 60_000;
@@ -8368,8 +8403,8 @@ export default function Home() {
       const response = await fetch(`/api/answer-jobs?id=${jobId}`, { cache: "no-store" }).catch(() => null);
       if (!response) continue;
       if (response.status === 404) return failure();
-      const job = (await response.json().catch(() => ({}))) as { status?: string; answer?: string };
-      if (job.status === "done" && job.answer) return hand({ answer: job.answer });
+      const job = (await response.json().catch(() => ({}))) as { status?: string; answer?: string; stage?: StageContent };
+      if (job.status === "done" && job.answer) return hand({ answer: job.answer, ...(job.stage ? { stage: job.stage } : {}) });
       if (job.status === "delivered" || job.status === "seen") throw new AnswerAlreadyDelivered();
       if (job.status === "failed") return failure();
     }
@@ -9098,7 +9133,7 @@ export default function Home() {
                 <span className="truncate">
                   {macTasks.length > 1
                     ? `${macTasks.length} tasks running on your Mac`
-                    : `Mac is working: ${macTasks[0].label}`}
+                    : `Mac is working: ${macTasks[0].label}${taskProgress[macTasks[0].id]?.phase ? ` · ${taskProgress[macTasks[0].id].phase}` : ""}`}
                 </span>
               </div>
             )}
@@ -9368,7 +9403,7 @@ export default function Home() {
             )}
             {workingJobs
               // While a reply is visibly being worked on, its own line already says so.
-              .filter((job) => !(processingLabel && liveJobsRef.current.has(job.id)))
+              .filter((job) => !(processingLabel && liveJobsRef.current.has(job.id) && !taskProgress[job.id]?.phase))
               .map((job) => (
                 <article key={job.id} className="message message-assistant message-processing" aria-live="polite">
                   <p className="processing-line">
@@ -9381,6 +9416,7 @@ export default function Home() {
                       {job.kind === "mac" ? "Working on your Mac" : "Still working"}
                       {job.label ? `: “${job.label.length > 60 ? `${job.label.slice(0, 59)}…` : job.label}”` : ""}
                     </span>
+                    {taskProgress[job.id]?.phase ? <span className="processing-elapsed">· {taskProgress[job.id].phase}</span> : null}
                     <WorkingSince startedAt={job.startedAt} />
                     {job.kind === "mac" ? <span className="processing-elapsed">· you can leave the app</span> : null}
                   </p>

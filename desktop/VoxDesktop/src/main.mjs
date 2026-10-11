@@ -44,6 +44,8 @@ import { registerStageBrowser } from "./stage-browser.mjs";
 import { registerPageWatch } from "./page-watch.mjs";
 import { registerWebAccounts } from "./web-accounts.mjs";
 import { runBrowserTask } from "./browser-task.mjs";
+import { createCodexTaskRun } from "./codex-task-events.mjs";
+import { createTaskEventRelay } from "./task-event-relay.mjs";
 import {
   availableSmartHomeAdapters,
   configureSmartHomeDevice,
@@ -62,6 +64,7 @@ import {
 import {
   decryptRemoteCommand,
   encryptRemoteResult,
+  encryptRemoteTaskProgress,
   verifyPairingClaim,
 } from "./remote-control.mjs";
 
@@ -458,6 +461,12 @@ function sendCodexEvent(payload) {
   mainWindow.webContents.send("vox-codex:event", payload);
 }
 
+function sendTaskEvent(event) {
+  if (voxView && !voxView.webContents.isDestroyed()) voxView.webContents.send("vox-task:event", event);
+}
+
+const requestedTaskId = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(value) ? value : randomUUID();
+
 function packagedCodexPath() {
   if (!app.isPackaged) return undefined;
   return codexBinaryPath(path.join(process.resourcesPath, "app.asar.unpacked", "node_modules"));
@@ -538,6 +547,12 @@ async function runCodexTask(taskId, request) {
   const abortController = new AbortController();
   activeTask = { id: taskId, abortController };
   const canEdit = request.access === "workspace-write";
+  const taskRun = createCodexTaskRun({ taskId, emit: (event) => {
+    sendTaskEvent(event);
+    request.onTaskEvent?.(event);
+  } });
+  taskRun.start();
+  taskRun.progress(request.computerControl ? "Working in the approved app" : "Working through the task");
 
   try {
     const codex = new Codex({
@@ -604,6 +619,7 @@ async function runCodexTask(taskId, request) {
               : `${request.targetAppName} has been closed.`)
           : "",
         onItem: (rawItem) => {
+          taskRun.accept({ type: "item.completed", item: rawItem });
           const item = summarizeThreadItem(rawItem);
           if (item) sendCodexEvent({ taskId, type: "progress", item });
         },
@@ -611,6 +627,7 @@ async function runCodexTask(taskId, request) {
       if (!answer?.trim()) throw new Error("Local Computer Use returned no final response.");
       const finalResponse = redactSensitiveOutput(truncate(answer, 4_000));
       sendCodexEvent({ taskId, type: "completed", finalResponse });
+      taskRun.finish(finalResponse, { status: "completed" });
       return { status: "completed", finalResponse };
     }
     const { events } = await thread.runStreamed(prompt, { signal: abortController.signal });
@@ -619,6 +636,7 @@ async function runCodexTask(taskId, request) {
     let computerUseApprovalMissing = false;
 
     for await (const event of events) {
+      taskRun.accept(event);
       if (event.type === "thread.started") {
         sendCodexEvent({ taskId, type: "thread", threadId: event.thread_id });
       } else if (event.type === "item.completed") {
@@ -656,16 +674,19 @@ async function runCodexTask(taskId, request) {
         ? `本機 Computer Use 尚未獲准操作 ${request.targetAppName}。請在 ChatGPT／Codex 的「設定 → Computer Use」允許這個 App，再試一次。Vox 已收到你的口頭確認，但無法代替你批准平台權限。`
         : `Local Computer Use has not been approved for ${request.targetAppName}. Allow that app in ChatGPT/Codex Settings → Computer Use, then retry. Vox received your spoken confirmation, but cannot approve the platform permission on your behalf.`;
       sendCodexEvent({ taskId, type: "failed", message });
+      taskRun.fail(message, "SETUP_REQUIRED");
       return { status: "setup-required", message };
     }
     if (request.computerControl && computerUseUnavailable) {
       const message = computerUseSetupMessage(request.prompt);
       sendCodexEvent({ taskId, type: "failed", message });
+      taskRun.fail(message, "SETUP_REQUIRED");
       return { status: "setup-required", message };
     }
     const safeFinalResponse = truncate(finalResponse, 20_000);
     if (!safeFinalResponse.trim()) throw new Error("Local Codex returned no final response.");
     sendCodexEvent({ taskId, type: "completed", finalResponse: safeFinalResponse });
+    taskRun.finish(redactSensitiveOutput(safeFinalResponse), { status: "completed" });
     return {
       status: "completed",
       finalResponse: request.voice
@@ -682,6 +703,7 @@ async function runCodexTask(taskId, request) {
       type: cancelled ? "cancelled" : "failed",
       message,
     });
+    taskRun.fail(cancelled ? "Local Codex task cancelled." : "Local Codex could not finish the task.", cancelled ? "CANCELLED" : "TASK_FAILED");
     return { status: cancelled ? "cancelled" : "failed", message };
   } finally {
     if (activeTask?.id === taskId) activeTask = null;
@@ -739,7 +761,7 @@ async function savedOrChosenWorkspace() {
  * Each step is thought out here, under the user's ChatGPT sign-in, and only
  * asked of the paid API when that isn't possible.
  */
-async function runWebsiteTask(command) {
+async function runWebsiteTask(command, onTaskEvent) {
   if (!stageBrowser) throw new Error("The Mac's browser isn't ready yet.");
   const taskId = typeof command.taskId === "string" && /^[0-9a-f-]{36}$/u.test(command.taskId) ? command.taskId : "";
   if (taskId) await cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "start" }) }).catch(() => undefined);
@@ -755,6 +777,7 @@ async function runWebsiteTask(command) {
     next: planner.next,
     now: () => Date.now(),
     wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    onTaskEvent: (event) => { sendTaskEvent(event); onTaskEvent?.(event); },
   });
   // The result goes into the conversation now, whether or not the device that
   // asked is still around; if it never shows it on screen, a notice follows.
@@ -784,7 +807,7 @@ async function performRemoteSmartHomeCommand(command) {
   return result?.answer ?? result?.status ?? "The smart-home command completed.";
 }
 
-async function performRemoteDesktopControl(command) {
+async function performRemoteDesktopControl(command, taskContext = {}) {
   if (activeTask || taskLaunchPending) throw new Error("The Mac is already working on another local task.");
   const prompt = typeof command.prompt === "string" ? command.prompt.trim() : "";
   if (!prompt || prompt.length > maximumPromptLength) throw new Error("The remote desktop request is invalid.");
@@ -813,7 +836,8 @@ async function performRemoteDesktopControl(command) {
       return `${appPolicy.name} is already closed.`;
     }
     const workspace = await computerControlWorkingDirectory();
-    const result = await runCodexTask(randomUUID(), {
+    const result = await runCodexTask(taskContext.taskId || randomUUID(), {
+      onTaskEvent: taskContext.onTaskEvent,
       prompt,
       workspace,
       access: "read-only",
@@ -841,7 +865,7 @@ async function performRemoteDesktopControl(command) {
   }
 }
 
-async function performPhoneMacRequest(command) {
+async function performPhoneMacRequest(command, taskContext = {}) {
   const prompt = typeof command.prompt === "string" ? command.prompt.trim() : "";
   if (!prompt || prompt.length > maximumPromptLength) {
     throw new Error("The phone request is invalid.");
@@ -874,7 +898,7 @@ async function performPhoneMacRequest(command) {
       appId: targetApp.id,
       intent: phoneDesktopIntent(prompt, explicit?.appOnly),
       mode: "fast",
-    });
+    }, taskContext);
   }
   if (isPhoneDesktopAction(prompt)) {
     throw new Error(
@@ -883,10 +907,10 @@ async function performPhoneMacRequest(command) {
         : "I could not determine which app to control. Name the app, or bring it to the front on the Mac first.",
     );
   }
-  return performRemoteCodexTask({ kind: "local_codex", prompt });
+  return performRemoteCodexTask({ kind: "local_codex", prompt }, taskContext);
 }
 
-async function performRemoteCodexTask(command) {
+async function performRemoteCodexTask(command, taskContext = {}) {
   if (activeTask || taskLaunchPending) throw new Error("The Mac is already working on another local task.");
   const prompt = typeof command.prompt === "string" ? command.prompt.trim() : "";
   if (!prompt || prompt.length > maximumPromptLength) throw new Error("The remote Codex request is invalid.");
@@ -905,7 +929,8 @@ async function performRemoteCodexTask(command) {
   if (confirmation.response !== 0) return "The Codex task was declined on the Mac.";
   taskLaunchPending = true;
   try {
-    const result = await runCodexTask(randomUUID(), {
+    const result = await runCodexTask(taskContext.taskId || randomUUID(), {
+      onTaskEvent: taskContext.onTaskEvent,
       prompt,
       workspace,
       access: "read-only",
@@ -919,12 +944,12 @@ async function performRemoteCodexTask(command) {
   }
 }
 
-async function performRemoteCommand(command) {
+async function performRemoteCommand(command, taskContext = {}) {
   if (!command || typeof command !== "object") throw new Error("The remote command is invalid.");
-  if (command.kind === "desktop_control") return performRemoteDesktopControl(command);
+  if (command.kind === "desktop_control") return performRemoteDesktopControl(command, taskContext);
   if (command.kind === "smart_home") return performRemoteSmartHomeCommand(command);
-  if (command.kind === "phone_mac") return performPhoneMacRequest(command);
-  if (command.kind === "local_codex") return performRemoteCodexTask(command);
+  if (command.kind === "phone_mac") return performPhoneMacRequest(command, taskContext);
+  if (command.kind === "local_codex") return performRemoteCodexTask(command, taskContext);
   // The paired phone or tablet using the websites signed in on this Mac.
   if (command.kind === "browser") {
     if (!stageBrowser) throw new Error("The Mac's browser isn't ready yet.");
@@ -932,7 +957,7 @@ async function performRemoteCommand(command) {
     if (command.op === "view") remoteRelayBoostUntil = Date.now() + 45_000;
     return stageBrowser.remote(command);
   }
-  if (command.kind === "browser_task") return runWebsiteTask(command);
+  if (command.kind === "browser_task") return runWebsiteTask(command, taskContext.onTaskEvent);
   if (command.kind === "web_accounts") {
     if (!webAccounts) throw new Error("The Mac's browser isn't ready yet.");
     return JSON.stringify(await webAccounts.status(command.checks));
@@ -959,13 +984,21 @@ async function postRemoteResult(pairing, commandSecret, commandId, result) {
   });
 }
 
-async function runStartedRemoteCommand(pairing, commandSecret, commandId, command) {
+async function runStartedRemoteCommand(pairing, commandSecret, commandId, command, startAck) {
+  const relay = createTaskEventRelay(async (events) => {
+    const encrypted = encryptRemoteTaskProgress(commandSecret, pairing.deviceId, commandId, events);
+    await cloudJson("/api/device-commands", { method: "PATCH", signal: AbortSignal.timeout(8_000), body: JSON.stringify({
+      action: "progress", id: commandId, deviceId: pairing.deviceId, resultCiphertext: encrypted.ciphertext, resultIv: encrypted.iv,
+    }) });
+  }, { startAck });
   let result;
   try {
-    result = { ok: true, answer: await performRemoteCommand(command) };
+    result = { ok: true, answer: await performRemoteCommand(command, { taskId: requestedTaskId(command.taskId || commandId), onTaskEvent: relay.emit }) };
   } catch (error) {
     result = { ok: false, error: error instanceof Error ? error.message : "The remote command failed." };
   }
+  await relay.close();
+  if (relay.events.length) result.events = relay.events;
   // The phone may be suspended; the relay keeps the encrypted result for it.
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -1029,6 +1062,7 @@ async function processRemoteRelay() {
       if (processed.includes(envelope.id)) continue;
       let commandSecret = pairing.secret;
       let payload;
+      let startAck;
       try {
         try {
           payload = decryptRemoteCommand(pairing.secret, pairing.deviceId, envelope);
@@ -1050,7 +1084,7 @@ async function processRemoteRelay() {
         }
         // Acknowledge before running: this refuses a command that expired in
         // the queue and extends a started one so a long task can finish.
-        await cloudJson("/api/device-commands", {
+        startAck = await cloudJson("/api/device-commands", {
           method: "PATCH",
           body: JSON.stringify({ action: "start", id: envelope.id, deviceId: pairing.deviceId }),
         });
@@ -1063,7 +1097,7 @@ async function processRemoteRelay() {
       }
       // Run in the background so heartbeats and new commands keep flowing
       // while a long Computer Use task works.
-      void runStartedRemoteCommand(pairing, commandSecret, envelope.id, payload.command);
+      void runStartedRemoteCommand(pairing, commandSecret, envelope.id, payload.command, startAck);
     }
   } catch {
     // Pairing and relay failures stay silent; the UI reports connectivity on demand.
@@ -1509,7 +1543,7 @@ function registerIpcHandlers() {
 
       // Spoken tasks run in Vox's own workspace without a question each time.
       const workspace = await voxWorkspace();
-      const taskId = randomUUID();
+      const taskId = requestedTaskId(rawRequest?.taskId);
       const result = await runCodexTask(taskId, {
         prompt,
         workspace,
@@ -1601,7 +1635,7 @@ function registerIpcHandlers() {
         };
       }
       const workspace = await computerControlWorkingDirectory();
-      const taskId = randomUUID();
+      const taskId = requestedTaskId(rawRequest?.taskId);
       const result = await runCodexTask(taskId, {
         prompt,
         workspace,
