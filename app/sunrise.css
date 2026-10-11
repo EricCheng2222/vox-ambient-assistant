@@ -2,7 +2,7 @@
  * Sunrise: the look of the light theme (its id stays "daylight"). One calm
  * column under a morning sky: the orb is the sun, the conversation sits
  * beneath it as plain text, and the message box rests at the bottom.
- * The system font keeps conversation and controls familiar and legible.
+ * Manrope carries the reading; Newsreader gives larger headings a quieter character.
  * Layout for phones is in phone.css.
  */
 
@@ -10,8 +10,8 @@ html[data-vox-theme="daylight"] {
   /* Ink and paper, as bare channels, so a tone can swap them (see Sunset). */
   --ink-rgb: 31 37 50;
   --paper-rgb: 255 255 255;
-  --sun-text: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
-  --sun-display: var(--sun-text);
+  --sun-text: "Manrope", "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
+  --sun-display: "Newsreader", "PingFang TC", "Noto Sans TC", Georgia, serif;
   --sun-gold: #f6a94a;
   --sun-ember: #ee7f52;
   --dl-ink: rgb(var(--ink-rgb));
@@ -35,7 +35,7 @@ html[data-vox-theme="daylight"] body,
   font-optical-sizing: auto;
 }
 .vox-shell[data-vox-theme="daylight"] .vox-view-heading h1,
-.vox-shell[data-vox-theme="daylight"] .vx-today-title { font-size: 2.1rem; font-weight: 600; letter-spacing: -0.025em; line-height: 1.1; }
+.vox-shell[data-vox-theme="daylight"] .vx-today-title { font-size: 2.1rem; font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; }
 .vox-shell[data-vox-theme="daylight"] .vox-view-eyebrow { display: none; }
 
 /* ---- The sky: cool overhead, warm toward the horizon, first light around the sun ---- */

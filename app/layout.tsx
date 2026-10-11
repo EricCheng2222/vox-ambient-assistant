@@ -3,6 +3,7 @@ import "./globals.css";
 import "./redesign.css";
 import "./stage.css";
 import "./daylight.css";
+import "./fonts.css";
 import "./sunrise.css";
 import "./phone.css";
 import "./readability.css";
