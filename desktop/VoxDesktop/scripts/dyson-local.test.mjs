@@ -49,7 +49,11 @@ test("local control uses MQTT 3.1.1 for current Dyson brokers", () => {
   assert.equal(options.password, "local-device-credential-value");
   assert.equal(options.clean, true);
   assert.equal(options.reconnectPeriod, 0);
-  assert.match(options.clientId, /^vox-[0-9a-f]{18}$/u);
+  assert.match(options.clientId, /^vox[0-9a-f]{18}$/u);
+  assert.equal(options.protocolId, "MQTT");
+  const legacy = dysonMqttOptions({}, 3);
+  assert.equal(legacy.protocolVersion, 3);
+  assert.equal(legacy.protocolId, "MQIsdp");
 });
 
 test("voice commands stay inside the supported purifier action set", () => {

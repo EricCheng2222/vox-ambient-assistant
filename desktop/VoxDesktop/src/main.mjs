@@ -322,23 +322,29 @@ function publicSavedSmartHomeDevices(settings) {
     .filter(Boolean);
 }
 
-/** The device turned up at a new address on the network: remember it, so the next command goes straight there. */
-async function saveSmartHomeDeviceHost(id, host) {
-  if (!secureStorageAvailable() || !/^\d{1,3}(?:\.\d{1,3}){3}$/u.test(String(host))) return;
-  const settings = await readSettings();
-  const devices = savedSmartHomeDevices(settings);
-  const saved = devices.find((device) => device.id === id);
-  if (!saved) return;
-  const unlocked = unlockSmartHomeDevice(settings, id);
-  const encryptedConfiguration = safeStorage.encryptString(JSON.stringify({
-    host,
-    serial: unlocked.serial,
-    productType: unlocked.productType,
-    credential: unlocked.credential,
-  })).toString("base64");
-  // The older way of saving kept these in the open beside the credential; they now live inside the encrypted part.
-  const kept = Object.fromEntries(Object.entries(saved).filter(([key]) => !["encryptedCredential", "host", "serial", "productType"].includes(key)));
-  await saveSettings({ ...settings, smartHomeDevices: devices.map((device) => (device.id === id ? { ...kept, encryptedConfiguration } : device)) });
+/** Serialize recovered connection saves so simultaneous devices cannot overwrite each other. */
+let smartHomeConnectionSave = Promise.resolve();
+function saveSmartHomeDeviceHost(id, host, changes = {}) {
+  const write = smartHomeConnectionSave.then(async () => {
+    if (!secureStorageAvailable()) return;
+    const settings = await readSettings();
+    const devices = savedSmartHomeDevices(settings);
+    const saved = devices.find((device) => device.id === id);
+    if (!saved) return;
+    const unlocked = unlockSmartHomeDevice(settings, id);
+    const normalized = configureSmartHomeDevice({ ...unlocked, ...changes, host });
+    const encryptedConfiguration = safeStorage.encryptString(JSON.stringify({
+      host: normalized.host,
+      serial: unlocked.serial,
+      productType: normalized.productType,
+      credential: unlocked.credential,
+    })).toString("base64");
+    // The older way of saving kept these in the open beside the credential; they now live inside the encrypted part.
+    const kept = Object.fromEntries(Object.entries(saved).filter(([key]) => !["encryptedCredential", "host", "serial", "productType"].includes(key)));
+    await saveSettings({ ...settings, smartHomeDevices: devices.map((device) => (device.id === id ? { ...kept, encryptedConfiguration } : device)) });
+  });
+  smartHomeConnectionSave = write.catch(() => undefined);
+  return write;
 }
 
 function unlockSmartHomeDevice(settings, id) {
@@ -835,7 +841,7 @@ async function performRemoteSmartHomeCommand(command) {
   );
   const selectedId = requestedId || namedDevice?.id || (devices.length === 1 ? devices[0].id : "");
   if (!selectedId) throw new Error("Choose a configured smart-home device on the Mac first.");
-  const result = await runSmartHomeCommand(unlockSmartHomeDevice(settings, selectedId), prompt, (host) => saveSmartHomeDeviceHost(selectedId, host));
+  const result = await runSmartHomeCommand(unlockSmartHomeDevice(settings, selectedId), prompt, (host, changes) => saveSmartHomeDeviceHost(selectedId, host, changes));
   return result?.answer ?? result?.status ?? "The smart-home command completed.";
 }
 
@@ -1463,8 +1469,9 @@ function registerIpcHandlers() {
     await saveSettings({ ...settings, smartHomeDevices: nextDevices });
 
     try {
-      const status = await runSmartHomeCommand(configured, "Dyson purifier status");
-      return { device: { id: savedDevice.id, ...publicSmartHomeDevice(configured) }, connected: true, status };
+      const status = await runSmartHomeCommand(configured, "status", (host, changes) => saveSmartHomeDeviceHost(savedDevice.id, host, changes));
+      const saved = unlockSmartHomeDevice(await readSettings(), savedDevice.id);
+      return { device: { id: savedDevice.id, ...publicSmartHomeDevice(saved) }, connected: true, status };
     } catch (error) {
       return {
         device: { id: savedDevice.id, ...publicSmartHomeDevice(configured) },
@@ -1509,7 +1516,7 @@ function registerIpcHandlers() {
     }
     const device = unlockSmartHomeDevice(settings, selectedId);
     lastSmartHomeCommandAt = now;
-    return runSmartHomeCommand(device, prompt, (host) => saveSmartHomeDeviceHost(selectedId, host));
+    return runSmartHomeCommand(device, prompt, (host, changes) => saveSmartHomeDeviceHost(selectedId, host, changes));
   });
 
   ipcMain.handle("vox-codex:set-panel-open", (event, open) => {
@@ -1878,7 +1885,8 @@ app.whenReady().then(async () => {
     },
     codexPath: bundledCodexPath,
     homeDevices: async () => publicSavedSmartHomeDevices(await readSettings()),
-    devicesOnNetwork: () => discoverSmartHomeDevices("dyson-local"),
+    devicesOnNetwork: async () => (await Promise.all(availableSmartHomeAdapters().map(({ id }) => discoverSmartHomeDevices(id)))).flat(),
+    checkHomeDevice: async (device) => runSmartHomeCommand(unlockSmartHomeDevice(await readSettings(), device.id), "status", (host, changes) => saveSmartHomeDeviceHost(device.id, host, changes)),
     rememberDeviceAddress: saveSmartHomeDeviceHost,
   });
   pageWatch = registerPageWatch({ requireTrustedVoxSender });

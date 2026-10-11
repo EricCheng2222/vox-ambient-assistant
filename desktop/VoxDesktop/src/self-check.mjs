@@ -54,6 +54,19 @@ const CHECKS = [
   ["home", "Home devices", async (deps) => {
     const devices = await deps.homeDevices();
     if (!devices.length) return finding("home", "Home devices", "fine", "No home devices are set up.");
+    if (deps.checkHomeDevice) {
+      const results = await Promise.allSettled(devices.map((device) => deps.checkHomeDevice(device)));
+      const failures = results.flatMap((result, index) => result.status === "rejected" || result.value?.connected !== true
+        ? [{ device: devices[index], error: result.status === "rejected" ? result.reason : null }] : []);
+      if (failures.length) {
+        const needsCredential = failures.some(({ error }) => error?.kind === "credential");
+        const needsPermission = failures.some(({ error }) => error?.kind === "permission");
+        return finding("home", "Home devices", needsCredential || needsPermission ? "needs_you" : "unknown",
+          `${failures.map(({ device }) => device.name).join(", ")} ${needsCredential ? "rejected the saved local credential" : needsPermission ? "cannot be reached because local network access was denied" : "did not confirm a working local control connection after recovery"}.`,
+          { how: needsCredential ? "Reconnect the device in Home devices using its local credential." : needsPermission ? "Allow Vox in macOS Settings → Privacy & Security → Local Network." : "Open Home devices to check the saved connection. Network discovery alone does not confirm that device control works." });
+      }
+      return finding("home", "Home devices", "fine", `${devices.map((device) => device.name).join(", ")} ${devices.length === 1 ? "answered" : "all answered"} a local device status request.`);
+    }
     const seen = await deps.devicesOnNetwork();
     const moved = devices.filter((device) => seen.some((found) => found.serial === device.serial && found.host !== device.host));
     const missing = devices.filter((device) => !seen.some((found) => found.serial === device.serial));

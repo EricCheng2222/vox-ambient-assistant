@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import mqtt from "mqtt";
 import { Bonjour } from "bonjour-service";
+import { openLocalMqttSession } from "./local-mqtt-session.mjs";
+import { SmartHomeConnectionError } from "./smart-home-errors.mjs";
 
 const linkProductTypes = new Set(["455", "469", "475"]);
 const supportedProductTypes = new Set([
@@ -214,47 +215,36 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-export function dysonMqttOptions(config) {
+export function dysonMqttOptions(config, protocolVersion = 4) {
   return {
-    // Newer Dyson brokers, including HP09/527K, require MQTT 3.1.1.
-    protocolVersion: 4,
+    // Firmware differs: MQTT 3.1 needs both version 3 and the MQIsdp identifier.
+    protocolVersion,
+    protocolId: protocolVersion === 3 ? "MQIsdp" : "MQTT",
     username: config.serial,
     password: config.credential,
-    clientId: `vox-${randomUUID().replaceAll("-", "").slice(0, 18)}`,
+    clientId: `vox${randomUUID().replaceAll("-", "").slice(0, 18)}`,
     clean: true,
     connectTimeout: 7_000,
     reconnectPeriod: 0,
   };
 }
 
-function connectClient(config) {
-  return new Promise((resolve, reject) => {
-    const client = mqtt.connect(
-      `mqtt://${config.host}:1883`,
-      dysonMqttOptions(config),
-    );
-    const timer = setTimeout(() => {
-      client.end(true);
-      reject(new Error("The Dyson purifier did not answer on the local network."));
-    }, 8_000);
-    const onError = (error) => {
-      clearTimeout(timer);
-      client.end(true);
-      reject(new Error(/not authorized|bad user|bad password/iu.test(error.message)
-        ? "The purifier rejected its local device credential."
-        : "Vox could not connect to the Dyson purifier on this Wi-Fi network."));
-    };
-    client.once("error", onError);
-    client.once("connect", () => {
-      clearTimeout(timer);
-      client.off("error", onError);
-      resolve(client);
-    });
-  });
-}
-
-async function endClient(client) {
-  await new Promise((resolve) => client.end(true, {}, resolve));
+async function connectClient(config, deps) {
+  for (const protocolVersion of [4, 3]) {
+    try {
+      return await openLocalMqttSession({
+        host: config.host,
+        options: dysonMqttOptions(config, protocolVersion),
+        label: config.name,
+        connect: deps.connect,
+        timeoutMs: deps.timeoutMs,
+      });
+    } catch (error) {
+      // A refused credential or network permission cannot be fixed by changing protocol.
+      const compatibilityFailure = error.kind === "protocol" || ["ECONNRESET", "MQTT_CLOSED"].includes(error.cause?.code);
+      if (protocolVersion === 3 || !compatibilityFailure) throw error;
+    }
+  }
 }
 
 function publish(client, topic, payload, options = {}) {
@@ -322,57 +312,77 @@ function answerFor(intent, status, prompt, verified) {
   return `I ${intent.enabled ? "enabled" : "disabled"} ${name}'s oscillation.`;
 }
 
-export async function runDysonCommand(config, prompt) {
+export async function runDysonCommand(config, prompt, deps = {}) {
   const normalized = normalizeDysonManualConfiguration(config);
   const intent = parseDysonCommand(prompt);
-  const client = await connectClient(normalized);
-  const commandTopic = `${normalized.productType}/${normalized.serial}/command`;
-  const statusTopic = `${normalized.productType}/${normalized.serial}/status/current`;
+  const session = await connectClient(normalized, deps);
+  const { client } = session;
+  // Some cloud/sticker variants advertise the base type (e.g. 527K → 527).
+  // Only a real state message selects the active topic; discovery is not proof of control.
+  const types = [...new Set([normalized.productType, normalized.productType.replace(/[EKM]$/u, "")])];
+  const statusTopics = types.map((type) => `${type}/${normalized.serial}/status/current`);
+  let activeType = normalized.productType;
   let state = {};
   let environment = {};
   let stateRevision = 0;
-  client.on("message", (_topic, payload) => {
+  const onMessage = (topic, payload) => {
+    if (!statusTopics.includes(topic)) return;
     try {
       const message = JSON.parse(payload.toString("utf8"));
-      if (message?.["product-state"]) {
-        state = flattenState(message["product-state"]);
+      const update = message?.["product-state"];
+      if (["CURRENT-STATE", "STATE-CHANGE"].includes(message.msg) && update && !Array.isArray(update) && typeof update === "object" && ["fpwr", "fmod", "fnsp", "fnst", "nmod", "auto", "oson"].some((key) => key in update)) {
+        state = { ...state, ...flattenState(update) };
+        activeType = topic.split("/")[0];
         stateRevision += 1;
       }
       if (message?.data && message.msg === "ENVIRONMENTAL-CURRENT-SENSOR-DATA") {
-        environment = flattenState(message.data);
+        environment = { ...environment, ...flattenState(message.data) };
       }
     } catch {
-      // Ignore malformed device messages and keep waiting for a valid state update.
+      // Malformed and unrelated device messages never count as confirmation.
     }
-  });
+  };
+  client.on("message", onMessage);
+  const send = (type, payload, options) => session.bounded(publish(client, `${type}/${normalized.serial}/command`, payload, options));
+  const waitUntil = async (predicate, milliseconds) => {
+    const deadline = Date.now() + milliseconds;
+    while (!predicate() && Date.now() < deadline) await session.bounded(wait(Math.min(100, Math.max(1, deadline - Date.now()))));
+    return predicate();
+  };
+  const stateTimeoutMs = deps.stateTimeoutMs ?? 2_500;
   try {
-    await new Promise((resolve, reject) => client.subscribe(statusTopic, (error) => error ? reject(error) : resolve()));
-    await publish(client, commandTopic, { msg: "REQUEST-CURRENT-STATE", time: mqttTime() });
-    await publish(client, commandTopic, {
-      msg: "REQUEST-PRODUCT-ENVIRONMENT-CURRENT-SENSOR-DATA",
-      time: mqttTime(),
-    });
-    for (let attempt = 0; attempt < 12 && stateRevision === 0; attempt += 1) await wait(150);
-
-    if (intent.kind !== "status") {
-      const beforeRevision = stateRevision;
-      await publish(client, commandTopic, {
-        msg: "STATE-SET",
-        time: mqttTime(),
-        "mode-reason": "LAPP",
-        data: commandData(intent, state, normalized.productType),
-      }, { qos: 1 });
-      for (let attempt = 0; attempt < 10 && stateRevision === beforeRevision; attempt += 1) await wait(150);
-    } else {
-      await wait(700);
+    await session.bounded(new Promise((resolve, reject) => client.subscribe(statusTopics, (error, granted) => {
+      if (error) return reject(error);
+      if (granted?.some((entry) => entry.qos === 128)) return reject(new SmartHomeConnectionError(`${normalized.name} rejected the local status subscription.`, { retryable: false }));
+      resolve();
+    })));
+    for (const type of types) {
+      await send(type, { msg: "REQUEST-CURRENT-STATE", time: mqttTime() });
+      if (await waitUntil(() => stateRevision > 0, stateTimeoutMs)) break;
     }
+    if (!stateRevision) throw new SmartHomeConnectionError(`${normalized.name} connected, but did not answer the device state request.`, { kind: "timeout" });
+    await send(activeType, { msg: "REQUEST-PRODUCT-ENVIRONMENT-CURRENT-SENSOR-DATA", time: mqttTime() });
 
-    const status = summary(normalized, state, environment, true);
-    return {
-      ...status,
-      answer: answerFor(intent, status, prompt, intent.kind === "status" || stateRevision > 1),
-    };
+    const requested = commandData(intent, state, activeType);
+    const matches = () => Object.entries(requested ?? {}).every(([key, value]) => state[key] === value);
+    let verified = intent.kind === "status" || matches();
+    if (!verified) {
+      const beforeRevision = stateRevision;
+      // After this point a dropped connection must not replay a possibly delivered action.
+      session.markCommandSent();
+      await send(activeType, { msg: "STATE-SET", time: mqttTime(), "mode-reason": "LAPP", data: requested }, { qos: 1 });
+      verified = await waitUntil(() => stateRevision > beforeRevision && matches(), deps.commandTimeoutMs ?? 3_000);
+      if (!verified) {
+        await send(activeType, { msg: "REQUEST-CURRENT-STATE", time: mqttTime() });
+        verified = await waitUntil(() => stateRevision > beforeRevision && matches(), stateTimeoutMs);
+      }
+    } else if (intent.kind === "status") {
+      await session.bounded(wait(deps.sensorWaitMs ?? 500));
+    }
+    const status = summary({ ...normalized, productType: activeType }, state, environment, true);
+    return { ...status, verified, answer: answerFor(intent, status, prompt, verified) };
   } finally {
-    await endClient(client);
+    client.off("message", onMessage);
+    await session.dispose();
   }
 }

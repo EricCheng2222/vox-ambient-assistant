@@ -106,3 +106,18 @@ assert.equal(summarise([]), "Everything checked is working.");
   assert.deepEqual(faultsFromLog("", now), []);
 }
 console.log("self check: ok");
+
+// Discovery alone must not label a broken control connection healthy.
+{
+  const w = world();
+  w.deps.checkHomeDevice = async () => { throw new Error("connection reset"); };
+  const failed = (await runChecks(w.deps)).findings.find(f => f.id === "home");
+  assert.equal(failed.kind, "unknown");
+  assert.match(failed.says, /did not confirm/u);
+  w.deps.checkHomeDevice = async () => ({ connected: true });
+  const healthy = (await runChecks(w.deps)).findings.find(f => f.id === "home");
+  assert.equal(healthy.kind, "fine");
+  assert.match(healthy.says, /answered a local device status/u);
+  w.deps.checkHomeDevice = async () => { throw Object.assign(new Error("credential"), { kind: "credential" }); };
+  assert.equal(kinds(await runChecks(w.deps)).home, "needs_you");
+}

@@ -83,6 +83,8 @@ Open **Home** in Vox Desktop and choose **Discover**. The purifier must already 
 
 After pairing, voice commands can turn the purifier on or off, set speed 1–10, toggle auto/night/oscillation, and read available local sensor status. Heat controls and filter resets are deliberately excluded from this first version.
 
+The hub queues commands per device and gives a recoverable connection failure one fresh attempt, even when discovery misses the device or its IP stays the same. Each adapter defines its stable identity and connection updates, so recovery also supports future device types. Credentials and permission failures stop immediately; an action that may already have been delivered is never automatically replayed. Dyson negotiates MQTT 3.1.1/3.1 and confirms its actual status topic from device replies, including base topics such as `527` for a saved `527K` variant. Changed connection settings are saved encrypted after a successful response. Health checks read actual device state; network discovery alone is not a successful control check.
+
 Smart-home execution is desktop-only and local-first: device credentials are encrypted with macOS secure storage and device traffic stays on the LAN. A command spoken directly to Vox Desktop does not pass through the Vox backend. When a paired phone explicitly routes an action to the Mac, the backend relays only an end-to-end encrypted command envelope and never receives the device credential or plaintext command. Dyson is the first adapter behind a general smart-home hub boundary intended to support more local device types later.
 
 #### 6. Optional: pair the phone web app with your Mac

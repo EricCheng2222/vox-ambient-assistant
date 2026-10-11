@@ -58,14 +58,14 @@ assert.equal(
     "Error invoking remote method 'vox-smart-home:command': Error: Vox could not connect to the Dyson purifier on this Wi-Fi network.",
     "taiwan_mandarin",
   ),
-  "目前連不上 Dyson。請確認它已開機並連上同一個 Wi-Fi；如果剛設定完成，可以重新開機後再試一次。",
+  "Vox 已重新尋找 Dyson 並重試，目前仍連不上。請確認它已接上電源，且與 Mac 位於同一個網路。",
 );
 assert.equal(
   smartHomeFailureMessage(
     "Error invoking remote method 'vox-smart-home:command': Error: The purifier rejected its local device credential.",
     "english",
   ),
-  "Dyson did not accept the saved local credential. Please reconnect the device.",
+  "Dyson did not accept the saved local credential. Please reconnect the device in Home devices.",
 );
 assert.equal(
   smartHomeFailureMessage(
@@ -88,3 +88,8 @@ assert.match(
 );
 
 console.log("Smart-home route checks passed.");
+
+assert.match(smartHomeFailureMessage("Dyson closed the local control connection.", "english"), /reachable, but closes/u);
+assert.match(smartHomeFailureMessage("Local network access to Dyson was denied on this Mac.", "english"), /Privacy & Security/u);
+assert.match(smartHomeFailureMessage("Dyson's local connection closed after the command was sent; its updated state is unconfirmed.", "english"), /won’t automatically repeat/u);
+assert.match(smartHomeFailureMessage("connected, but did not answer the device state request", "english", "Bedroom lamp"), /^Bedroom lamp connected/u);

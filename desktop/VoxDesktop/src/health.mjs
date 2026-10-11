@@ -39,7 +39,7 @@ function runScript(folder, script, args, timeoutMs) {
   });
 }
 
-export function registerHealth({ requireTrustedVoxSender, getWindow, readSettings, saveSettings, signedIn, phoneLink, codexPath, homeDevices, devicesOnNetwork, rememberDeviceAddress }) {
+export function registerHealth({ requireTrustedVoxSender, getWindow, readSettings, saveSettings, signedIn, phoneLink, codexPath, homeDevices, devicesOnNetwork, checkHomeDevice, rememberDeviceAddress }) {
   /** Vox's own source, when this Mac has it: where the regression run and the update live. */
   async function sourceFolder() {
     const folder = (await readSettings()).voxSourceFolder;
@@ -74,6 +74,7 @@ export function registerHealth({ requireTrustedVoxSender, getWindow, readSetting
     },
     homeDevices,
     devicesOnNetwork,
+    checkHomeDevice,
     disk: async () => {
       const space = await statfs(app.getPath("home"));
       const left = await leftovers();
