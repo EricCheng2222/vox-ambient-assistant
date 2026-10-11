@@ -237,15 +237,18 @@ export async function appendIncomingText(
  * Adds something Vox said to its owner while the app was closed (a text it
  * sent to their phone), as Vox's own message in the conversation, so it is
  * there when they open the app. Retries carry the same id and are kept once.
+ * Resolves to whether it was new: false when a message with that id was
+ * already there (the app showed and saved it first).
  */
 export async function appendAssistantNote(ownerId: string, note: { id: string; text: string }) {
   await ensureThread(ownerId);
   const encrypted = await encryptText(note.text);
-  await getDb().run(sql`
+  const inserted = await getDb().run(sql`
     INSERT INTO conversation_messages (id, owner_id, role, source, ciphertext, iv)
     VALUES (${note.id}, ${ownerId}, 'assistant', 'local', ${encrypted.ciphertext}, ${encrypted.iv})
     ON CONFLICT(id) DO NOTHING
   `);
+  const wasNew = Number(inserted.meta.changes ?? 0) > 0;
   await getDb().run(sql`
     DELETE FROM conversation_messages
     WHERE owner_id = ${ownerId}
@@ -256,6 +259,7 @@ export async function appendAssistantNote(ownerId: string, note: { id: string; t
         LIMIT ${MAX_STORED_MESSAGES}
       )
   `);
+  return wasNew;
 }
 
 /**

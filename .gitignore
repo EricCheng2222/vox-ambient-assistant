@@ -51,3 +51,4 @@ next-env.d.ts
 /work/
 /desktop/VoxDesktop/resources/voice-models/
 /desktop/VoxDesktop/resources/bin/
+.vox-regression.json

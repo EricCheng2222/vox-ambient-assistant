@@ -29,4 +29,14 @@ assert.equal(framed.match(/<\/attached_document>/g).length, 1, "the content can'
 assert.equal(attachmentNote(["a.pdf", "b.jpg"]), "[Attached: a.pdf, b.jpg]");
 assert.equal(attachmentNote([]), "");
 
+// The chat shows a message's words and its files separately.
+{
+  const { splitAttachmentNote, isImageName, attachmentNote } = await import("../lib/attachment.ts");
+  assert.deepEqual(splitAttachmentNote(`What is this?\n${attachmentNote(["IMG_1.jpeg", "notes.pdf"])}`), { body: "What is this?", names: ["IMG_1.jpeg", "notes.pdf"] });
+  assert.deepEqual(splitAttachmentNote(attachmentNote(["image.png"])), { body: "", names: ["image.png"] });
+  assert.deepEqual(splitAttachmentNote("No files here [Attached: not at the end] really"), { body: "No files here [Attached: not at the end] really", names: [] });
+  assert.equal(isImageName("IMG_1.HEIC"), true);
+  assert.equal(isImageName("notes.pdf"), false);
+}
+
 console.log("Attachment checks passed.");

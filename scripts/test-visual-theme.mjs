@@ -10,27 +10,22 @@ const {
   visualThemeOptions,
 } = await import("../lib/visual-theme.ts");
 
-assert.equal(defaultVisualTheme, "ambient");
+// Two themes share one layout: Sunset (the default) and Sunrise. The earlier dark themes are gone.
+assert.equal(defaultVisualTheme, "sunset");
 assert.deepEqual(
   visualThemeOptions.map((option) => option.id),
-  ["ambient", "holographic", "daylight"],
+  ["sunset", "daylight"],
 );
-assert.equal(isVisualTheme("ambient"), true);
-assert.equal(isVisualTheme("holographic"), true);
-assert.equal(isVisualTheme("neon"), false);
-assert.equal(isVisualTheme("unknown"), false);
-assert.equal(parseVisualTheme("holographic"), "holographic");
-assert.equal(parseVisualTheme("neon"), "holographic");
-assert.equal(parseVisualTheme("unknown"), "ambient");
-
-assert.equal(themeVoices.ambient, "marin");
-assert.equal(themeVoices.holographic, "verse");
-assert.equal(themePersonaInstruction("ambient"), "");
-const persona = themePersonaInstruction("holographic");
-assert.match(persona, /British accent/u);
-assert.match(persona, /Taiwan Mandarin/u);
-assert.match(persona, /never claim an action happened unless it was verified/u);
-assert.match(persona, /takes precedence/u);
+assert.equal(isVisualTheme("sunset"), true);
+assert.equal(isVisualTheme("daylight"), true);
+for (const gone of ["ambient", "holographic", "neon", "unknown"]) {
+  assert.equal(isVisualTheme(gone), false, gone);
+  assert.equal(parseVisualTheme(gone), "sunset", `${gone} becomes Sunset`);
+}
+assert.equal(parseVisualTheme("daylight"), "daylight");
+assert.deepEqual(Object.keys(themeVoices).sort(), ["daylight", "sunset"]);
+assert.equal(themePersonaInstruction("sunset"), themePersonaInstruction("daylight"));
+assert.doesNotMatch(themePersonaInstruction("sunset"), /British accent/u);
 
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 assert.match(

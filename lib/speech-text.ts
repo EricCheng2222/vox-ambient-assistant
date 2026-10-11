@@ -10,6 +10,9 @@ export function speechText(text: string): string {
     .replace(/\[\s*\]|\(\s*\)|（\s*）/g, "")
     .replace(/\(\s*\)|（\s*）/g, "")
     .replace(/[ \t]+([，。；！？,.!?;])/g, "$1")
+    // Laid out for reading (one option per line, "Name — details"): said as sentences.
+    .replace(/^[ \t]*[-•][ \t]+/gm, "")
+    .replace(/[ \t]+[—–][ \t]+/g, ", ")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
 }

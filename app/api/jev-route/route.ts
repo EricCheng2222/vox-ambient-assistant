@@ -1,4 +1,6 @@
 import { requireUser } from "@/lib/auth";
+import { isRequestSource, REQUEST_SOURCE_INSTRUCTIONS, REQUEST_SOURCES } from "@/lib/triage";
+import { decisionFetch, decisionKey } from "@/lib/decision";
 import { boundedRecentMessages } from "@/lib/conversation-context";
 import {
   isOpenWorkspaceRequest,
@@ -253,7 +255,17 @@ export async function POST(request: Request) {
     desktopActionsAvailable?: boolean;
     desktopControlAvailable?: boolean;
     desktopAppContext?: string;
+    recentWebTask?: { request?: unknown; outcome?: unknown; minutes_ago?: unknown };
   };
+  // A website task Vox worked on a moment ago, so a short follow-up can be recognised as one.
+  const recentWebTask =
+    body.recentWebTask && typeof body.recentWebTask.request === "string" && body.recentWebTask.request.trim().length >= 4
+      ? {
+          request: body.recentWebTask.request.trim().slice(0, 600),
+          outcome: typeof body.recentWebTask.outcome === "string" ? body.recentWebTask.outcome.slice(0, 80) : "",
+          minutes_ago: typeof body.recentWebTask.minutes_ago === "number" && Number.isFinite(body.recentWebTask.minutes_ago) ? Math.max(0, Math.round(body.recentWebTask.minutes_ago)) : 0,
+        }
+      : null;
   const text = body.text?.trim().slice(0, 6000) ?? "";
   const pendingText = body.pendingText?.trim().slice(0, 6000) ?? "";
   const allowWait = body.allowWait !== false;
@@ -316,7 +328,7 @@ export async function POST(request: Request) {
     }),
   ]);
 
-  const apiKey = process.env.TYPESAFE_API_KEY;
+  const apiKey = decisionKey();
   if (!apiKey) {
     const route = fallbackRoute(
       completeText,
@@ -369,7 +381,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const response = await fetch("https://api.typesafe.ai/v1/systemone", {
+    const response = await decisionFetch({
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -411,6 +423,7 @@ export async function POST(request: Request) {
           desktop_actions_available: desktopActionsAvailable,
           desktop_control_available: desktopControlAvailable,
           recent_desktop_app: desktopControlAvailable && typeof body.desktopAppContext === "string" ? body.desktopAppContext.slice(0, 80) : null,
+          recent_web_task: recentWebTask,
         },
         questions: {
           ...(desktopControlAvailable ? { desktop_app: {
@@ -467,6 +480,22 @@ export async function POST(request: Request) {
                   }
                 : {}),
             },
+          },
+          ...(recentWebTask
+            ? {
+                web_task_followup: {
+                  type: "choice",
+                  instructions:
+                    "recent_web_task is a task Vox recently carried out, or tried to, in a web browser for the user. Is the complete utterance asking Vox to do that task again: repeat it, retry it, continue it, or run it with a change (other dates, another place, a different site, a budget)? Agreeing to Vox's own offer in recent_conversation to do so counts (yes, go ahead, please do, search again). Choose no for anything else, including a new unrelated request that also happens to involve the web, a question about the result, or thanks.",
+                  criteria: { yes: "Repeat, retry, continue, or adjust that browser task.", no: "Anything else." },
+                },
+              }
+            : {}),
+          // Where the answer lives; lib/triage.ts turns this and the route into what Vox does.
+          where: {
+            type: "choice",
+            instructions: REQUEST_SOURCE_INSTRUCTIONS,
+            criteria: REQUEST_SOURCES,
           },
           conversation_move: {
             type: "choice",
@@ -557,6 +586,8 @@ export async function POST(request: Request) {
         computer_use_mode?: { choice?: string; confidence?: number };
         turn_state?: { choice?: string; confidence?: number };
         route?: { choice?: string; confidence?: number };
+        where?: { choice?: string; confidence?: number };
+        web_task_followup?: { choice?: string; confidence?: number };
         conversation_move?: { choice?: string; confidence?: number };
         memory_timing?: { choice?: string; confidence?: number };
         ritual?: { choice?: string; confidence?: number };
@@ -677,6 +708,10 @@ export async function POST(request: Request) {
       desktopAppConfidence: desktopControlAvailable ? payload.answers?.desktop_app?.confidence ?? 0 : 0,
       computerUseMode: desktopControlAvailable && payload.answers?.computer_use_mode?.choice === "fast" && (payload.answers.computer_use_mode.confidence ?? 0) >= 0.7 ? "fast" : "standard",
       confidence: payload.answers?.route?.confidence ?? null,
+      where: isRequestSource(payload.answers?.where?.choice) ? payload.answers?.where?.choice : null,
+      whereConfidence: payload.answers?.where?.confidence ?? null,
+      // Only said when it was asked; lib/triage.ts falls back to the user's words otherwise.
+      continuesWebTask: recentWebTask && payload.answers?.web_task_followup?.choice ? payload.answers.web_task_followup.choice === "yes" && (payload.answers.web_task_followup.confidence ?? 0) >= 0.6 : null,
       turnState,
       turnConfidence: payload.answers?.turn_state?.confidence ?? null,
       responsePosture,

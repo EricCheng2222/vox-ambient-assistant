@@ -67,7 +67,7 @@ export async function PATCH(request: Request) {
   }
   const resultCiphertext = typeof body?.resultCiphertext === "string" ? body.resultCiphertext : "";
   const resultIv = typeof body?.resultIv === "string" ? body.resultIv : "";
-  if (!idPattern.test(id) || !idPattern.test(deviceId) || !encodedPattern.test(resultCiphertext) || !encodedPattern.test(resultIv) || resultCiphertext.length > 32_000 || resultIv.length > 128) {
+  if (!idPattern.test(id) || !idPattern.test(deviceId) || !encodedPattern.test(resultCiphertext) || !encodedPattern.test(resultIv) || resultCiphertext.length > 320_000 || resultIv.length > 128) {
     return Response.json({ error: "Invalid encrypted result." }, { status: 400, headers: noStore });
   }
   const completed = await completeRemoteCommand(auth.user.id, { id, deviceId, resultCiphertext, resultIv });

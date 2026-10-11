@@ -1838,3 +1838,45 @@ html[data-vox-theme="holographic"] [data-slot="sheet-content"] {
 .vox-shell .vox-settings-view .control-deck { flex-direction: column; align-items: stretch; }
 .vox-shell .vox-settings-view .control-deck .control-grid { width: 100%; align-items: stretch; justify-content: flex-start; }
 .vox-shell .vox-settings-view .control-deck .control-module { width: 100%; }
+
+/* ---- Opening Vox: a sun breathing on the evening sky, in place of anything that looks like a page loading.
+   The iOS app draws the same screen natively (ios/VoxIOS/VoxIOS/ContentView.swift) while the page arrives. ---- */
+.vox-opening {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  background:
+    radial-gradient(42rem 26rem at 50% 4.5rem, rgb(226 87 76 / 30%), transparent 70%),
+    linear-gradient(180deg, #15132e 0%, #231b48 26%, #43275d 50%, #7c3562 70%, #bd4f5c 85%, #e98556 95%, #f6ad66 100%);
+}
+.vox-opening-sun {
+  position: relative;
+  width: 5.5rem;
+  height: 5.5rem;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffe0bd 0%, #f5a25a 55%, #e2574c 100%);
+  box-shadow: 0 0 3.5rem rgb(245 162 90 / 55%);
+  animation: vox-opening-breathe 2.6s ease-in-out infinite;
+}
+.vox-opening-sun::before,
+.vox-opening-sun::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgb(255 214 170 / 55%);
+  animation: vox-opening-ring 2.6s ease-out infinite;
+}
+.vox-opening-sun::after { animation-delay: 1.3s; }
+@keyframes vox-opening-breathe {
+  0%, 100% { transform: scale(0.94); }
+  50% { transform: scale(1.04); }
+}
+@keyframes vox-opening-ring {
+  from { transform: scale(1); opacity: 0.7; }
+  to { transform: scale(2.3); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vox-opening-sun, .vox-opening-sun::before, .vox-opening-sun::after { animation: none; }
+  .vox-opening-sun::before, .vox-opening-sun::after { display: none; }
+}

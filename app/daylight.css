@@ -3,29 +3,29 @@
    small switch at the top in place of the side rail. */
 
 html[data-vox-theme="daylight"] {
-  --dl-ink: #18212e;
-  --dl-ink-2: rgb(24 33 46 / 72%);
-  --dl-ink-3: rgb(24 33 46 / 62%);
-  --dl-line: rgb(24 33 46 / 12%);
-  --dl-glass: rgb(255 255 255 / 56%);
-  --dl-glass-strong: rgb(255 255 255 / 78%);
+  --dl-ink: rgb(var(--ink-rgb));
+  --dl-ink-2: rgb(var(--ink-rgb) / 72%);
+  --dl-ink-3: rgb(var(--ink-rgb) / 62%);
+  --dl-line: rgb(var(--ink-rgb) / 12%);
+  --dl-glass: rgb(var(--paper-rgb) / 56%);
+  --dl-glass-strong: rgb(var(--paper-rgb) / 78%);
   --dl-accent: #2457d6;
   --background: #cfdcee;
-  --foreground: #18212e;
-  --card: rgb(255 255 255 / 62%);
-  --card-foreground: #18212e;
-  --popover: #f6f8fb;
-  --popover-foreground: #18212e;
-  --primary: #18212e;
-  --primary-foreground: #ffffff;
-  --secondary: rgb(24 33 46 / 6%);
-  --secondary-foreground: #18212e;
-  --muted: rgb(24 33 46 / 6%);
+  --foreground: rgb(var(--ink-rgb));
+  --card: rgb(var(--paper-rgb) / 62%);
+  --card-foreground: rgb(var(--ink-rgb));
+  --popover: rgb(var(--paper-rgb));
+  --popover-foreground: rgb(var(--ink-rgb));
+  --primary: rgb(var(--ink-rgb));
+  --primary-foreground: rgb(var(--paper-rgb));
+  --secondary: rgb(var(--ink-rgb) / 6%);
+  --secondary-foreground: rgb(var(--ink-rgb));
+  --muted: rgb(var(--ink-rgb) / 6%);
   --muted-foreground: #556173;
-  --accent: rgb(24 33 46 / 8%);
-  --accent-foreground: #18212e;
-  --border: rgb(24 33 46 / 14%);
-  --input: rgb(24 33 46 / 18%);
+  --accent: rgb(var(--ink-rgb) / 8%);
+  --accent-foreground: rgb(var(--ink-rgb));
+  --border: rgb(var(--ink-rgb) / 14%);
+  --input: rgb(var(--ink-rgb) / 18%);
   --ring: #2457d6;
   --radius: 1rem;
   color-scheme: light;
@@ -67,34 +67,34 @@ html[data-vox-theme="daylight"] {
 
 /* ---- Hard-coded dark-theme colours, translated ---- */
 html[data-vox-theme="daylight"] :is([class^="text-white"], [class*=" text-white"]) { color: var(--dl-ink); }
-html[data-vox-theme="daylight"] :is([class*=" text-white/7"], [class*=" text-white/8"], [class*=" text-white/9"], [class^="text-white/7"], [class^="text-white/8"]) { color: rgb(24 33 46 / 88%); }
+html[data-vox-theme="daylight"] :is([class*=" text-white/7"], [class*=" text-white/8"], [class*=" text-white/9"], [class^="text-white/7"], [class^="text-white/8"]) { color: rgb(var(--ink-rgb) / 88%); }
 html[data-vox-theme="daylight"] :is([class*=" text-white/5"], [class*=" text-white/6"], [class^="text-white/5"], [class^="text-white/6"]) { color: var(--dl-ink-2); }
 html[data-vox-theme="daylight"] :is([class*=" text-white/2"], [class*=" text-white/3"], [class*=" text-white/4"], [class^="text-white/2"], [class^="text-white/3"], [class^="text-white/4"]) { color: var(--dl-ink-3); }
 html[data-vox-theme="daylight"] [class*="hover:text-white"]:hover { color: var(--dl-ink); }
-html[data-vox-theme="daylight"] :is([class^="bg-white/"], [class*=" bg-white/"]) { background-color: rgb(24 33 46 / 5%); }
-html[data-vox-theme="daylight"] [class*="hover:bg-white/"]:hover { background-color: rgb(24 33 46 / 9%); }
-html[data-vox-theme="daylight"] :is([class^="bg-black/"], [class*=" bg-black/"]) { background-color: rgb(24 33 46 / 5%); }
+html[data-vox-theme="daylight"] :is([class^="bg-white/"], [class*=" bg-white/"]) { background-color: rgb(var(--ink-rgb) / 5%); }
+html[data-vox-theme="daylight"] [class*="hover:bg-white/"]:hover { background-color: rgb(var(--ink-rgb) / 9%); }
+html[data-vox-theme="daylight"] :is([class^="bg-black/"], [class*=" bg-black/"]) { background-color: rgb(var(--ink-rgb) / 5%); }
 html[data-vox-theme="daylight"] :is([class^="border-white/"], [class*=" border-white/"]) { border-color: var(--dl-line); }
 /* Vox's yellow accent becomes ink (buttons) and blue (text). */
-html[data-vox-theme="daylight"] :is([class^="bg-[#f4ff74]"], [class*=" bg-[#f4ff74]"], [class*=" bg-[#ebf969]"]) { background-color: var(--dl-ink); color: #fff; }
+html[data-vox-theme="daylight"] :is([class^="bg-[#f4ff74]"], [class*=" bg-[#f4ff74]"], [class*=" bg-[#ebf969]"]) { background-color: var(--dl-ink); color: rgb(var(--paper-rgb)); }
 html[data-vox-theme="daylight"] [class*="hover:bg-[#ebf969]"]:hover,
-html[data-vox-theme="daylight"] [class*="hover:bg-[#f4ff74]"]:hover { background-color: #2a3647; color: #fff; }
+html[data-vox-theme="daylight"] [class*="hover:bg-[#f4ff74]"]:hover { background-color: #2a3647; color: rgb(var(--paper-rgb)); }
 html[data-vox-theme="daylight"] :is([class*=" bg-[#f4ff74]"], [class^="bg-[#f4ff74]"]) :is(svg, span) { color: inherit; }
 html[data-vox-theme="daylight"] :is([class^="text-[#f4ff74]"], [class*=" text-[#f4ff74]"], [class*=" text-[#78ebff]"], [class^="text-[#78ebff]"], [class*=" text-[#c8bcff]"], [class*=" text-[#d8d1ff]"]) { color: var(--dl-accent); }
-html[data-vox-theme="daylight"] :is([class*=" text-[#10111b]"], [class^="text-[#10111b]"]) { color: #fff; }
+html[data-vox-theme="daylight"] :is([class*=" text-[#10111b]"], [class^="text-[#10111b]"]) { color: rgb(var(--paper-rgb)); }
 html[data-vox-theme="daylight"] :is([class*=" text-[#ffaaa4]"], [class*=" text-[#ff9d96]"], [class*=" text-[#ffb3ad]"], [class^="text-[#ffaaa4]"], [class^="text-[#ff9d96]"]) { color: #b3261e; }
 html[data-vox-theme="daylight"] :is([class*=" text-[#f0c887]"], [class^="text-[#f0c887]"], [class*=" text-[#f0b95e]"]) { color: #8a5a00; }
 html[data-vox-theme="daylight"] :is([class*="text-emerald-"]) { color: #0f6b46; }
 /* Panels, sheets, and dialogs that hard-code a dark surface. */
 html[data-vox-theme="daylight"] :is([class*=" bg-[#10111b]"], [class*=" bg-[#171823]"], [class^="bg-[#10111b]"], [class^="bg-[#171823]"]) {
-  background-color: rgb(246 248 251 / 94%);
+  background-color: rgb(var(--paper-rgb) / 94%);
   color: var(--dl-ink);
   backdrop-filter: blur(24px);
 }
 html[data-vox-theme="daylight"] [data-slot="select-content"],
-html[data-vox-theme="daylight"] .theme-select-content { border-color: var(--dl-line); background: #f6f8fb; color: var(--dl-ink); }
+html[data-vox-theme="daylight"] .theme-select-content { border-color: var(--dl-line); background: rgb(var(--paper-rgb)); color: var(--dl-ink); }
 html[data-vox-theme="daylight"] [data-slot="sheet-overlay"],
-html[data-vox-theme="daylight"] [data-slot="alert-dialog-overlay"] { background: rgb(24 33 46 / 22%); }
+html[data-vox-theme="daylight"] [data-slot="alert-dialog-overlay"] { background: rgb(var(--ink-rgb) / 22%); }
 html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
 
 /* ---- Header and the switch at the top ---- */
@@ -106,7 +106,7 @@ html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
 .vox-shell[data-vox-theme="daylight"] .brand-mark {
   border: 0;
   border-radius: 50%;
-  color: #fff;
+  color: rgb(var(--paper-rgb));
   background: var(--dl-ink);
   box-shadow: none;
 }
@@ -122,8 +122,8 @@ html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
 .vox-shell[data-vox-theme="daylight"] .vx-tabbar {
   --vx-accent: var(--dl-ink);
   --vx-accent-text: var(--dl-ink);
-  --vx-accent-soft: rgb(24 33 46 / 6%);
-  --vx-accent-line: rgb(24 33 46 / 18%);
+  --vx-accent-soft: rgb(var(--ink-rgb) / 6%);
+  --vx-accent-line: rgb(var(--ink-rgb) / 18%);
   --vx-warn-text: #8a5a00;
   --vx-warn-soft: rgb(240 185 94 / 20%);
 }
@@ -137,12 +137,12 @@ html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
   --vx-surface: var(--dl-glass);
   --vx-panel: var(--dl-glass-strong);
   --vx-line: var(--dl-line);
-  --vx-line-soft: rgb(24 33 46 / 7%);
+  --vx-line-soft: rgb(var(--ink-rgb) / 7%);
   --vx-radius: 1rem;
 }
 .vox-shell[data-vox-theme="daylight"] .vx-tabbar {
   border-top-color: var(--dl-line);
-  background: rgb(255 255 255 / 72%);
+  background: rgb(var(--paper-rgb) / 72%);
 }
 
 @media (min-width: 1024px) {
@@ -179,8 +179,8 @@ html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
     box-shadow: none;
   }
   .vox-shell[data-vox-theme="daylight"] .vx-rail-item svg { display: none; }
-  .vox-shell[data-vox-theme="daylight"] .vx-rail-item:hover { background: rgb(24 33 46 / 7%); color: var(--dl-ink); }
-  .vox-shell[data-vox-theme="daylight"] .vx-rail-item[aria-current="page"] { background: var(--dl-ink); color: #fff; }
+  .vox-shell[data-vox-theme="daylight"] .vx-rail-item:hover { background: rgb(var(--ink-rgb) / 7%); color: var(--dl-ink); }
+  .vox-shell[data-vox-theme="daylight"] .vx-rail-item[aria-current="page"] { background: var(--dl-ink); color: rgb(var(--paper-rgb)); }
 
   .vox-shell[data-vox-theme="daylight"] .panel-resize-handle { display: none; }
 }
@@ -287,32 +287,32 @@ html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
   border: 0;
   border-radius: 1.15rem;
   padding: 0.6rem 0.95rem;
-  background: rgb(255 255 255 / 92%);
-  box-shadow: 0 1px 2px rgb(24 33 46 / 6%);
+  background: rgb(var(--paper-rgb) / 92%);
+  box-shadow: 0 1px 2px rgb(var(--ink-rgb) / 6%);
 }
 .vox-shell[data-vox-theme="daylight"] .message::before { display: none; }
-.vox-shell[data-vox-theme="daylight"] .message-user { align-self: flex-end; background: rgb(255 255 255 / 46%); box-shadow: none; }
+.vox-shell[data-vox-theme="daylight"] .message-user { align-self: flex-end; background: rgb(var(--paper-rgb) / 46%); box-shadow: none; }
 .vox-shell[data-vox-theme="daylight"] .message .message-copy { margin-top: 0; color: var(--dl-ink); font-size: 0.93rem; line-height: 1.5; }
 /* Plain messages need no "Vox" / "You" label; calls and texts keep theirs. */
 .vox-shell[data-vox-theme="daylight"] .message:not(.message-phone, .message-caller, .message-text-in) .message-header { display: none; }
 .vox-shell[data-vox-theme="daylight"] .message :is(.message-header) { margin-bottom: 0.3rem; }
 .vox-shell[data-vox-theme="daylight"] .message-role { color: var(--dl-ink-3); }
-.vox-shell[data-vox-theme="daylight"] :is(.message-caller, .message-text-in) { background: rgb(255 255 255 / 92%); }
+.vox-shell[data-vox-theme="daylight"] :is(.message-caller, .message-text-in) { background: rgb(var(--paper-rgb) / 92%); }
 .vox-shell[data-vox-theme="daylight"] .message-caller.message-caller-user,
 .vox-shell[data-vox-theme="daylight"] .message-text-in { align-self: flex-start; }
-.vox-shell[data-vox-theme="daylight"] :is(.message-phone-badge, .message-text-badge) { border-color: var(--dl-line); background: rgb(24 33 46 / 5%); color: var(--dl-ink-2); }
+.vox-shell[data-vox-theme="daylight"] :is(.message-phone-badge, .message-text-badge) { border-color: var(--dl-line); background: rgb(var(--ink-rgb) / 5%); color: var(--dl-ink-2); }
 .vox-shell[data-vox-theme="daylight"] .empty-transcript { border-color: transparent; background: transparent; }
 .vox-shell[data-vox-theme="daylight"] .empty-icon { border-color: transparent; color: var(--dl-ink-2); background: var(--dl-glass); }
 .vox-shell[data-vox-theme="daylight"] .composer {
   border-color: transparent;
   border-radius: 999px;
-  background: rgb(255 255 255 / 62%);
+  background: rgb(var(--paper-rgb) / 62%);
   backdrop-filter: blur(22px);
 }
 .vox-shell[data-vox-theme="daylight"] .composer:focus-within { border-color: rgb(36 87 214 / 45%); box-shadow: 0 0 0 3px rgb(36 87 214 / 12%); }
 .vox-shell[data-vox-theme="daylight"] .composer input { color: var(--dl-ink); }
 .vox-shell[data-vox-theme="daylight"] .side-switch { border-color: transparent; background: var(--dl-glass); }
-.vox-shell[data-vox-theme="daylight"] .side-switch-tab[aria-selected="true"] { background: var(--dl-ink); color: #fff; }
+.vox-shell[data-vox-theme="daylight"] .side-switch-tab[aria-selected="true"] { background: var(--dl-ink); color: rgb(var(--paper-rgb)); }
 
 /* ---- Voice ---- */
 .vox-shell[data-vox-theme="daylight"] .voice-console { color: var(--dl-ink); }
@@ -320,7 +320,7 @@ html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
 .vox-shell[data-vox-theme="daylight"] .orb-core { background: radial-gradient(circle at 35% 30%, #ffffff, #dfe9f8 60%, #b9cdea); color: var(--dl-ink); }
 .vox-shell[data-vox-theme="daylight"] .orb-ring { border-color: rgb(36 87 214 / 22%); }
 .vox-shell[data-vox-theme="daylight"] .orb:focus-visible { outline-color: var(--dl-accent); }
-.vox-shell[data-vox-theme="daylight"] .wave-bar { background: rgb(24 33 46 / 18%); }
+.vox-shell[data-vox-theme="daylight"] .wave-bar { background: rgb(var(--ink-rgb) / 18%); }
 .vox-shell[data-vox-theme="daylight"] .wave-bar.is-live { background: linear-gradient(to top, #2457d6, #9fc0f2); box-shadow: none; }
 .vox-shell[data-vox-theme="daylight"] .mac-task-status { border-color: transparent; background: var(--dl-glass-strong); color: var(--dl-ink-2); }
 
@@ -330,17 +330,17 @@ html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
   background: var(--dl-glass);
   backdrop-filter: blur(22px);
 }
-.vox-shell[data-vox-theme="daylight"] .settings-row-icon { border-color: transparent; color: var(--dl-ink); background: rgb(255 255 255 / 70%); }
+.vox-shell[data-vox-theme="daylight"] .settings-row-icon { border-color: transparent; color: var(--dl-ink); background: rgb(var(--paper-rgb) / 70%); }
 .vox-shell[data-vox-theme="daylight"] .vox-view-heading h1 { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; }
 .vox-shell[data-vox-theme="daylight"] .vox-share-card { border-color: transparent; background: var(--dl-glass); }
 .vox-shell[data-vox-theme="daylight"] .vox-share-card > svg { color: var(--dl-accent); }
-.vox-shell[data-vox-theme="daylight"] .vox-share-button { background: var(--dl-ink); color: #fff; box-shadow: none; }
+.vox-shell[data-vox-theme="daylight"] .vox-share-button { background: var(--dl-ink); color: rgb(var(--paper-rgb)); box-shadow: none; }
 .vox-shell[data-vox-theme="daylight"] .vox-map { border-color: transparent; background: #e8eef5; }
-.vox-shell[data-vox-theme="daylight"] .vox-map-dot { border-color: #fff; background: var(--dl-accent); box-shadow: 0 0 0 4px rgb(36 87 214 / 22%); }
-.vox-shell[data-vox-theme="daylight"] .vox-map .leaflet-control-attribution { background: rgb(255 255 255 / 80%); color: var(--dl-ink-3); }
+.vox-shell[data-vox-theme="daylight"] .vox-map-dot { border-color: rgb(var(--paper-rgb)); background: var(--dl-accent); box-shadow: 0 0 0 4px rgb(36 87 214 / 22%); }
+.vox-shell[data-vox-theme="daylight"] .vox-map .leaflet-control-attribution { background: rgb(var(--paper-rgb) / 80%); color: var(--dl-ink-3); }
 .vox-shell[data-vox-theme="daylight"] .vox-map .leaflet-control-attribution a { color: var(--dl-accent); }
-.vox-shell[data-vox-theme="daylight"] .vox-map :is(.leaflet-popup-content-wrapper, .leaflet-popup-tip) { background: #fff; color: var(--dl-ink); box-shadow: 0 6px 24px rgb(24 33 46 / 18%); }
-.vox-shell[data-vox-theme="daylight"] .vx-browser-slot { background: rgb(255 255 255 / 40%); }
+.vox-shell[data-vox-theme="daylight"] .vox-map :is(.leaflet-popup-content-wrapper, .leaflet-popup-tip) { background: rgb(var(--paper-rgb)); color: var(--dl-ink); box-shadow: 0 6px 24px rgb(var(--ink-rgb) / 18%); }
+.vox-shell[data-vox-theme="daylight"] .vx-browser-slot { background: rgb(var(--paper-rgb) / 40%); }
 
 /* Quiet details: no caption over the chat, and the camera box only once it's on. */
 .vox-shell[data-vox-theme="daylight"] .transcript-header p.text-sm { display: none; }
@@ -377,7 +377,7 @@ html[data-vox-theme="daylight"] input::placeholder { color: var(--dl-ink-3); }
 .vox-shell[data-vox-theme="daylight"] .vx-stage-heading .vx-hud { color: var(--dl-ink-3); font-size: 0.7rem; letter-spacing: 0.06em; }
 .vox-shell[data-vox-theme="daylight"] .vx-stage-title { font-size: 1.35rem; letter-spacing: -0.015em; }
 .vox-shell[data-vox-theme="daylight"] .vx-reader { border: 0; background: var(--dl-glass-strong); backdrop-filter: blur(22px) saturate(1.2); }
-.vox-shell[data-vox-theme="daylight"] .vx-reader-live { box-shadow: 0 24px 60px -34px rgb(24 33 46 / 45%); }
+.vox-shell[data-vox-theme="daylight"] .vx-reader-live { box-shadow: 0 24px 60px -34px rgb(var(--ink-rgb) / 45%); }
 .vox-shell[data-vox-theme="daylight"] .vx-block { border: 0; background: var(--dl-glass); backdrop-filter: blur(22px) saturate(1.2); }
 .vox-shell[data-vox-theme="daylight"] .vx-block .vx-hud { color: var(--dl-ink-3); font-size: 0.7rem; letter-spacing: 0.05em; }
 .vox-shell[data-vox-theme="daylight"] .vx-facts dd { font-family: inherit; font-size: 0.86rem; font-weight: 600; }

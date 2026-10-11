@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { SettingsRow } from "@/components/settings-row";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { savedKindNames, vaultBridge, type SavedDetails } from "@/lib/secure-fill";
 import { WEB_ACCOUNT_CATEGORIES, WEB_ACCOUNT_SERVICES, webAccountBridge, webAccountChecks, type WebAccountService } from "@/lib/web-accounts";
 
 /**
@@ -13,12 +14,35 @@ import { WEB_ACCOUNT_CATEGORIES, WEB_ACCOUNT_SERVICES, webAccountBridge, webAcco
  * to inside Vox's built-in browser (Mac app), and the ones they can add.
  * Signing in opens the site itself; the user types their own password there.
  */
-export function WebAccounts({ onSignIn, onChange }: { onSignIn: (url: string, name: string) => void; onChange?: (signedInIds: string[]) => void }) {
+export function WebAccounts({
+  onSignIn,
+  onChange,
+  remoteStatus,
+}: {
+  onSignIn: (url: string, name: string) => void;
+  onChange?: (signedInIds: string[]) => void;
+  /** On a phone or tablet with a paired Mac: asks the Mac which sites are signed in there. */
+  remoteStatus?: (checks: ReturnType<typeof webAccountChecks>) => Promise<Record<string, boolean>>;
+}) {
   const [bridge] = useState(() => webAccountBridge());
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<Record<string, boolean> | null>(null);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  // Sign-ins and card details remembered on this Mac for the private box (names only).
+  const [savedDetails, setSavedDetails] = useState<SavedDetails | null>(null);
+  const refreshSaved = useCallback(async () => {
+    const next = await vaultBridge()?.list().catch(() => null);
+    if (next) setSavedDetails(next);
+  }, []);
+  useEffect(() => {
+    if (open) queueMicrotask(() => void refreshSaved());
+  }, [open, refreshSaved]);
+  async function forgetSaved(target: string, name: string) {
+    await vaultBridge()?.forget(target).catch(() => false);
+    await refreshSaved();
+    toast.success(`Forgot the saved details for ${name}`);
+  }
 
   // The latest callback, without making every render look like a change.
   const onChangeRef = useRef(onChange);
@@ -26,8 +50,15 @@ export function WebAccounts({ onSignIn, onChange }: { onSignIn: (url: string, na
     onChangeRef.current = onChange;
   }, [onChange]);
 
+  const remoteStatusRef = useRef(remoteStatus);
+  useEffect(() => {
+    remoteStatusRef.current = remoteStatus;
+  }, [remoteStatus]);
+  const viaMac = !bridge && Boolean(remoteStatus);
+
   const refresh = useCallback(async () => {
-    const next = await webAccountBridge()?.status(webAccountChecks()).catch(() => null);
+    const local = webAccountBridge();
+    const next = local ? await local.status(webAccountChecks()).catch(() => null) : ((await remoteStatusRef.current?.(webAccountChecks()).catch(() => null)) ?? null);
     if (!next) return;
     setStatus(next);
     onChangeRef.current?.(Object.keys(next).filter((id) => next[id]));
@@ -35,8 +66,12 @@ export function WebAccounts({ onSignIn, onChange }: { onSignIn: (url: string, na
 
   // Once at start, so the row can say how many; then while the sheet is open.
   useEffect(() => {
-    if (bridge) queueMicrotask(() => void refresh());
-  }, [bridge, refresh]);
+    if (bridge || viaMac) queueMicrotask(() => void refresh());
+  }, [bridge, viaMac, refresh]);
+  // Through the Mac each check is a round trip: once when the sheet opens is enough.
+  useEffect(() => {
+    if (open && viaMac) queueMicrotask(() => void refresh());
+  }, [open, viaMac, refresh]);
   useEffect(() => {
     if (!open || !bridge) return;
     const timer = window.setInterval(() => void refresh(), 4_000);
@@ -66,7 +101,7 @@ export function WebAccounts({ onSignIn, onChange }: { onSignIn: (url: string, na
         <span className={`size-2 shrink-0 rounded-full ${connected ? "bg-[#f4ff74]" : "bg-white/15"}`} aria-hidden="true" />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-white">{item.name}</span>
-          {connected ? <span className="block text-xs text-white/45">Signed in</span> : null}
+          {connected ? <span className="block text-xs text-white/45">{viaMac ? "Signed in on your Mac" : "Signed in"}</span> : null}
         </span>
         {bridge ? (
           connected ? (
@@ -102,7 +137,7 @@ export function WebAccounts({ onSignIn, onChange }: { onSignIn: (url: string, na
         <SettingsRow
           icon={<Globe2 />}
           title="Websites"
-          detail={bridge ? (signedIn.length ? `Signed in to ${signedIn.length}: ${signedIn.slice(0, 3).map((item) => item.name).join(", ")}${signedIn.length > 3 ? "…" : ""}` : "Amazon, Uber, Airbnb, Instagram, and more") : "Sign in to sites in the Vox Mac app"}
+          detail={bridge || viaMac ? (signedIn.length ? `Signed in to ${signedIn.length}: ${signedIn.slice(0, 3).map((item) => item.name).join(", ")}${signedIn.length > 3 ? "…" : ""}` : "Amazon, Uber, Airbnb, Instagram, and more") : "Sign in to sites in the Vox Mac app"}
         />
       </SheetTrigger>
       <SheetContent className="flex w-[min(94vw,440px)] flex-col border-white/10 bg-[#10111b] text-white sm:max-w-[440px]">
@@ -124,7 +159,9 @@ export function WebAccounts({ onSignIn, onChange }: { onSignIn: (url: string, na
           </p>
           {!bridge ? (
             <p className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-sm leading-6 text-white/60">
-              Signing in to websites works in the Vox Mac app, which has a built-in browser. Open Vox on your Mac to sign in.
+              {viaMac
+                ? "From here Vox uses these sites through your paired Mac, so it works while the Mac is on with Vox open. Sign in to a new site on the Mac."
+                : "Signing in to websites works in the Vox Mac app, which has a built-in browser. Pair this device with your Mac and Vox can use those sign-ins from here."}
             </p>
           ) : null}
 
@@ -134,6 +171,38 @@ export function WebAccounts({ onSignIn, onChange }: { onSignIn: (url: string, na
                 Signed in
               </h3>
               <ul className="mt-1 divide-y divide-white/8">{signedIn.map(row)}</ul>
+            </section>
+          ) : null}
+
+          {savedDetails && (savedDetails.sites.length > 0 || savedDetails.anywhere.length > 0) ? (
+            <section aria-labelledby="web-accounts-saved">
+              <h3 id="web-accounts-saved" className="text-xs font-semibold text-white/50">
+                Remembered on this Mac
+              </h3>
+              <ul className="mt-1 divide-y divide-white/8">
+                {savedDetails.anywhere.length > 0 ? (
+                  <li className="flex items-center gap-3 px-1 py-2">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-white">Card and contact details</span>
+                      <span className="block text-xs text-white/45">{savedKindNames(savedDetails.anywhere)}</span>
+                    </span>
+                    <button type="button" className="min-h-9 rounded-full px-3 text-xs text-white/50 hover:bg-white/5 hover:text-[#ff9d96]" onClick={() => void forgetSaved("anywhere", "your card and contact details")}>
+                      Forget
+                    </button>
+                  </li>
+                ) : null}
+                {savedDetails.sites.map((site) => (
+                  <li key={site.host} className="flex items-center gap-3 px-1 py-2">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-white">{site.host}</span>
+                      <span className="block text-xs text-white/45">{savedKindNames(site.kinds)}</span>
+                    </span>
+                    <button type="button" className="min-h-9 rounded-full px-3 text-xs text-white/50 hover:bg-white/5 hover:text-[#ff9d96]" onClick={() => void forgetSaved(site.host, site.host)}>
+                      Forget
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </section>
           ) : null}
 

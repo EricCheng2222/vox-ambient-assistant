@@ -19,7 +19,7 @@ export {
 const encoder = new TextEncoder();
 export const PHONE_ASSISTANT_OWNER_ID = "owner";
 
-function isPhoneAssistantOwner(ownerId: string) {
+export function isPhoneAssistantOwner(ownerId: string) {
   return ownerId === PHONE_ASSISTANT_OWNER_ID;
 }
 

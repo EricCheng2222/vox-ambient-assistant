@@ -1,214 +1,239 @@
 import { escapeHtml } from "./util.ts";
 
-// Vox's holographic look: a deep navy ground with a faint HUD grid, thin cyan
-// panels with corner brackets, small monospace labels, cyan for actions and
-// amber for anything that needs the user. Dark only; no web fonts or images
-// (the CSP allows neither), just inline SVG.
+// Vox's Sunset look, shared with the other Vox sites: a night sky running
+// down into the last warm light, cream text, soft glass panels, one warm
+// accent, and amber for anything that needs the user. Dark only; no web fonts
+// or images (the CSP allows neither), just inline SVG.
 
 const baseStyles = `
   :root {
     color-scheme: dark;
-    --bg: #020a12;
-    --bg-2: #06131e;
-    --cyan: #78ebff;
-    --cyan-text: #9bf2ff;
-    --cyan-ink: #00151b;
-    --cyan-soft: rgb(120 235 255 / 9%);
-    --cyan-line: rgb(120 235 255 / 40%);
-    --amber: #f0b95e;
-    --amber-text: #f0c887;
-    --amber-soft: rgb(240 185 94 / 7%);
-    --amber-line: rgb(240 185 94 / 38%);
-    --danger: #ff9d90;
-    --text: #eafcff;
-    --text-2: #b9dfe6;
-    --muted: #83aab5;
-    --line: rgb(120 235 255 / 18%);
-    --line-soft: rgb(120 235 255 / 9%);
-    --panel: linear-gradient(180deg, rgb(7 28 41 / 86%), rgb(3 13 22 / 95%));
-    --field: rgb(2 14 22 / 82%);
-    --hud: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --ink: 248 236 226;
+    --text: rgb(var(--ink));
+    --text-2: rgb(var(--ink) / 86%);
+    --muted: rgb(var(--ink) / 66%);
+    --line: rgb(var(--ink) / 16%);
+    --line-soft: rgb(var(--ink) / 10%);
+    --sun: #ffb48c;
+    --gold: #f5a25a;
+    --ember: #e2574c;
+    --warn: #f3c98a;
+    --danger: #ffaaa0;
+    --night: #1b1836;
+    --glass: rgb(30 22 52 / 62%);
+    --glass-strong: rgb(32 24 54 / 84%);
+    --field: rgb(20 15 38 / 62%);
     --ui: "Avenir Next", Avenir, system-ui, -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC", sans-serif;
   }
   * { box-sizing: border-box; }
-  html { background: var(--bg); }
+  html { background: var(--night); }
   body {
     margin: 0; min-height: 100vh; overflow-x: hidden;
     font: 16px/1.55 var(--ui); color: var(--text); -webkit-font-smoothing: antialiased;
+    /* Vox's Sunset: night overhead, the last light along the bottom edge. */
     background:
-      radial-gradient(circle at 50% -8%, rgb(76 213 255 / 12%), transparent 560px),
-      radial-gradient(circle at 92% 96%, rgb(245 198 109 / 5%), transparent 420px),
-      linear-gradient(150deg, var(--bg) 0%, var(--bg-2) 52%, #020911 100%);
+      radial-gradient(44rem 26rem at 50% 5rem, rgb(226 87 76 / 22%), transparent 70%),
+      linear-gradient(180deg, #15132e 0%, #231b48 30%, #43275d 56%, #7c3562 76%, #bd4f5c 90%, #e98556 100%);
     background-attachment: fixed;
   }
-  /* The HUD grid. */
-  body::before {
-    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-    background-image: linear-gradient(rgb(120 235 255 / 3.5%) 1px, transparent 1px), linear-gradient(90deg, rgb(120 235 255 / 3.5%) 1px, transparent 1px);
-    background-size: 72px 72px;
-  }
-  a { color: var(--cyan); }
+  a { color: var(--sun); text-underline-offset: 3px; }
   a:hover { color: var(--text); }
   button, input, select { font: inherit; color: inherit; }
-  :focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; border-radius: 6px; }
+  :focus-visible { outline: 2px solid var(--sun); outline-offset: 3px; border-radius: 8px; }
   form { margin: 0; }
   [hidden] { display: none !important; }
 
-  .wrap { width: min(100% - 32px, 1040px); margin: 0 auto; padding: 0 0 56px; }
+  .wrap { width: min(100% - 32px, 1040px); margin: 0 auto; padding: 0 0 72px; }
   .narrow { width: min(100% - 32px, 640px); }
-  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 22px 0 30px; }
-  .brand { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; color: var(--text); font-weight: 650; letter-spacing: 0.01em; text-decoration: none; }
-  .brand svg { width: 34px; height: 34px; color: var(--cyan); filter: drop-shadow(0 0 6px rgb(120 235 255 / 40%)); }
-  .brand span b { color: var(--cyan-text); font-weight: 650; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 22px 0 34px; }
+  .brand { display: inline-flex; align-items: center; gap: 11px; min-height: 44px; color: var(--text); font-size: 17px; font-weight: 600; letter-spacing: 0.01em; text-decoration: none; }
+  .brand svg { width: 34px; height: 34px; }
+  .brand span b { color: var(--sun); font-weight: 600; }
   .who { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; }
   .who-name { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  .hud { margin: 0; font-family: var(--hud); font-size: 11px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: rgb(120 235 255 / 72%); }
-  .hud.amber { color: var(--amber); }
-  .page-head { display: grid; gap: 8px; max-width: 680px; margin-bottom: 26px; }
-  h1 { margin: 0; font-size: clamp(28px, 4vw, 34px); font-weight: 600; line-height: 1.15; letter-spacing: -0.01em; }
+  /* A quiet label above a title or a group. */
+  .hud { margin: 0; color: var(--sun); font-size: 13.5px; font-weight: 600; letter-spacing: 0.01em; }
+  .hud.amber { color: var(--warn); }
+  .page-head { display: grid; gap: 8px; max-width: 680px; margin-bottom: 8px; }
+  h1 { margin: 0; font-size: clamp(30px, 4.6vw, 40px); font-weight: 600; line-height: 1.12; letter-spacing: -0.02em; text-wrap: balance; }
   h2 { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.3; }
   h3 { margin: 0; font-size: 15px; font-weight: 600; }
-  .lede { margin: 0; color: #9fc3cc; font-size: 16px; line-height: 1.6; }
+  .lede { margin: 0; max-width: 60ch; color: var(--text-2); font-size: 16px; line-height: 1.6; text-wrap: pretty; }
   p { margin: 0; }
   .muted { color: var(--muted); }
 
-  /* Panels with corner brackets. */
-  .panel { position: relative; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 0 40px rgb(120 235 255 / 5%), inset 0 0 26px rgb(120 235 255 / 4%); }
-  .panel::before, .panel::after { content: ""; position: absolute; width: 22px; height: 22px; pointer-events: none; }
-  .panel::before { top: -1px; left: -1px; border-top: 2px solid var(--cyan); border-left: 2px solid var(--cyan); border-top-left-radius: 12px; }
-  .panel::after { right: -1px; bottom: -1px; border-right: 2px solid var(--cyan); border-bottom: 2px solid var(--cyan); border-bottom-right-radius: 12px; }
-  .panel-pad { padding: 22px 22px 24px; }
-  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px 8px; }
+  .panel { position: relative; border: 1px solid var(--line); border-radius: 20px; background: var(--glass); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+  .panel-pad { padding: 26px 26px 28px; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 22px 10px; }
+  .panel-head h2 { color: var(--text) !important; font-size: 16px; }
   .stack { display: grid; gap: 18px; }
-  .note { display: flex; gap: 14px; padding: 16px 18px; border: 1px solid var(--amber-line); border-radius: 12px; background: var(--amber-soft); }
-  .note svg { width: 22px; height: 22px; flex-shrink: 0; color: var(--amber); }
-  .note p { color: #9fc3cc; font-size: 14px; line-height: 1.6; }
+  .note { display: flex; gap: 14px; padding: 16px 20px; border: 1px solid rgb(243 201 138 / 30%); border-radius: 18px; background: rgb(243 201 138 / 8%); }
+  .note svg { width: 22px; height: 22px; flex-shrink: 0; margin-top: 1px; color: var(--warn); }
+  .note p { color: var(--text-2); font-size: 14px; line-height: 1.6; }
   .note h3 { margin-bottom: 3px; }
 
   /* Buttons: 44px targets. */
-  .btn { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 8px; padding: 0 18px; border: 1px solid var(--line); border-radius: 999px; background: rgb(4 24 37 / 60%); color: var(--text); font-size: 15px; font-weight: 600; line-height: 1.2; text-decoration: none; cursor: pointer; transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
-  .btn:hover { border-color: var(--cyan-line); background: var(--cyan-soft); color: var(--text); }
+  .btn { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 8px; padding: 0 18px; border: 1px solid var(--line); border-radius: 999px; background: rgb(var(--ink) / 6%); color: var(--text); font-size: 15px; font-weight: 600; line-height: 1.2; text-decoration: none; cursor: pointer; transition: background 160ms ease, border-color 160ms ease; }
+  .btn:hover { border-color: rgb(var(--ink) / 34%); background: rgb(var(--ink) / 12%); color: var(--text); }
   .btn svg { width: 17px; height: 17px; flex-shrink: 0; }
-  .btn-primary { border-color: transparent; background: var(--cyan); color: var(--cyan-ink); box-shadow: 0 0 18px rgb(120 235 255 / 28%); }
-  .btn-primary:hover { border-color: transparent; background: #b0f4ff; color: var(--cyan-ink); }
-  .btn-amber { border-color: transparent; background: var(--amber); color: #1c1303; box-shadow: 0 0 16px rgb(240 185 94 / 25%); }
-  .btn-amber:hover { border-color: transparent; background: #f6cd85; color: #1c1303; }
+  .btn-primary { border-color: transparent; background: var(--text); color: #2a1d3f; }
+  .btn-primary:hover { border-color: transparent; background: #fff; color: #2a1d3f; }
+  .btn-amber { border-color: transparent; background: var(--warn); color: #33210a; }
+  .btn-amber:hover { border-color: transparent; background: #f8dba9; color: #33210a; }
   .btn-quiet { border-color: transparent; background: transparent; color: var(--muted); font-weight: 500; }
-  .btn-quiet:hover { border-color: transparent; color: var(--text); }
-  .btn-danger:hover { color: var(--danger); background: rgb(255 157 144 / 8%); }
+  .btn-quiet:hover { border-color: transparent; background: rgb(var(--ink) / 8%); color: var(--text); }
+  .btn-danger:hover { color: var(--danger); background: rgb(255 170 160 / 10%); }
   .btn-sm { min-height: 44px; padding: 0 14px; font-size: 14px; }
   .btn:disabled { opacity: 0.5; cursor: default; }
   .btn-row { display: flex; flex-wrap: wrap; gap: 10px; }
 
-  .dot { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 9px rgb(120 235 255 / 70%); }
-  .dot.amber { background: var(--amber); box-shadow: 0 0 9px rgb(240 185 94 / 80%); }
-  .chip { display: inline-flex; align-items: center; padding: 3px 10px; border: 1px solid var(--cyan-line); border-radius: 999px; color: var(--cyan-text); font-family: var(--hud); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: #9fe0b4; }
+  .dot.amber { background: var(--warn); }
+  .chip { display: inline-flex; align-items: center; padding: 2px 10px; border: 1px solid rgb(255 180 140 / 45%); border-radius: 999px; color: var(--sun); font-size: 12px; font-weight: 600; white-space: nowrap; }
 
-  /* Provider monograms. */
-  .mono { display: grid; width: 44px; height: 44px; flex-shrink: 0; place-items: center; border: 1px solid var(--line); border-radius: 11px; background: radial-gradient(circle at 30% 25%, rgb(120 235 255 / 16%), rgb(4 22 34 / 90%) 70%); color: var(--cyan-text); font-weight: 700; font-size: 18px; box-shadow: inset 0 0 12px rgb(120 235 255 / 8%); }
+  .mono { display: grid; width: 44px; height: 44px; flex-shrink: 0; place-items: center; border-radius: 14px; background: linear-gradient(160deg, rgb(255 180 140 / 30%), rgb(226 87 76 / 22%)); color: var(--text); font-weight: 650; font-size: 18px; }
+  .mono.big { width: 52px; height: 52px; border-radius: 16px; font-size: 21px; }
   .mono.small-text { font-size: 10.5px; letter-spacing: 0.02em; }
-  .mono.big { width: 52px; height: 52px; border-radius: 13px; font-size: 21px; }
   .mono.big.small-text { font-size: 12px; }
+  .error { margin-top: 16px !important; padding: 12px 14px; border: 1px solid rgb(255 170 160 / 40%); border-radius: 12px; background: rgb(255 170 160 / 9%); color: #ffd0c9; font-size: 14.5px; }
+  .error:empty { display: none; }
 
-  /* Account and app rows. */
+  /* Rows. */
   .rows { margin: 0; padding: 0 0 6px; list-style: none; }
-  .row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px 16px; padding: 14px 20px; border-top: 1px solid var(--line-soft); }
-  .row-main { display: grid; gap: 3px; min-width: 0; }
+  .row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px 16px; padding: 16px 22px; border-top: 1px solid var(--line-soft); }
+  .row-main { display: grid; gap: 4px; min-width: 0; }
   .row-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; font-size: 16px; font-weight: 600; }
   .row-title .address { min-width: 0; overflow-wrap: anywhere; }
-  .row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--muted); font-size: 13.5px; }
+  .row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--muted); font-size: 13.5px; }
   .row-meta .state { display: inline-flex; align-items: center; gap: 7px; }
-  .row-meta .state.amber { color: var(--amber-text); }
-  .row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+  .row-meta .state.amber { color: var(--warn); }
   .row-allow { margin-top: 8px; }
-  .empty { display: grid; gap: 14px; justify-items: start; padding: 8px 20px 22px; }
-  .empty p { color: #9fc3cc; }
-  .code { display: block; margin-top: 6px; padding: 10px 12px; overflow-wrap: anywhere; border: 1px solid var(--line-soft); border-radius: 9px; background: var(--field); color: var(--cyan-text); font-family: var(--hud); font-size: 13px; }
-  .section-foot { padding: 4px 20px 20px; }
+  .row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+  .empty { display: grid; gap: 14px; justify-items: start; padding: 6px 22px 22px; }
+  .empty p { color: var(--muted); }
+  .code { display: block; margin-top: 6px; padding: 10px 12px; overflow-wrap: anywhere; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--field); color: var(--text-2); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+  .section-foot { padding: 4px 22px 22px; }
+  .section-foot .hud { color: var(--muted) !important; font-weight: 500; }
+
+  /* What an account lets Vox use: lit when allowed, faint when not. */
+  .uses { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+  .use { padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--text-2); font-size: 12.5px; }
+  .use.off { border-style: dashed; color: rgb(var(--ink) / 42%); }
+
+  /* Figures at a glance. */
+  .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: var(--line-soft); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+  .figure { display: grid; align-content: start; gap: 4px; padding: 18px 20px 20px; background: var(--glass-strong); }
+  .figure-label { color: var(--muted); font-size: 13.5px; }
+  .figure-value { font-size: 30px; font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .figure-value small { margin-left: 3px; color: var(--muted); font-size: 14px; font-weight: 500; letter-spacing: 0; }
+  .figure-note { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  .figure-note.warn { color: var(--warn); }
+  .meter { height: 5px; margin-top: 6px; overflow: hidden; border-radius: 999px; background: rgb(var(--ink) / 12%); }
+  .meter > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--gold), var(--sun)); }
+
+  /* The last seven days. */
+  .week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; padding: 6px 22px 20px; }
+  .week-day { display: grid; gap: 6px; justify-items: center; min-width: 0; }
+  .week-bar { display: flex; width: 100%; max-width: 44px; height: 84px; align-items: flex-end; border-radius: 10px; background: rgb(var(--ink) / 7%); }
+  .week-bar > span { display: block; width: 100%; min-height: 3px; border-radius: 10px; background: linear-gradient(180deg, var(--sun), var(--ember)); }
+  .week-bar.none > span { background: rgb(var(--ink) / 16%); }
+  .week-count { min-height: 1.5em; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .week-name { color: var(--muted); font-size: 12.5px; }
+  .week-day.today .week-name { color: var(--sun); font-weight: 600; }
+  .week-marks { display: flex; gap: 4px; min-height: 6px; }
+  .week-marks i { width: 6px; height: 6px; border-radius: 50%; background: rgb(var(--ink) / 55%); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 0 22px 20px; color: var(--muted); font-size: 13px; }
+  .legend i { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: rgb(var(--ink) / 55%); }
+  .legend i.bar { border-radius: 3px; background: linear-gradient(180deg, var(--sun), var(--ember)); }
 
   /* Tiles (landing and add account). */
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 14px; }
-  .tile { position: relative; display: grid; align-content: start; gap: 12px; min-height: 100%; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: rgb(4 25 38 / 55%); color: var(--text); text-decoration: none; transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease; }
-  a.tile:hover { border-color: rgb(120 235 255 / 55%); background: rgb(8 36 52 / 70%); box-shadow: 0 0 26px rgb(120 235 255 / 12%); color: var(--text); }
-  .tile p { color: #9fc3cc; font-size: 14.5px; line-height: 1.55; }
-  .tile .tile-foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: var(--cyan-text); font-size: 14px; font-weight: 600; }
+  .tile { position: relative; display: grid; align-content: start; gap: 10px; min-height: 100%; padding: 22px; border: 1px solid var(--line); border-radius: 20px; background: var(--glass); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); color: var(--text); text-decoration: none; transition: border-color 160ms ease, background 160ms ease; }
+  a.tile:hover { border-color: rgb(var(--ink) / 36%); background: var(--glass-strong); color: var(--text); }
+  .tile p { color: var(--text-2); font-size: 14.5px; line-height: 1.55; }
+  .tile .tile-foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: var(--sun); font-size: 14px; font-weight: 600; }
   .tile .tile-foot svg { width: 16px; height: 16px; }
-
-  /* Forms. */
-  label.field-label { display: block; margin: 16px 0 6px; color: var(--text-2); font-size: 14px; font-weight: 600; }
-  .field-hint { display: block; margin-top: 6px; color: var(--muted); font-size: 13px; }
-  .input, select.input { width: 100%; min-height: 46px; padding: 10px 14px; border: 1px solid rgb(120 235 255 / 24%); border-radius: 10px; background: var(--field); color: var(--text); }
-  select.input { appearance: none; padding-right: 40px; background-image: linear-gradient(45deg, transparent 50%, var(--cyan) 50%), linear-gradient(135deg, var(--cyan) 50%, transparent 50%); background-position: calc(100% - 20px) 50%, calc(100% - 15px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
-  select.input option { background: #06131e; color: var(--text); }
-  .input:hover { border-color: rgb(120 235 255 / 38%); }
-  .input:focus { border-color: var(--cyan); outline: none; box-shadow: 0 0 0 3px rgb(120 235 255 / 18%); }
-  .input:focus-visible { outline: none; }
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
-  details.advanced { margin-top: 18px; border: 1px solid var(--line-soft); border-radius: 10px; background: rgb(2 12 20 / 50%); }
-  details.advanced summary { display: flex; min-height: 46px; align-items: center; gap: 10px; padding: 0 14px; cursor: pointer; color: var(--text-2); font-weight: 600; list-style: none; }
-  details.advanced summary::-webkit-details-marker { display: none; }
-  details.advanced summary::before { content: ""; width: 7px; height: 7px; border-right: 2px solid var(--cyan); border-bottom: 2px solid var(--cyan); transform: rotate(-45deg); transition: transform 160ms ease; }
-  details.advanced[open] summary::before { transform: rotate(45deg); }
-  details.advanced .advanced-body { padding: 0 14px 16px; }
-  .check { display: flex; gap: 10px; align-items: center; min-height: 44px; margin-top: 10px; color: var(--text-2); font-size: 14px; }
-  .check input { width: 18px; height: 18px; accent-color: var(--cyan); }
-  .error { margin-top: 16px !important; padding: 12px 14px; border: 1px solid rgb(255 157 144 / 40%); border-radius: 10px; background: rgb(255 157 144 / 7%); color: #ffc4bb; font-size: 14.5px; }
-  .error:empty { display: none; }
-  .form-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
-
-  .steps { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; counter-reset: step; }
-  .steps li { display: grid; grid-template-columns: 26px 1fr; gap: 10px; color: var(--text-2); font-size: 14.5px; line-height: 1.5; counter-increment: step; }
-  .steps li::before { content: counter(step, decimal-leading-zero); padding-top: 2px; color: var(--cyan-text); font-family: var(--hud); font-size: 12px; }
-  .explain p:not(.hud) { color: #9fc3cc; font-size: 14.5px; line-height: 1.6; }
-  .hud svg { width: 13px; height: 13px; margin-right: 7px; vertical-align: -2px; }
-  .explain .stack { gap: 16px; }
-  .explain hr { width: 100%; height: 1px; margin: 2px 0; border: 0; background: var(--line-soft); }
 
   .checks { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
   .checks li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; color: var(--text-2); font-size: 15px; line-height: 1.5; }
-  .checks svg { width: 20px; height: 20px; margin-top: 1px; color: var(--cyan); }
-  .checks li.amber svg { color: var(--amber); }
-  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-  .account-chip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: rgb(4 25 38 / 60%); font-size: 14px; overflow-wrap: anywhere; }
-  .account-chip b { font-weight: 600; }
+  .checks svg { width: 20px; height: 20px; margin-top: 1px; color: var(--sun); }
+  .checks li.amber svg { color: var(--warn); }
+
+  /* A day's entries. */
+  .day { margin: 0; padding: 0 0 8px; list-style: none; }
+  .day li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; align-items: baseline; padding: 12px 22px; border-top: 1px solid var(--line-soft); }
+  .day .what { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+  .day .how { color: var(--text-2); font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; }
+  .day .at { margin-right: 12px; color: var(--muted); font-size: 13px; font-weight: 400; font-variant-numeric: tabular-nums; }
 
   /* Signed-out landing. */
   .hero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr); align-items: center; gap: 28px 40px; padding: 18px 0 34px; }
-  .hero h1 { font-size: clamp(36px, 6vw, 58px); letter-spacing: -0.02em; }
+  .hero h1 { font-size: clamp(38px, 6.4vw, 60px); }
   .hero .lede { max-width: 34em; font-size: 17px; }
   .hero-copy { display: grid; gap: 16px; }
-  .reactor { justify-self: center; width: min(100%, 300px); color: var(--cyan); filter: drop-shadow(0 0 8px rgb(120 235 255 / 38%)); }
+  .reactor { justify-self: center; width: min(100%, 300px); }
   .reactor svg { display: block; width: 100%; height: auto; }
   .cta { display: grid; gap: 10px; justify-items: start; margin-top: 8px; }
   .cta .muted { font-size: 14px; }
 
   .consent-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
-  .consent-head .link { width: 38px; height: 1px; background: linear-gradient(90deg, var(--cyan-line), transparent); }
+  .consent-head .link { width: 38px; height: 1px; background: linear-gradient(90deg, rgb(var(--ink) / 40%), transparent); }
 
-  .spin, .spin-rev { transform-origin: 50% 50%; transform-box: view-box; }
-  @media (prefers-reduced-motion: no-preference) {
-    .spin { animation: vx-spin 28s linear infinite; }
-    .spin-rev { animation: vx-spin 46s linear infinite reverse; }
-  }
-  @keyframes vx-spin { to { transform: rotate(360deg); } }
+  /* Forms. */
+  label.field-label { display: block; margin: 16px 0 6px; color: var(--text-2); font-size: 14px; font-weight: 600; }
+  .field-hint { display: block; margin-top: 6px; color: var(--muted); font-size: 13px; }
+  .input, select.input { width: 100%; min-height: 46px; padding: 10px 14px; border: 1px solid rgb(var(--ink) / 22%); border-radius: 12px; background: var(--field); color: var(--text); }
+  select.input { appearance: none; padding-right: 40px; background-image: linear-gradient(45deg, transparent 50%, var(--sun) 50%), linear-gradient(135deg, var(--sun) 50%, transparent 50%); background-position: calc(100% - 20px) 50%, calc(100% - 15px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+  select.input option { background: #231b48; color: var(--text); }
+  .input:hover { border-color: rgb(var(--ink) / 36%); }
+  .input:focus { border-color: var(--sun); outline: none; box-shadow: 0 0 0 3px rgb(255 180 140 / 22%); }
+  .input:focus-visible { outline: none; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+  details.advanced { margin-top: 18px; border: 1px solid var(--line-soft); border-radius: 12px; background: rgb(20 15 38 / 40%); }
+  details.advanced summary { display: flex; min-height: 46px; align-items: center; gap: 10px; padding: 0 14px; cursor: pointer; color: var(--text-2); font-weight: 600; list-style: none; }
+  details.advanced summary::-webkit-details-marker { display: none; }
+  details.advanced summary::before { content: ""; width: 7px; height: 7px; border-right: 2px solid var(--sun); border-bottom: 2px solid var(--sun); transform: rotate(-45deg); transition: transform 160ms ease; }
+  details.advanced[open] summary::before { transform: rotate(45deg); }
+  details.advanced .advanced-body { padding: 0 14px 16px; }
+  .check { display: flex; gap: 10px; align-items: center; min-height: 44px; margin-top: 10px; color: var(--text-2); font-size: 14px; }
+  .check input { width: 18px; height: 18px; accent-color: var(--sun); }
+  .form-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+
+  .steps { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; counter-reset: step; }
+  .steps li { display: grid; grid-template-columns: 26px 1fr; gap: 10px; color: var(--text-2); font-size: 14.5px; line-height: 1.5; counter-increment: step; }
+  .steps li::before { content: counter(step); color: var(--sun); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .explain p:not(.hud) { color: var(--text-2); font-size: 14.5px; line-height: 1.6; }
+  .hud svg { width: 14px; height: 14px; margin-right: 7px; vertical-align: -2px; }
+  .explain .stack { gap: 16px; }
+  .explain hr { width: 100%; height: 1px; margin: 2px 0; border: 0; background: var(--line-soft); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .account-chip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: rgb(var(--ink) / 6%); font-size: 14px; overflow-wrap: anywhere; }
+  .account-chip b { font-weight: 600; }
 
   @media (max-width: 860px) {
     .hero { grid-template-columns: 1fr; }
-    .reactor { order: -1; width: 180px; }
+    .reactor { order: -1; width: 170px; }
     .with-aside { grid-template-columns: 1fr !important; }
   }
   @media (max-width: 560px) {
-    .topbar { padding: 14px 0 18px; }
-    .panel-pad { padding: 18px 16px 20px; }
-    .panel-head, .row, .empty, .section-foot { padding-left: 16px; padding-right: 16px; }
+    .topbar { padding: 14px 0 22px; }
+    .panel-pad { padding: 20px 18px 22px; }
+    .panel-head, .row, .empty, .section-foot, .day li { padding-left: 16px; padding-right: 16px; }
+    .week { gap: 4px; padding-left: 12px; padding-right: 12px; }
+    .legend { padding-left: 16px; padding-right: 16px; }
     .row { grid-template-columns: auto minmax(0, 1fr); }
     .row-actions { grid-column: 1 / -1; justify-content: flex-start; margin-left: 56px; }
     /* Line a leading text-only button up with the address above it. */
     .row-actions > form:first-child > .btn-quiet { margin-left: -14px; }
-    .grid-2 { grid-template-columns: 1fr; }
     .btn-row > .btn, .form-actions > .btn { flex: 1 1 auto; }
     .who-name { display: none; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .figures { grid-template-columns: 1fr 1fr; }
+    .figure.wide { grid-column: 1 / -1; }
+    .figure { padding: 14px 16px 16px; }
+    .figure-value { font-size: 26px; }
   }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 `;
@@ -220,7 +245,7 @@ function shell(title: string, body: string, script = "") {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#020a12">
+<meta name="theme-color" content="#15132e">
 <title>${escapeHtml(title)}</title>
 <style>${baseStyles}</style>
 </head>
@@ -250,31 +275,25 @@ const icons = {
 /** The Vox Mail mark: a reactor ring around an envelope. */
 function brandMark() {
   return `<svg viewBox="0 0 48 48" aria-hidden="true">
-  <circle cx="24" cy="24" r="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="1.4 3.1" opacity="0.55"/>
-  <circle class="spin" cx="24" cy="24" r="18" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="22 7 5 7 30 12" opacity="0.9"/>
-  <circle cx="24" cy="24" r="13.5" fill="rgb(120 235 255 / 14%)" stroke="currentColor" stroke-width="1" opacity="0.95"/>
-  <rect x="16.5" y="19" width="15" height="10.5" rx="1.8" fill="none" stroke="#eafcff" stroke-width="1.6"/>
-  <path d="M17.2 20l6.8 5 6.8-5" fill="none" stroke="#eafcff" stroke-width="1.6" stroke-linejoin="round"/>
+  <defs><linearGradient id="vx-sun" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd9b0"/><stop offset="1" stop-color="#e86a52"/></linearGradient></defs>
+  <circle cx="24" cy="24" r="22" fill="rgb(248 236 226 / 10%)"/>
+  <circle cx="24" cy="24" r="16" fill="url(#vx-sun)"/>
+  <rect x="16.5" y="18.5" width="15" height="11" rx="2" fill="none" stroke="#2a1d3f" stroke-width="1.8"/><path d="M17.2 19.8l6.8 5 6.8-5" fill="none" stroke="#2a1d3f" stroke-width="1.8" stroke-linejoin="round"/>
 </svg>`;
 }
 
-/** The big reactor on the landing page. */
+/** The setting sun on the landing page. */
 function reactor() {
   return `<div class="reactor" aria-hidden="true"><svg viewBox="0 0 400 400">
-  <defs><radialGradient id="core"><stop offset="0" stop-color="#f4ffff"/><stop offset="0.22" stop-color="#b5f6ff"/><stop offset="0.55" stop-color="#35b7d8" stop-opacity="0.55"/><stop offset="1" stop-color="#0b3a4d" stop-opacity="0"/></radialGradient></defs>
-  <circle cx="200" cy="200" r="189" fill="none" stroke="currentColor" stroke-width="10" stroke-dasharray="1.2 8.7" opacity="0.4"/>
-  <circle cx="200" cy="200" r="177" fill="none" stroke="currentColor" stroke-width="0.75" opacity="0.3"/>
-  <circle class="spin" cx="200" cy="200" r="163" fill="none" stroke="currentColor" stroke-width="5" stroke-dasharray="28 4 6 4 52 10 3 3 3 22 40 6 18 4 60 12 22 63" opacity="0.55"/>
-  <g class="spin-rev">
-    <circle cx="200" cy="200" r="144" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="92 88 64 116" pathLength="360" opacity="0.85"/>
-    <circle cx="200" cy="200" r="144" fill="none" stroke="#f0b95e" stroke-width="3" stroke-dasharray="0 100 22 238" pathLength="360" opacity="0.95"/>
-  </g>
-  <circle cx="200" cy="200" r="124" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-dasharray="0 6" opacity="0.45"/>
-  <circle cx="200" cy="200" r="106" fill="none" stroke="currentColor" stroke-width="14" stroke-dasharray="1.5 56" opacity="0.4"/>
-  <circle cx="200" cy="200" r="84" fill="none" stroke="#d8fbff" stroke-width="2" opacity="0.4"/>
-  <circle cx="200" cy="200" r="74" fill="url(#core)" opacity="0.8"/>
-  <rect x="160" y="175" width="80" height="54" rx="8" fill="rgb(2 14 22 / 55%)" stroke="#eafcff" stroke-width="3.5"/>
-  <path d="M163 180l37 27 37-27" fill="none" stroke="#eafcff" stroke-width="3.5" stroke-linejoin="round"/>
+  <defs>
+    <linearGradient id="vx-big-sun" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe0bd"/><stop offset="0.55" stop-color="#f5a25a"/><stop offset="1" stop-color="#e2574c"/></linearGradient>
+    <radialGradient id="vx-glow"><stop offset="0.45" stop-color="#f5a25a" stop-opacity="0.35"/><stop offset="1" stop-color="#f5a25a" stop-opacity="0"/></radialGradient>
+  </defs>
+  <circle cx="200" cy="200" r="196" fill="url(#vx-glow)"/>
+  <circle cx="200" cy="200" r="118" fill="url(#vx-big-sun)"/>
+  <!-- Going down: bands of evening sky closing over the lower half. -->
+  <g fill="#3a2458"><rect x="70" y="232" width="260" height="6" rx="3" opacity="0.5"/><rect x="70" y="254" width="260" height="10" rx="5" opacity="0.62"/><rect x="70" y="280" width="260" height="14" rx="7" opacity="0.74"/><rect x="70" y="308" width="260" height="18" rx="9" opacity="0.86"/></g>
+  <rect x="152" y="140" width="96" height="66" rx="10" fill="none" stroke="#3a2458" stroke-width="8"/><path d="M156 146l44 32 44-32" fill="none" stroke="#3a2458" stroke-width="8" stroke-linejoin="round"/>
 </svg></div>`;
 }
 
@@ -300,7 +319,7 @@ export function messagePage(title: string, message: string, link?: { href: strin
     `<div class="wrap narrow">
   ${topbar()}
   <main class="panel panel-pad stack">
-    <p class="hud">Vox Mail / Notice</p>
+    <p class="hud">Notice</p>
     <h1>${escapeHtml(title)}</h1>
     <p class="lede">${escapeHtml(message)}</p>
     ${link ? `<div class="btn-row"><a class="btn btn-primary" href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a></div>` : ""}
@@ -318,7 +337,7 @@ export function signedOutPage() {
   <main class="stack" style="gap:28px">
     <section class="hero">
       <div class="hero-copy">
-        <p class="hud">Vox Mail / Sign in</p>
+        <p class="hud">Vox Mail</p>
         <h1>Your email, by voice.</h1>
         <p class="lede">Ask Vox what’s new, have a message read to you, and dictate replies, drafts, and tidy-ups across every inbox you connect.</p>
         <div class="cta">
@@ -401,7 +420,11 @@ function googleAccess(account: AccountRow) {
     missing.length && google.allowHref && account.status === "connected"
       ? `<div class="row-allow"><a class="btn btn-sm" href="${escapeHtml(google.allowHref)}">Allow ${wordList(missing)}</a></div>`
       : "";
-  return `<div class="row-meta"><span>Vox can use ${wordList(allowed)}${allowed.length === 1 ? " only" : ""}</span></div>${button}`;
+  // What this account lets Vox use, at a glance: lit when allowed, faint when not.
+  const uses = [["Mail", true] as const, ...parts.map(([granted, name]) => [name, granted] as const)]
+    .map(([name, granted]) => `<span class="use${granted ? "" : " off"}">${name}${granted ? "" : `<span style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)"> not allowed</span>`}</span>`)
+    .join("");
+  return `<div class="uses" aria-label="Vox can use ${wordList(allowed)}${allowed.length === 1 ? " only" : ""}">${uses}</div>${button}`;
 }
 
 /** The signed-in home page: the connected email accounts and the apps that use them. */
@@ -442,18 +465,30 @@ export function homePage(state: HomeState) {
         )
         .join("")}</ul>`
     : `<div class="empty"><p>No apps yet. Connect Vox Mail from Vox, or add this MCP server to another app.</p></div>`;
+  // The whole set-up in four figures, before the detail.
+  const attention = state.accounts.filter((account) => account.status !== "connected").length;
+  const primary = state.accounts.find((account) => account.isPrimary);
+  const lastUsed = state.apps.map((app) => app.lastUsedAt).filter((value): value is string => Boolean(value)).sort().at(-1);
+  const figures = state.accounts.length
+    ? `<section class="figures" aria-label="At a glance">
+      <div class="figure"><span class="figure-label">Mailboxes</span><span class="figure-value">${state.accounts.length}</span><span class="figure-note${attention ? " warn" : ""}">${attention ? `${attention} ${attention === 1 ? "needs" : "need"} reconnecting` : "all connected"}</span></div>
+      <div class="figure"><span class="figure-label">Apps with access</span><span class="figure-value">${state.apps.length}</span><span class="figure-note">${lastUsed ? `last used ${escapeHtml(formatDate(lastUsed))}` : state.apps.length ? "not used yet" : "none connected"}</span></div>
+      <div class="figure wide"><span class="figure-label">New email goes out from</span><span class="figure-value" style="font-size:17px;line-height:1.35;letter-spacing:0;overflow-wrap:anywhere">${primary ? escapeHtml(primary.email) : "No primary yet"}</span><span class="figure-note">${primary ? escapeHtml(primary.label) : "choose one below"}</span></div>
+    </section>`
+    : "";
   return shell(
     "Vox Mail",
     `<div class="wrap narrow" style="width:min(100% - 32px, 860px)">
   ${topbar(`<form class="who" method="post" action="/auth/logout"><span class="who-name">${escapeHtml(state.userName)}</span><button class="btn btn-sm btn-quiet" type="submit">${icons.signout}Sign out</button></form>`)}
   <main class="stack" style="gap:22px">
     <div class="page-head">
-      <p class="hud">Vox Mail / Accounts</p>
+      <p class="hud">Vox Mail</p>
       <h1>Email accounts</h1>
-      <p class="lede">Vox searches, reads, drafts, and tidies every account below. New email goes out from the primary account unless you say otherwise. A Google account can also share its calendar, tasks, contacts, and Drive files.</p>
+      <p class="lede">Vox searches, reads, drafts, and tidies every account below. A Google account can also share its calendar, tasks, contacts, and Drive files.</p>
     </div>
+    ${figures}
     <section class="panel" aria-labelledby="accounts-title">
-      <div class="panel-head"><h2 id="accounts-title" class="hud" style="color:var(--muted)">Mailboxes</h2>${state.accounts.length ? add : ""}</div>
+      <div class="panel-head"><h2 id="accounts-title">Mailboxes</h2>${state.accounts.length ? add : ""}</div>
       ${accounts}
       ${state.accounts.length ? "" : `<div class="section-foot">${add}</div>`}
     </section>
@@ -463,9 +498,9 @@ export function homePage(state: HomeState) {
       <p>Before Vox sends, replies, forwards, or trashes email, it reads back who it’s going to and what it says, and waits for you. The same goes for inviting people to an event, deleting an event or a task, and moving a Drive file to the trash.</p></div>
     </section>
     <section class="panel" aria-labelledby="apps-title">
-      <div class="panel-head"><h2 id="apps-title" class="hud" style="color:var(--muted)">Connected apps</h2></div>
+      <div class="panel-head"><h2 id="apps-title">Connected apps</h2></div>
       ${apps}
-      <div class="section-foot"><span class="hud" style="color:var(--muted)">MCP server address</span><code class="code">${escapeHtml(state.mcpUrl)}</code></div>
+      <div class="section-foot"><span class="hud">Address to connect an app to this mail</span><code class="code">${escapeHtml(state.mcpUrl)}</code></div>
     </section>
   </main>
 </div>`,
@@ -490,7 +525,7 @@ export function addAccountPage(input: { google: boolean; microsoft: boolean; ima
   ${topbar()}
   <main class="stack" style="gap:24px">
     <div class="page-head">
-      <p class="hud">Vox Mail / Add account</p>
+      <p class="hud">Add an account</p>
       <h1>Add an email account</h1>
       <p class="lede">Pick where your email lives. You can add as many accounts as you like.</p>
     </div>
@@ -548,7 +583,7 @@ export function imapPage(input: { presets: Record<string, PresetInfo>; values: I
   ${topbar()}
   <main class="stack" style="gap:24px">
     <div class="page-head">
-      <p class="hud">Vox Mail / Add account / IMAP</p>
+      <p class="hud">Add an account</p>
       <h1>Connect with an app password</h1>
       <p class="lede">For iCloud, Yahoo, Fastmail, Zoho, and most other providers. Vox Mail checks the password with your provider before saving it, encrypted.</p>
     </div>
@@ -644,16 +679,16 @@ export function consentPage(input: { clientName: string; userName: string; accou
       <span class="brand" aria-hidden="true" style="min-height:0">${brandMark()}</span>
     </div>
     <div class="stack">
-      <p class="hud amber">Vox Mail / Authorization request</p>
+      <p class="hud amber">Permission request</p>
       <h1>${name} wants to use your email</h1>
       <p class="muted">Signed in as ${escapeHtml(input.userName)}. Next you’ll return to <b style="color:var(--text)">${escapeHtml(input.returnHost)}</b>.</p>
       <div class="stack" style="gap:8px">
-        <h2 class="hud" style="color:var(--muted)">It will reach</h2>
+        <h2 style="font-size:15px">It will reach</h2>
         <div class="chips">${input.accounts.map((email) => `<span class="account-chip"><span class="dot"></span><b>${escapeHtml(email)}</b></span>`).join("")}</div>
         <p class="muted" style="font-size:14px">And any email accounts you add later.</p>
       </div>
       <div class="stack" style="gap:10px">
-        <h2 class="hud" style="color:var(--muted)">It can</h2>
+        <h2 style="font-size:15px">It can</h2>
         <ul class="checks">
           <li>${icons.check}<span>Search and read your email</span></li>
           <li>${icons.check}<span>Write drafts, and archive, label, and mark email read</span></li>

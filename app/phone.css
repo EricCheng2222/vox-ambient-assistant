@@ -68,8 +68,11 @@
     font-size: 0.76rem;
     line-height: 1.3;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 1;
   }
+  /* Once a conversation is going, the bar is one row: the state, and the controls. */
+  .vox-shell .voice-console[data-live="true"] .voice-status > p + p { display: none; }
+  .vox-shell .voice-console[data-live="true"] .voice-status > button { display: none; }
   .vox-shell .voice-status > button { margin-top: 0.35rem; }
   .vox-shell .voice-stage > .voice-controls {
     grid-column: 3;
@@ -91,6 +94,60 @@
   .vox-shell .voice-console > .voice-stage,
   .vox-shell .voice-console:has(.talk-stage) > .voice-stage { order: -1; flex: none; margin: 0; transform: none; }
   .vox-shell .talk-stage { height: auto; margin: 0.6rem 0 0; }
+  /*
+   * With something on the stage, the stage gets the room and scrolls by
+   * itself under a heading that stays put; the conversation keeps a strip
+   * for the latest words and the message box.
+   */
+  .vox-shell .voice-console:has(.talk-stage) { flex: 0 0 50%; max-height: none; overflow: hidden; }
+  /* While something is shown, the voice bar is one quiet row: no hints, no second line. */
+  .vox-shell .voice-console:has(.talk-stage) .voice-status > :is(p + p, button) { display: none; }
+  /* The stage can be tucked away to its title, so the conversation has the screen. */
+  .vox-shell .talk-stage-toggle {
+    display: flex;
+    width: 100%;
+    min-height: 2.5rem;
+    flex: none;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    border: 1px solid rgb(255 255 255 / 14%);
+    border-radius: 0.9rem;
+    padding: 0 0.85rem;
+    background: rgb(255 255 255 / 6%);
+    color: inherit;
+    font-size: 0.86rem;
+    text-align: left;
+  }
+  .vox-shell .talk-stage-toggle span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vox-shell .talk-stage-toggle svg { width: 1rem; height: 1rem; flex: none; opacity: 0.7; }
+  .vox-shell[data-vox-theme="daylight"] .talk-stage-toggle { border-color: var(--dl-line); background: var(--dl-glass); }
+  .vox-shell .voice-console:has(.talk-stage[data-min="true"]) { max-height: none; flex: none; }
+  .vox-shell .voice-console > .talk-stage[data-min="true"] { display: none; }
+  .vox-shell .voice-console:has(.talk-stage) > .talk-stage {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    scrollbar-width: thin;
+  }
+  .vox-shell .talk-stage .vx-stage { height: auto; min-height: 0; }
+  .vox-shell .talk-stage :is(.vx-stage-body, .vx-blocks, .vx-blocks-grid) { overflow: visible; }
+  .vox-shell .talk-stage .vx-stage-head {
+    position: sticky;
+    z-index: 2;
+    top: 0;
+    margin: 0 -0.25rem;
+    padding: 0.35rem 0.25rem 0.5rem;
+    background: var(--stage-head-backdrop, rgb(16 17 27 / 92%));
+    backdrop-filter: blur(14px);
+  }
+  .vox-shell[data-vox-theme="daylight"] .talk-stage .vx-stage-head { --stage-head-backdrop: rgb(240 236 234 / 88%); }
+  .vox-shell .interface-grid:has(.talk-stage) > .conversation-console { flex: 1 1 0; min-height: 0; height: auto; }
+  .vox-shell .interface-grid:has(.talk-stage) .conversation-stream { flex: 1; min-height: 0; }
+  .vox-shell .interface-grid:has(.talk-stage) :is(.transcript-header, .empty-transcript, .suggestion-row) { display: none; }
 
   /* ---- Conversation ---- */
   .vox-shell .conversation-console {

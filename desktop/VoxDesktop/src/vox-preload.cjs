@@ -4,6 +4,15 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("voxLocalCodex", {
   available: true,
+  // Vox checking on itself, repairing what it safely can, and updating after a full regression run.
+  health: {
+    check: () => ipcRenderer.invoke("vox-health:check"),
+    fix: (id) => ipcRenderer.invoke("vox-health:fix", typeof id === "string" ? id.slice(0, 40) : ""),
+    chooseSource: () => ipcRenderer.invoke("vox-health:choose-source"),
+    regression: () => ipcRenderer.invoke("vox-health:regression"),
+    update: () => ipcRenderer.invoke("vox-health:update"),
+    updateLog: () => ipcRenderer.invoke("vox-health:update-log"),
+  },
   getConnectionStatus: () => ipcRenderer.invoke("vox-connection:status"),
   setConnectionMode: (mode) => ipcRenderer.invoke("vox-connection:set-mode", mode),
   savePersonalKeys: (keys) => ipcRenderer.invoke("vox-connection:save-personal-keys", {
@@ -80,6 +89,11 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
     cancelEnrollment: () => ipcRenderer.invoke("vox-voice-filter:enroll-cancel"),
     forget: () => ipcRenderer.invoke("vox-voice-filter:forget"),
   },
+  // Details remembered on this Mac for the private box: names only, and forgetting them.
+  vault: {
+    list: () => ipcRenderer.invoke("vox-vault:list"),
+    forget: (target) => ipcRenderer.invoke("vox-vault:forget", typeof target === "string" ? target.slice(0, 120) : ""),
+  },
   // Websites the user signed in to in the built-in browser: yes or no per site, and signing out.
   accounts: {
     status: (checks) => ipcRenderer.invoke("vox-accounts:status", Array.isArray(checks) ? checks.slice(0, 80) : []),
@@ -106,6 +120,18 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
     command: (action) =>
       ipcRenderer.invoke("vox-browser:command", ["back", "forward", "reload", "stop", "external"].includes(action) ? action : ""),
     read: () => ipcRenderer.invoke("vox-browser:read"),
+    // What the user typed in the private box, straight into the page's fields.
+    fill: (entries, remember) =>
+      ipcRenderer.invoke("vox-browser:fill", {
+        remember: remember === true,
+        entries: (Array.isArray(entries) ? entries : []).slice(0, 6).map((entry) => ({
+          ref: Number.isInteger(entry?.ref) ? entry.ref : -1,
+          value: typeof entry?.value === "string" ? entry.value.slice(0, 200) : "",
+          saved: entry?.saved === true,
+        })),
+      }),
+    // Which fields have details saved on this Mac for the page's site: yes or no, never the values.
+    saved: (refs) => ipcRenderer.invoke("vox-browser:saved", (Array.isArray(refs) ? refs : []).slice(0, 6)),
     // Acting on the page for the user: a numbered look, then one action at a time.
     look: () => ipcRenderer.invoke("vox-browser:look"),
     act: (request) =>
@@ -113,6 +139,15 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
         action: typeof request?.action === "string" ? request.action.slice(0, 20) : "",
         ref: Number.isInteger(request?.ref) ? request.ref : -1,
         text: typeof request?.text === "string" ? request.text.slice(0, 500) : "",
+      }),
+    // A whole website task, carried out by this Mac with its own planner (see main.mjs, runWebsiteTask).
+    task: (task) =>
+      ipcRenderer.invoke("vox-browser:task", {
+        taskId: typeof task?.taskId === "string" ? task.taskId.slice(0, 36) : "",
+        goal: typeof task?.goal === "string" ? task.goal.slice(0, 1200) : "",
+        context: typeof task?.context === "string" ? task.context.slice(0, 1500) : "",
+        approval: typeof task?.approval === "string" ? task.approval.slice(0, 20) : "important",
+        language: task?.language === "taiwan_mandarin" ? "taiwan_mandarin" : "english",
       }),
     onState: (listener) => {
       if (typeof listener !== "function") return () => undefined;

@@ -7,7 +7,7 @@ import { isFlashcardRating } from "./srs.ts";
 export const MCP_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 export const FLASHCARD_SERVER_INSTRUCTIONS =
-  "Vox Flash Cards. Decks hold cards with a front (prompt) and a back (answer). To study: call next_card, ask the user the front without revealing the back, let them answer, then compare their answer with the back, tell them how they did, and call grade_card with again (wrong or blank), hard (right after real effort or a hint), good (right), or easy (instant and certain). If the user says how hard it felt, use their rating. grade_card and skip_card return the next card, so ask it directly. Use skip_card once when the user wants to skip. Pass focus hard to work on the cards they forget most. Repeat until no cards are due. Cards the user misses come back later in the session. Use add_cards, edit_card, and delete_card to manage cards; every deck argument accepts a deck id or a deck name.";
+  "Vox Flash Cards. Decks hold cards with a front (prompt) and a back (answer). To study: call next_card, ask the user the front without revealing the back, let them answer, then compare their answer with the back, tell them how they did, and call grade_card with again (wrong or blank), hard (right after real effort or a hint), good (right), or easy (instant and certain). If the user says how hard it felt, use their rating. Record every card as soon as the user has answered it and before asking another: a card that is not graded is not counted as reviewed and stays due. grade_card and skip_card return the next card, so ask it directly. Never quiz from list_cards, which is for browsing and editing and records nothing. If you did ask several cards without grading each one, record them all at once with grade_cards. Use skip_card once when the user wants to skip. Pass focus hard to work on the cards they forget most. Repeat until no cards are due. Cards the user misses come back later in the session. Use add_cards, edit_card, and delete_card to manage cards; every deck argument accepts a deck id or a deck name.";
 
 const deckArgument = {
   type: "string",
@@ -63,7 +63,7 @@ export const FLASHCARD_TOOLS = [
   },
   {
     name: "list_cards",
-    description: "List or search cards, optionally within one deck.",
+    description: "List or search cards, optionally within one deck. For browsing and editing only: it records nothing, so to quiz the user use next_card and grade_card.",
     inputSchema: {
       type: "object",
       properties: {
@@ -158,6 +158,37 @@ export const FLASHCARD_TOOLS = [
       required: ["card_id", "rating"],
       additionalProperties: false,
     },
+    // Writes, but nothing is lost and nothing leaves this account.
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  },
+  {
+    name: "grade_cards",
+    description:
+      "Record several reviews at once, for cards the user already answered that were not graded one by one. Each is counted and scheduled exactly as grade_card would. Returns the next card to ask.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        deck: deckArgument,
+        focus: focusArgument,
+        reviews: {
+          type: "array",
+          minItems: 1,
+          maxItems: 30,
+          items: {
+            type: "object",
+            properties: {
+              card_id: { type: "string" },
+              rating: { type: "string", enum: ["again", "hard", "good", "easy"] },
+            },
+            required: ["card_id", "rating"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["reviews"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
   {
     name: "skip_card",
@@ -206,7 +237,7 @@ export async function callTool(store: FlashcardStore, name: string, args: Record
       due_remaining: next.dueRemaining,
       ...(next.repeat ? { repeat: "The user missed this card earlier today; it's back for another try." } : {}),
       ...(skippedId && card.id === skippedId ? { only_card_left: true } : {}),
-      reminder: "Ask the front only. Reveal the back after the user answers.",
+      reminder: "Ask the front only. Reveal the back after the user answers, then call grade_card with this card_id: until you do, the review is not recorded.",
     };
   };
   const optionalDeckId = async (ref: unknown) => (text(ref)?.trim() ? (await store.requireDeck(ref)).id : undefined);
@@ -262,6 +293,31 @@ export async function callTool(store: FlashcardStore, name: string, args: Record
       const card = await store.gradeCard(text(args.card_id) ?? "", args.rating);
       const next = await nextCard(await optionalDeckId(args.deck), studyFocus(args.focus));
       return { graded: { card_id: card.id, rating: args.rating, next_due_at: card.dueAt }, next };
+    }
+    case "grade_cards": {
+      const reviews = Array.isArray(args.reviews) ? (args.reviews as Array<Record<string, unknown>>).slice(0, 30) : [];
+      if (!reviews.length) throw new FlashcardError("Give the reviews to record: a card_id and a rating for each.");
+      const graded: Array<{ card_id: string; rating: string; next_due_at: string }> = [];
+      const failed: Array<{ card_id: string; error: string }> = [];
+      const seen = new Set<string>();
+      for (const review of reviews) {
+        const cardId = text(review?.card_id) ?? "";
+        // One review per card per call: a repeat in the same list is a mistake, not a second review.
+        if (seen.has(cardId)) continue;
+        seen.add(cardId);
+        if (!isFlashcardRating(review?.rating)) {
+          failed.push({ card_id: cardId, error: "Rating must be again, hard, good, or easy." });
+          continue;
+        }
+        try {
+          const card = await store.gradeCard(cardId, review.rating);
+          graded.push({ card_id: card.id, rating: review.rating, next_due_at: card.dueAt });
+        } catch (error) {
+          if (!(error instanceof FlashcardError)) throw error;
+          failed.push({ card_id: cardId, error: error.message });
+        }
+      }
+      return { graded, ...(failed.length ? { failed } : {}), next: await nextCard(await optionalDeckId(args.deck), studyFocus(args.focus)) };
     }
     case "study_stats":
       return { stats: await store.stats(await optionalDeckId(args.deck)) };

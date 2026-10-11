@@ -36,11 +36,14 @@ import {
   validTypeSafeKey,
 } from "./personal-route.mjs";
 import { startLocalVoxServer } from "./local-web-server.mjs";
+import { createStepPlanner } from "./local-planner.mjs";
+import { registerHealth } from "./health.mjs";
 import { registerVoiceFilter } from "./voice-filter.mjs";
 import { registerWelcomeHome } from "./welcome-home.mjs";
 import { registerStageBrowser } from "./stage-browser.mjs";
 import { registerPageWatch } from "./page-watch.mjs";
 import { registerWebAccounts } from "./web-accounts.mjs";
+import { runBrowserTask } from "./browser-task.mjs";
 import {
   availableSmartHomeAdapters,
   configureSmartHomeDevice,
@@ -64,11 +67,15 @@ import {
 
 const productionUrl = "https://vox-assistant.ericcheng306.workers.dev/";
 const developmentUrl = process.env.VOX_DESKTOP_DEV_URL;
+// Development only: an unpackaged build can be pointed at a local Vox server,
+// so the Mac's own calls (the phone relay, website tasks) can be tested end to end.
+const cloudOriginOverride = process.env.VOX_DESKTOP_CLOUD_ORIGIN;
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
 let voiceFilter = null;
 let welcomeHome = null;
 let stageBrowser = null;
 let pageWatch = null;
+let webAccounts = null;
 const shellFile = path.join(currentDirectory, "shell.html");
 const shellUrl = pathToFileURL(shellFile).href;
 const settingsFileName = "desktop-settings.json";
@@ -311,6 +318,25 @@ function publicSavedSmartHomeDevices(settings) {
     .filter(Boolean);
 }
 
+/** The device turned up at a new address on the network: remember it, so the next command goes straight there. */
+async function saveSmartHomeDeviceHost(id, host) {
+  if (!secureStorageAvailable() || !/^\d{1,3}(?:\.\d{1,3}){3}$/u.test(String(host))) return;
+  const settings = await readSettings();
+  const devices = savedSmartHomeDevices(settings);
+  const saved = devices.find((device) => device.id === id);
+  if (!saved) return;
+  const unlocked = unlockSmartHomeDevice(settings, id);
+  const encryptedConfiguration = safeStorage.encryptString(JSON.stringify({
+    host,
+    serial: unlocked.serial,
+    productType: unlocked.productType,
+    credential: unlocked.credential,
+  })).toString("base64");
+  // The older way of saving kept these in the open beside the credential; they now live inside the encrypted part.
+  const kept = Object.fromEntries(Object.entries(saved).filter(([key]) => !["encryptedCredential", "host", "serial", "productType"].includes(key)));
+  await saveSettings({ ...settings, smartHomeDevices: devices.map((device) => (device.id === id ? { ...kept, encryptedConfiguration } : device)) });
+}
+
 function unlockSmartHomeDevice(settings, id) {
   const device = savedSmartHomeDevices(settings).find((candidate) => candidate.id === id);
   if (!device) throw new Error("Choose a configured smart-home device first.");
@@ -434,6 +460,19 @@ function sendCodexEvent(payload) {
 
 function packagedCodexPath() {
   if (!app.isPackaged) return undefined;
+  return codexBinaryPath(path.join(process.resourcesPath, "app.asar.unpacked", "node_modules"));
+}
+
+// The Codex runtime this app ships with, for the uses that start it directly.
+function bundledCodexPath() {
+  try {
+    return packagedCodexPath() ?? codexBinaryPath(path.join(currentDirectory, "..", "node_modules"));
+  } catch {
+    return undefined;
+  }
+}
+
+function codexBinaryPath(modulesFolder) {
   const platformKey = `${process.platform}-${process.arch}`;
   const platforms = {
     "darwin-arm64": ["codex-darwin-arm64", "aarch64-apple-darwin", "codex"],
@@ -446,9 +485,7 @@ function packagedCodexPath() {
   const target = platforms[platformKey];
   if (!target) throw new Error(`Vox Desktop does not support ${platformKey} yet.`);
   return path.join(
-    process.resourcesPath,
-    "app.asar.unpacked",
-    "node_modules",
+    modulesFolder,
     "@openai",
     target[0],
     "vendor",
@@ -519,6 +556,10 @@ async function runCodexTask(taskId, request) {
       // In its own workspace Vox may look things up; desktop control may not.
       webSearchMode: request.freeRein ? "live" : "disabled",
       modelReasoningEffort: "medium",
+      // Named outright, as for Computer Use: left to the user's own Codex
+      // settings, a model their ChatGPT plan can't use there fails every task
+      // in a second ("not supported when using Codex with a ChatGPT account").
+      model: "gpt-5.6-terra",
       threadSource: "vox-desktop",
     });
     const prompt = request.computerControl
@@ -692,6 +733,41 @@ async function savedOrChosenWorkspace() {
   return voxWorkspace();
 }
 
+/**
+ * A whole website task, carried out by this Mac: for a phone or tablet (so it
+ * keeps going when that is put away) and for requests made on the Mac itself.
+ * Each step is thought out here, under the user's ChatGPT sign-in, and only
+ * asked of the paid API when that isn't possible.
+ */
+async function runWebsiteTask(command) {
+  if (!stageBrowser) throw new Error("The Mac's browser isn't ready yet.");
+  const taskId = typeof command.taskId === "string" && /^[0-9a-f-]{36}$/u.test(command.taskId) ? command.taskId : "";
+  if (taskId) await cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "start" }) }).catch(() => undefined);
+  const planner = createStepPlanner({
+    ask: (body) => cloudJson("/api/browser-agent/next", { method: "POST", body: JSON.stringify(body) }),
+    codexPath: bundledCodexPath(),
+    onFallback: (error) => void logMainError("local planner", error),
+  });
+  const result = await runBrowserTask(command, {
+    open: stageBrowser.page.open,
+    look: stageBrowser.page.look,
+    act: stageBrowser.page.act,
+    next: planner.next,
+    now: () => Date.now(),
+    wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  });
+  // The result goes into the conversation now, whether or not the device that
+  // asked is still around; if it never shows it on screen, a notice follows.
+  if (taskId && result.answer) {
+    await cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "deliver", text: result.answer }) }).catch(() => undefined);
+    setTimeout(() => {
+      void cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "notify", text: result.answer }) }).catch(() => undefined);
+    }, 30_000);
+  }
+  // How many steps were thought out here and how many were asked of the API.
+  return JSON.stringify({ ...result, planned: planner.used });
+}
+
 async function performRemoteSmartHomeCommand(command) {
   const settings = await readSettings();
   const devices = savedSmartHomeDevices(settings);
@@ -704,7 +780,7 @@ async function performRemoteSmartHomeCommand(command) {
   );
   const selectedId = requestedId || namedDevice?.id || (devices.length === 1 ? devices[0].id : "");
   if (!selectedId) throw new Error("Choose a configured smart-home device on the Mac first.");
-  const result = await runSmartHomeCommand(unlockSmartHomeDevice(settings, selectedId), prompt);
+  const result = await runSmartHomeCommand(unlockSmartHomeDevice(settings, selectedId), prompt, (host) => saveSmartHomeDeviceHost(selectedId, host));
   return result?.answer ?? result?.status ?? "The smart-home command completed.";
 }
 
@@ -849,6 +925,18 @@ async function performRemoteCommand(command) {
   if (command.kind === "smart_home") return performRemoteSmartHomeCommand(command);
   if (command.kind === "phone_mac") return performPhoneMacRequest(command);
   if (command.kind === "local_codex") return performRemoteCodexTask(command);
+  // The paired phone or tablet using the websites signed in on this Mac.
+  if (command.kind === "browser") {
+    if (!stageBrowser) throw new Error("The Mac's browser isn't ready yet.");
+    // Someone is working the page by hand from their phone: answer quickly for a while.
+    if (command.op === "view") remoteRelayBoostUntil = Date.now() + 45_000;
+    return stageBrowser.remote(command);
+  }
+  if (command.kind === "browser_task") return runWebsiteTask(command);
+  if (command.kind === "web_accounts") {
+    if (!webAccounts) throw new Error("The Mac's browser isn't ready yet.");
+    return JSON.stringify(await webAccounts.status(command.checks));
+  }
   if (command.kind === "open_workspace") {
     const workspace = await voxWorkspace();
     const openError = await shell.openPath(workspace);
@@ -888,6 +976,8 @@ async function runStartedRemoteCommand(pairing, commandSecret, commandId, comman
     }
   }
 }
+
+let remoteRelayBoostUntil = 0;
 
 async function processRemoteRelay() {
   if (remoteRelayInFlight || activeConnectionMode !== "cloud") return;
@@ -1236,6 +1326,20 @@ function registerIpcHandlers() {
     return { revoked: true };
   });
 
+  // The same website task a phone can hand over, asked for on this Mac itself.
+  ipcMain.handle("vox-browser:task", async (event, rawTask) => {
+    requireTrustedVoxSender(event);
+    const task = rawTask && typeof rawTask === "object" ? rawTask : {};
+    return JSON.parse(await runWebsiteTask({
+      taskId: typeof task.taskId === "string" ? task.taskId.slice(0, 36) : "",
+      goal: typeof task.goal === "string" ? task.goal.slice(0, 1_200) : "",
+      context: typeof task.context === "string" ? task.context.slice(0, 1_500) : "",
+      url: typeof task.url === "string" ? task.url.slice(0, 2_000) : undefined,
+      approval: typeof task.approval === "string" ? task.approval.slice(0, 20) : "important",
+      language: task.language === "taiwan_mandarin" ? "taiwan_mandarin" : "english",
+    }));
+  });
+
   ipcMain.handle("vox-smart-home:status", async (event) => {
     requireTrustedVoxSender(event);
     const settings = await readSettings();
@@ -1333,7 +1437,7 @@ function registerIpcHandlers() {
     }
     const device = unlockSmartHomeDevice(settings, selectedId);
     lastSmartHomeCommandAt = now;
-    return runSmartHomeCommand(device, prompt);
+    return runSmartHomeCommand(device, prompt, (host) => saveSmartHomeDeviceHost(selectedId, host));
   });
 
   ipcMain.handle("vox-codex:set-panel-open", (event, open) => {
@@ -1675,7 +1779,7 @@ app.whenReady().then(async () => {
   );
   localVoxServer = await startLocalVoxServer(localWebRoot(), {
     preferredPort: 47_318,
-    cloudOrigin: productionUrl,
+    cloudOrigin: !app.isPackaged && cloudOriginOverride ? cloudOriginOverride : productionUrl,
     desktopSessionHeader,
     getConnectionMode: () => activeConnectionMode,
     cloudFetch: (request) => session.defaultSession.fetch(request, {
@@ -1687,13 +1791,35 @@ app.whenReady().then(async () => {
   voiceFilter = registerVoiceFilter({ requireTrustedVoxSender, readSettings, saveSettings, secureStorageAvailable });
   welcomeHome = registerWelcomeHome({ requireTrustedVoxSender, readSettings, saveSettings, pairing: unlockedRemotePairing });
   stageBrowser = registerStageBrowser({ requireTrustedVoxSender, getWindow: () => mainWindow, getVoxView: () => voxView });
+  // Vox checking on itself (Settings → Health): only ever asked for from this window.
+  registerHealth({
+    requireTrustedVoxSender,
+    getWindow: () => mainWindow,
+    readSettings,
+    saveSettings,
+    signedIn: async () => (await cloudJson("/api/auth")).authenticated === true,
+    phoneLink: async () => {
+      const settings = await readSettings();
+      const pairing = unlockedRemotePairing(settings);
+      const label = typeof settings.remoteMacPairing?.phoneLabel === "string" ? settings.remoteMacPairing.phoneLabel.slice(0, 60) : "";
+      return { paired: Boolean(pairing) && pairing.status === "active", allowed: remoteControlArmStatus().armed, label };
+    },
+    codexPath: bundledCodexPath,
+    homeDevices: async () => publicSavedSmartHomeDevices(await readSettings()),
+    devicesOnNetwork: () => discoverSmartHomeDevices("dyson-local"),
+    rememberDeviceAddress: saveSmartHomeDeviceHost,
+  });
   pageWatch = registerPageWatch({ requireTrustedVoxSender });
-  registerWebAccounts({ requireTrustedVoxSender });
+  webAccounts = registerWebAccounts({ requireTrustedVoxSender });
   // Installed-app discovery is useful for voice routing, but it must never sit
   // on the first conversational turn's latency path.
   void installedApps().catch(() => undefined);
   await createWindow();
   remoteRelayTimer = setInterval(() => void processRemoteRelay(), 2_500);
+  // While the user is working a page from their phone, look for their next tap much more often.
+  setInterval(() => {
+    if (Date.now() < remoteRelayBoostUntil) void processRemoteRelay();
+  }, 600);
   void processRemoteRelay();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();

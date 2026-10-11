@@ -37,11 +37,12 @@ const BASE_VOICE_INSTRUCTIONS =
  */
 export function buildVoiceInstructions(
   memories: MemoryRecord[],
-  theme: VisualTheme = "ambient",
+  // No theme (a phone call): no presentation style on top of the base instructions.
+  theme: VisualTheme | null = null,
   profileContext = "",
 ) {
   const current = memories.slice(0, 24);
-  const persona = themePersonaInstruction(theme);
+  const persona = theme ? themePersonaInstruction(theme) : "";
   return [
     BASE_VOICE_INSTRUCTIONS,
     persona,

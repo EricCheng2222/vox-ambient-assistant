@@ -583,7 +583,13 @@ const needsYou = (subjects) => (ownerId, timeZone, now) =>
   assert.deepEqual(w.calls.sent, [["owner", `An email from Amy Chen needs you: "Budget sign-off". Open Vox to deal with it.\n${LINK}`]]);
   assert.equal(w.calls.jev.length, 1);
   // It shows in the conversation, word for word, under an id that keeps a retry from doubling it.
-  assert.deepEqual(w.calls.appended, [{ ownerId: "owner", id: "proactive-owner-nudge-id1", text: w.calls.sent[0][1] }]);
+  // The text asks them to come to Vox; what is kept in Vox is the notice with what can be done about it.
+  assert.match(w.calls.sent[0][1], /Open Vox to deal with it\.\nhttps:\/\/vox\.example$/u);
+  assert.deepEqual(w.calls.appended, [{
+    ownerId: "owner",
+    id: "proactive-owner-nudge-id1",
+    text: 'An email from Amy Chen needs you: "Budget sign-off".\n→ Read me the email "Budget sign-off"\n→ Draft a reply to "Budget sign-off"\n→ Remind me about "Budget sign-off" tonight',
+  }]);
   // The log has what happened, not what was said; the stored key reveals nothing.
   assert.deepEqual(w.store.rows("owner"), [{ id: "owner:nudge:id1", ownerId: "owner", kind: "nudge", status: "sent", localDay: "2026-10-08", items: 1, createdAt: taipei("13:00").toISOString(), error: null }]);
   assert.doesNotMatch(JSON.stringify([...w.store.keys]), /Budget|aaaaaaaa|example\.com/u);
@@ -1044,8 +1050,12 @@ const needsYou = (subjects) => (ownerId, timeZone, now) =>
   assert.deepEqual(route.match(/export async function (\w+)/gu), ["export async function POST"]);
   assert.doesNotMatch(desktop, /proactive/u);
   // The recipient comes from one place: the account's own stored number.
-  assert.match(route, /send: createOwnerTexter\(\{ destinationFor: getOwnerTextDestination \}\)/u);
-  assert.match(route, /listAccounts: listProactiveTextOwnerIds/u);
+  // A text's recipient comes from one place: the account's own stored number. A notification goes only to that account's own registered devices.
+  assert.match(route, /text: createOwnerTexter\(\{ destinationFor: getOwnerTextDestination \}\)/u);
+  assert.match(route, /devicesFor: async \(ownerId\) => \(canNotify \? pushDevicesFor\(ownerId\) : \[\]\)/u);
+  assert.match(route, /const accounts = \[\.\.\.new Set\(\[\.\.\.\(await listPushOwnerIds\(\)\), \.\.\.\(canText \? await listProactiveTextOwnerIds\(\) : \[\]\)\]\)\];/u);
+  assert.match(route, /listAccounts: async \(\) => accounts,/u);
+  assert.match(route, /leaveNotice: leaveOwnerNotice,/u);
   assert.match(route, /buildBriefing,/u);
   assert.match(route, /callMcpTool\(ownerId, veloServerUrl\(\), "get_today"\)/u);
   assert.match(route, /link: voxLink\(process\.env\.TWILIO_WEBHOOK_BASE_URL\)/u);

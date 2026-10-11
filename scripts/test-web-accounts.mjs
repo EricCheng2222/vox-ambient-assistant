@@ -30,7 +30,7 @@ assert.equal(looksSignedIn(["guest_session_id", "visitor_token"]), false);
 assert.equal(looksSignedIn([]), false);
 
 assert.match(webAccountsInstruction(["amazon", "uber"]), /signed in to these websites[^:]*: Amazon, Uber\./u);
-assert.match(webAccountsInstruction([]), /they sign in themselves/u);
+assert.match(webAccountsInstruction([]), /call ask_user_to_fill so they can type their details in the private box/u);
 assert.ok(!webAccountsInstruction(["nope"]).includes("nope"));
 
 console.log("Web account checks passed.");

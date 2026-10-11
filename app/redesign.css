@@ -1362,12 +1362,12 @@ button.vx-row:hover .vx-row-main {
 /* Saved panels inside Today. Outside Daylight they take the dark glass look. */
 .saved-panels { display: flex; flex-direction: column; gap: 0.6rem; }
 .vox-shell:not([data-vox-theme="daylight"]) .saved-panels {
-  --dl-ink: rgb(255 255 255 / 92%);
-  --dl-ink-2: rgb(255 255 255 / 68%);
-  --dl-ink-3: rgb(255 255 255 / 52%);
-  --dl-line: rgb(255 255 255 / 14%);
-  --dl-glass: rgb(255 255 255 / 4.5%);
-  --dl-glass-strong: rgb(255 255 255 / 9%);
+  --dl-ink: rgb(var(--paper-rgb) / 92%);
+  --dl-ink-2: rgb(var(--paper-rgb) / 68%);
+  --dl-ink-3: rgb(var(--paper-rgb) / 52%);
+  --dl-line: rgb(var(--paper-rgb) / 14%);
+  --dl-glass: rgb(var(--paper-rgb) / 4.5%);
+  --dl-glass-strong: rgb(var(--paper-rgb) / 9%);
   --dl-accent: #78ebff;
 }
 .vox-shell:not([data-vox-theme="daylight"]) .saved-panels :is(.dash-panel, .dash-create) {
@@ -1375,9 +1375,9 @@ button.vx-row:hover .vx-row-main {
   backdrop-filter: none;
 }
 .vox-shell:not([data-vox-theme="daylight"]) .saved-panels .dash-button { background: rgb(120 235 255 / 16%); color: #d9f9ff; }
-.vox-shell:not([data-vox-theme="daylight"]) .saved-panels .dash-button.is-quiet { background: rgb(255 255 255 / 8%); color: var(--dl-ink); }
-.vox-shell:not([data-vox-theme="daylight"]) .saved-panels .dash-input { background: rgb(0 0 0 / 28%); }
-.vox-shell:not([data-vox-theme="daylight"]) .saved-panels .dash-icon:hover:not(:disabled) { background: rgb(255 255 255 / 9%); }
+.vox-shell:not([data-vox-theme="daylight"]) .saved-panels .dash-button.is-quiet { background: rgb(var(--paper-rgb) / 8%); color: var(--dl-ink); }
+.vox-shell:not([data-vox-theme="daylight"]) .saved-panels .dash-input { background: rgb(var(--ink-rgb) / 28%); }
+.vox-shell:not([data-vox-theme="daylight"]) .saved-panels .dash-icon:hover:not(:disabled) { background: rgb(var(--paper-rgb) / 9%); }
 .saved-panels :is(button, input):focus-visible { outline: 2px solid var(--dl-accent); outline-offset: 2px; }
 
 .dash-countdown { display: flex; align-items: baseline; gap: 0.5rem; margin: 0; }
@@ -1424,8 +1424,8 @@ button.vx-row:hover .vx-row-main {
 .composer-attach:hover:not(:disabled) { background: rgb(255 255 255 / 15%); }
 .composer-attach:disabled { opacity: 0.4; cursor: default; }
 .composer-attach:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-.vox-shell[data-vox-theme="daylight"] .composer-attach { background: rgb(24 33 46 / 8%); }
-.vox-shell[data-vox-theme="daylight"] .composer-attach:hover:not(:disabled) { background: rgb(24 33 46 / 14%); }
+.vox-shell[data-vox-theme="daylight"] .composer-attach { background: rgb(var(--ink-rgb) / 8%); }
+.vox-shell[data-vox-theme="daylight"] .composer-attach:hover:not(:disabled) { background: rgb(var(--ink-rgb) / 14%); }
 .attachment-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 0.45rem; padding: 0; list-style: none; }
 .attachment-chip {
   display: inline-flex;
@@ -1445,5 +1445,154 @@ button.vx-row:hover .vx-row-main {
 .attachment-chip button { display: grid; width: 1.6rem; height: 1.6rem; flex: none; place-items: center; border: 0; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; opacity: 0.6; }
 .attachment-chip button:hover { background: rgb(255 255 255 / 12%); opacity: 1; }
 .attachment-chip button svg { width: 0.8rem; height: 0.8rem; }
-.vox-shell[data-vox-theme="daylight"] .attachment-chip { border-color: rgb(24 33 46 / 12%); background: rgb(255 255 255 / 55%); }
-.vox-shell[data-vox-theme="daylight"] .attachment-chip button:hover { background: rgb(24 33 46 / 10%); }
+.vox-shell[data-vox-theme="daylight"] .attachment-chip { border-color: rgb(var(--ink-rgb) / 12%); background: rgb(var(--paper-rgb) / 55%); }
+.vox-shell[data-vox-theme="daylight"] .attachment-chip button:hover { background: rgb(var(--ink-rgb) / 10%); }
+
+/* ---- The private box: sign-in or card details for a page, typed by the user ---- */
+.secure-card {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0.6rem 0 0;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 1.25rem;
+  padding: 0.95rem 1rem 1rem;
+  background: rgb(18 20 32 / 92%);
+  box-shadow: 0 24px 50px -28px rgb(0 0 0 / 70%);
+  color: #fff;
+}
+.secure-card-head { display: flex; align-items: flex-start; gap: 0.7rem; }
+.secure-card-lock { display: grid; width: 2.1rem; height: 2.1rem; flex: none; place-items: center; border-radius: 0.7rem; background: rgb(244 255 116 / 14%); color: #f4ff74; }
+.secure-card-lock svg { width: 1rem; height: 1rem; }
+.secure-card-head > div { min-width: 0; flex: 1; }
+.secure-card-title { margin: 0; overflow: hidden; font-size: 0.98rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.secure-card-note { margin: 0.1rem 0 0; color: rgb(255 255 255 / 58%); font-size: 0.78rem; line-height: 1.4; }
+.secure-card-close { display: grid; width: 2rem; height: 2rem; flex: none; place-items: center; border: 0; border-radius: 50%; background: transparent; color: rgb(255 255 255 / 55%); cursor: pointer; }
+.secure-card-close:hover:not(:disabled) { background: rgb(255 255 255 / 10%); color: #fff; }
+.secure-card-close svg { width: 0.95rem; height: 0.95rem; }
+.secure-card-warning { display: flex; gap: 0.45rem; margin: 0; border-radius: 0.8rem; padding: 0.55rem 0.7rem; background: rgb(255 157 150 / 14%); color: #ffb3ad; font-size: 0.8rem; line-height: 1.4; }
+.secure-card-warning svg { width: 1rem; height: 1rem; flex: none; margin-top: 0.1rem; }
+.secure-card-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+.secure-card-field { display: flex; min-width: 0; flex-direction: column; gap: 0.3rem; grid-column: 1 / -1; }
+/* Expiry and security code sit side by side, as on a card. */
+.secure-card-field:is([data-kind="card_expiry"], [data-kind="card_code"]) { grid-column: auto; }
+.secure-card-field label { color: rgb(255 255 255 / 62%); font-size: 0.76rem; font-weight: 500; }
+.secure-card-field input {
+  width: 100%;
+  height: 2.75rem;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 0.8rem;
+  padding: 0 0.85rem;
+  background: rgb(255 255 255 / 6%);
+  color: #fff;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+.secure-card-field input:focus-visible { border-color: #f4ff74; outline: 2px solid rgb(244 255 116 / 30%); outline-offset: 0; }
+.secure-card-actions { display: flex; align-items: center; gap: 0.5rem; }
+.secure-card-submit { display: inline-flex; min-height: 2.75rem; flex: 1; align-items: center; justify-content: center; gap: 0.45rem; border: 0; border-radius: 999px; background: #f4ff74; color: #10111b; font-size: 0.92rem; font-weight: 600; cursor: pointer; }
+.secure-card-submit:disabled { opacity: 0.45; cursor: default; }
+.secure-card-submit svg { width: 1rem; height: 1rem; }
+.secure-card-cancel { min-height: 2.75rem; border: 0; border-radius: 999px; padding: 0 1rem; background: transparent; color: rgb(255 255 255 / 60%); font-size: 0.88rem; cursor: pointer; }
+.secure-card-cancel:hover:not(:disabled) { background: rgb(255 255 255 / 8%); color: #fff; }
+.secure-card :is(button):focus-visible { outline: 2px solid #f4ff74; outline-offset: 2px; }
+/* Sunrise: warm paper, ink, and the sun's gold. */
+.vox-shell[data-vox-theme="daylight"] .secure-card { border-color: rgb(var(--ink-rgb) / 10%); background: rgb(var(--paper-rgb) / 94%); box-shadow: 0 26px 54px -30px rgb(150 92 40 / 60%); color: rgb(var(--ink-rgb)); backdrop-filter: blur(18px); }
+.vox-shell[data-vox-theme="daylight"] .secure-card-lock { background: rgb(246 169 74 / 20%); color: #9a5a0c; }
+.vox-shell[data-vox-theme="daylight"] :is(.secure-card-note, .secure-card-field label) { color: rgb(var(--ink-rgb) / 64%); }
+.vox-shell[data-vox-theme="daylight"] :is(.secure-card-close, .secure-card-cancel) { color: rgb(var(--ink-rgb) / 60%); }
+.vox-shell[data-vox-theme="daylight"] :is(.secure-card-close, .secure-card-cancel):hover:not(:disabled) { background: rgb(var(--ink-rgb) / 7%); color: rgb(var(--ink-rgb)); }
+.vox-shell[data-vox-theme="daylight"] .secure-card-field input { border-color: rgb(var(--ink-rgb) / 14%); background: rgb(var(--paper-rgb)); color: rgb(var(--ink-rgb)); }
+.vox-shell[data-vox-theme="daylight"] .secure-card-field input:focus-visible { border-color: #f6a94a; outline-color: rgb(246 169 74 / 30%); }
+.vox-shell[data-vox-theme="daylight"] .secure-card-submit { background: rgb(var(--ink-rgb)); color: rgb(var(--paper-rgb)); }
+.vox-shell[data-vox-theme="daylight"] .secure-card :is(button):focus-visible { outline-color: var(--dl-accent); }
+.vox-shell[data-vox-theme="daylight"] .secure-card-warning { background: rgb(200 60 40 / 10%); color: #9c2f1c; }
+.secure-card-remember { display: flex; align-items: flex-start; gap: 0.55rem; font-size: 0.86rem; cursor: pointer; }
+.secure-card-remember input { width: 1.05rem; height: 1.05rem; flex: none; margin: 0.12rem 0 0; accent-color: #f4ff74; }
+.secure-card-remember small { display: block; margin-top: 0.1rem; color: rgb(255 255 255 / 55%); font-size: 0.74rem; line-height: 1.4; }
+.secure-card-field input::placeholder { color: rgb(255 255 255 / 45%); }
+.vox-shell[data-vox-theme="daylight"] .secure-card-remember input { accent-color: rgb(var(--ink-rgb)); }
+.vox-shell[data-vox-theme="daylight"] .secure-card-remember small { color: rgb(var(--ink-rgb) / 62%); }
+.vox-shell[data-vox-theme="daylight"] .secure-card-field input::placeholder { color: rgb(var(--ink-rgb) / 50%); }
+
+/* ---- Pictures in the chat: the picture itself, not its file name ---- */
+.attachment-chip[data-image="true"] { position: relative; border: 0; padding: 0; background: none; }
+.attachment-chip[data-image="true"] img { width: 4.25rem; height: 4.25rem; border-radius: 0.85rem; box-shadow: 0 0 0 1px rgb(255 255 255 / 14%); }
+.attachment-chip[data-image="true"] button { position: absolute; top: -0.4rem; right: -0.4rem; width: 1.5rem; height: 1.5rem; background: rgb(16 17 27 / 88%); color: #fff; opacity: 1; }
+.attachment-chip[data-image="true"] button:hover { background: #10111b; }
+.vox-shell[data-vox-theme="daylight"] .attachment-chip[data-image="true"] { background: none; }
+.vox-shell[data-vox-theme="daylight"] .attachment-chip[data-image="true"] img { box-shadow: 0 0 0 1px rgb(var(--ink-rgb) / 12%); }
+.vox-shell[data-vox-theme="daylight"] .attachment-chip[data-image="true"] button { background: rgb(var(--ink-rgb)); color: rgb(var(--paper-rgb)); }
+.message-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4rem; max-width: 22rem; margin-top: 0.55rem; }
+.message-images[data-count="1"] { grid-template-columns: minmax(0, 1fr); max-width: 18rem; }
+.message-images img { display: block; width: 100%; border-radius: 0.9rem; object-fit: cover; aspect-ratio: 1; box-shadow: 0 0 0 1px rgb(255 255 255 / 10%); }
+.message-images[data-count="1"] img { aspect-ratio: auto; max-height: 20rem; object-fit: contain; object-position: left top; box-shadow: none; }
+.message-files { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.5rem 0 0; padding: 0; list-style: none; }
+.message-files li { display: inline-flex; max-width: 100%; align-items: center; gap: 0.35rem; border: 1px solid rgb(255 255 255 / 12%); border-radius: 999px; padding: 0.2rem 0.6rem; font-size: 0.8rem; }
+.message-files svg { width: 0.85rem; height: 0.85rem; flex: none; opacity: 0.7; }
+.message-files span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vox-shell[data-vox-theme="daylight"] .message-files li { border-color: rgb(var(--ink-rgb) / 14%); background: rgb(var(--paper-rgb) / 55%); }
+.vox-shell[data-vox-theme="daylight"] .message-images img { box-shadow: 0 0 0 1px rgb(var(--ink-rgb) / 10%); }
+
+/* ---- Shown earlier: open again what Vox put on the stage ---- */
+.recent-stages { display: flex; align-items: center; gap: 0.4rem; margin: 0 0 0.5rem; overflow-x: auto; scrollbar-width: none; }
+.recent-stages::-webkit-scrollbar { display: none; }
+.recent-stages-label { flex: none; font-size: 0.78rem; opacity: 0.6; }
+.recent-stage-chip { display: inline-flex; min-height: 2.25rem; max-width: 15rem; flex: none; align-items: center; gap: 0.4rem; border: 1px solid rgb(255 255 255 / 14%); border-radius: 999px; padding: 0 0.8rem; background: rgb(255 255 255 / 5%); color: inherit; font-size: 0.85rem; cursor: pointer; }
+.recent-stage-chip:hover { background: rgb(255 255 255 / 11%); }
+.recent-stage-chip:focus-visible { outline: 2px solid #f4ff74; outline-offset: 2px; }
+.recent-stage-chip svg { width: 0.9rem; height: 0.9rem; flex: none; opacity: 0.7; }
+.recent-stage-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vox-shell[data-vox-theme="daylight"] .recent-stage-chip { border-color: rgb(var(--ink-rgb) / 12%); background: rgb(var(--paper-rgb) / 60%); color: rgb(var(--ink-rgb)); }
+.vox-shell[data-vox-theme="daylight"] .recent-stage-chip:hover { background: rgb(var(--paper-rgb)); }
+.vox-shell[data-vox-theme="daylight"] .recent-stage-chip:focus-visible { outline-color: var(--dl-accent); }
+.settings-group-empty { margin: 0; padding: 0.9rem 1rem; font-size: 0.88rem; line-height: 1.5; opacity: 0.65; }
+
+/* ---- Waiting on Vox: sent, read, and what it is doing ---- */
+.message-receipt { display: flex; align-items: center; justify-content: flex-end; gap: 0.25rem; margin: 0.35rem 0 0; font-size: 0.74rem; opacity: 0.55; }
+.message-receipt svg { width: 0.85rem; height: 0.85rem; }
+.message-receipt[data-read="true"] { opacity: 0.85; }
+.message-pending { opacity: 0.7; }
+.processing-line { display: flex; align-items: center; gap: 0.55rem; margin: 0.45rem 0 0; font-size: 0.92rem; opacity: 0.8; }
+.processing-dots { display: inline-flex; gap: 0.22rem; }
+.processing-dots i { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: currentColor; animation: processing-dot 1.2s ease-in-out infinite; }
+.processing-dots i:nth-child(2) { animation-delay: 0.15s; }
+.processing-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes processing-dot { 0%, 60%, 100% { opacity: 0.25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-0.18rem); } }
+@media (prefers-reduced-motion: reduce) { .processing-dots i { animation: none; opacity: 0.6; } }
+.vox-shell[data-vox-theme="daylight"] .message-receipt[data-read="true"] { color: #9a5a0c; opacity: 1; }
+.vox-shell[data-vox-theme="daylight"] .processing-dots i { background: #e08a2c; }
+
+/* Tucking the stage away is a phone thing. */
+.talk-stage-toggle { display: none; }
+
+/* ---- Check-in: the few things Vox wants settled, with one-tap answers ---- */
+.check-in { flex: none; margin: 0.5rem 0 0; }
+.check-in ul { display: flex; flex-direction: column; gap: 0.45rem; margin: 0; padding: 0; list-style: none; }
+.check-in-item { border: 1px solid rgb(255 255 255 / 12%); border-radius: 1rem; padding: 0.7rem 0.8rem 0.75rem; background: rgb(255 255 255 / 5%); }
+.check-in-head { display: flex; align-items: flex-start; gap: 0.5rem; }
+.check-in-question { min-width: 0; flex: 1; margin: 0; font-size: 0.93rem; font-weight: 500; line-height: 1.4; }
+.check-in-detail { margin: 0.15rem 0 0; font-size: 0.78rem; opacity: 0.65; }
+.check-in-later { display: grid; width: 1.9rem; height: 1.9rem; flex: none; place-items: center; margin: -0.25rem -0.3rem 0 0; border: 0; border-radius: 50%; background: transparent; color: inherit; opacity: 0.55; cursor: pointer; }
+.check-in-later:hover { background: rgb(255 255 255 / 10%); opacity: 1; }
+.check-in-later svg { width: 0.9rem; height: 0.9rem; }
+.check-in-replies { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.55rem; }
+.check-in-reply { min-height: 2.25rem; max-width: 100%; overflow: hidden; border: 1px solid rgb(255 255 255 / 16%); border-radius: 999px; padding: 0 0.85rem; background: rgb(255 255 255 / 8%); color: inherit; font-size: 0.85rem; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.check-in-reply:first-child { border-color: transparent; background: #f4ff74; color: #10111b; font-weight: 600; }
+.check-in-reply:hover:not(:disabled) { filter: brightness(1.08); }
+.check-in-reply:disabled { opacity: 0.5; cursor: default; }
+.check-in :is(button):focus-visible { outline: 2px solid #f4ff74; outline-offset: 2px; }
+.check-in-more { margin: 0.35rem 0 0 0.2rem; font-size: 0.76rem; opacity: 0.6; }
+.vox-shell[data-vox-theme="daylight"] .check-in-item { border-color: var(--dl-line); background: var(--dl-glass-strong); }
+.vox-shell[data-vox-theme="daylight"] .check-in-later:hover { background: rgb(var(--ink-rgb) / 8%); }
+.vox-shell[data-vox-theme="daylight"] .check-in-reply { border-color: rgb(var(--ink-rgb) / 16%); background: rgb(var(--ink-rgb) / 5%); }
+.vox-shell[data-vox-theme="daylight"] .check-in-reply:first-child { border-color: transparent; background: rgb(var(--ink-rgb)); color: rgb(var(--paper-rgb)); }
+.vox-shell[data-vox-theme="daylight"] .check-in :is(button):focus-visible { outline-color: var(--dl-accent); }
+.processing-elapsed { font-size: 0.78rem; font-variant-numeric: tabular-nums; opacity: 0.6; }
+.working-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Putting a notice off, or switching it off: quiet words at the end of its row, never louder than the answers. */
+.check-in-quiet { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.15rem; margin-left: auto; }
+.check-in-quiet button { min-height: 2.25rem; border: 0; border-radius: 999px; padding: 0 0.6rem; background: transparent; color: inherit; font-size: 0.8rem; opacity: 0.62; cursor: pointer; }
+.check-in-quiet button:hover { background: rgb(255 255 255 / 10%); opacity: 1; }

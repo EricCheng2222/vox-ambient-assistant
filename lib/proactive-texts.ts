@@ -419,6 +419,35 @@ export function nudgeLine(candidate: NudgeCandidate, now: Date, timeZone: string
   }
 }
 
+/** What the owner can have Vox do about one thing, each as what they would say. The first is the one that settles it. */
+export function nudgeChoices(candidate: NudgeCandidate, language: ResponseLanguage): string[] {
+  const zh = isMandarin(language);
+  const title = quote(candidate.title, language);
+  switch (candidate.kind) {
+    case "rsvp":
+      return zh ? [`接受${title}的邀請`, `婉拒${title}的邀請`, `${title}是什麼時候、在哪裡？`] : [`Accept the invitation to ${title}`, `Decline the invitation to ${title}`, `When and where is ${title}?`];
+    case "location":
+      return zh ? [`${title}的細節是什麼？`, `出發前提醒我確認${title}的地點`] : [`What are the details of ${title}?`, `Remind me to check where ${title} is before I leave`];
+    case "event":
+      return zh ? [`${title}在哪裡、怎麼去？`, `幫我整理${title}的重點`] : [`Where is ${title} and how do I get there?`, `Give me what I need to know for ${title}`];
+    case "email":
+      return zh ? [`把${title}這封信念給我聽`, `幫我草擬${title}的回覆`, `今晚再提醒我${title}`] : [`Read me the email ${title}`, `Draft a reply to ${title}`, `Remind me about ${title} tonight`];
+    default:
+      return zh ? [`${title}已經完成了`, `把${title}延到明天`, `今晚提醒我${title}`] : [`${title} is done`, `Move ${title} to tomorrow`, `Remind me about ${title} tonight`];
+  }
+}
+
+/**
+ * The same nudge as it is kept in the conversation: no "open Vox" (they are
+ * in it), and under each thing the choices that deal with it.
+ */
+export function composeNudgeForApp(candidates: NudgeCandidate[], now: Date, timeZone: string, language: ResponseLanguage) {
+  return candidates
+    .slice(0, MAX_NUDGE_LINES)
+    .map((candidate) => [nudgeLine(candidate, now, timeZone, language), ...nudgeChoices(candidate, language).map((choice) => `→ ${choice}`)].join("\n"))
+    .join("\n\n");
+}
+
 /**
  * The nudge for this check: one text however many things there are. Up to
  * three are spelled out and the rest are counted, and fewer are spelled out

@@ -4,10 +4,14 @@ import UIKit
 
 struct VoxWebView: UIViewRepresentable {
     let url: URL
-    @Binding var loadingProgress: Double
+    /// Set once the page has something of its own to show (see ContentView).
+    @Binding var pageReady: Bool
+
+    /// The page posts to this when its first screen is up.
+    static let readyHandlerName = "voxReady"
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(loadingProgress: $loadingProgress)
+        Coordinator(pageReady: $pageReady)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -29,6 +33,7 @@ struct VoxWebView: UIViewRepresentable {
             contentWorld: .page,
             name: LocationSharingBridge.handlerName
         )
+        contentController.add(context.coordinator, name: Self.readyHandlerName)
         configuration.userContentController = contentController
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -38,8 +43,9 @@ struct VoxWebView: UIViewRepresentable {
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.keyboardDismissMode = .interactive
         webView.isOpaque = false
-        webView.backgroundColor = UIColor(red: 0.015, green: 0.06, blue: 0.08, alpha: 1)
-        webView.scrollView.backgroundColor = webView.backgroundColor
+        // Clear, so the sky behind shows through wherever the page has not drawn yet.
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
 
         let refreshControl = UIRefreshControl()
         refreshControl.tintColor = .white
@@ -52,7 +58,6 @@ struct VoxWebView: UIViewRepresentable {
         context.coordinator.webView = webView
         context.coordinator.pairingBridge.webView = webView
         context.coordinator.reminderBridge.webView = webView
-        context.coordinator.observeProgress(of: webView)
 
         #if DEBUG
         if #available(iOS 16.4, *) {
@@ -78,7 +83,7 @@ struct VoxWebView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
-        coordinator.stopObservingProgress()
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: readyHandlerName)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: PairingBridge.handlerName)
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: ReminderNotificationBridge.handlerName,
@@ -93,32 +98,45 @@ struct VoxWebView: UIViewRepresentable {
         webView.uiDelegate = nil
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler {
         weak var webView: WKWebView?
         let pairingBridge = PairingBridge()
         let reminderBridge = ReminderNotificationBridge()
         let locationSharingBridge = LocationSharingBridge()
         private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
-        private let loadingProgress: Binding<Double>
-        private var progressObservation: NSKeyValueObservation?
+        private let pageReady: Binding<Bool>
 
-        init(loadingProgress: Binding<Double>) {
-            self.loadingProgress = loadingProgress
+        init(pageReady: Binding<Bool>) {
+            self.pageReady = pageReady
         }
 
-        func observeProgress(of webView: WKWebView) {
-            progressObservation = webView.observe(\.estimatedProgress, options: [.new]) {
-                [weak self] webView, _ in
-                Task { @MainActor in
-                    self?.loadingProgress.wrappedValue = webView.estimatedProgress
-                }
+        private func showPage() {
+            Task { @MainActor in
+                self.pageReady.wrappedValue = true
             }
         }
 
-        func stopObservingProgress() {
-            progressObservation?.invalidate()
-            progressObservation = nil
+        /// The page's first screen is up.
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == VoxWebView.readyHandlerName,
+                  message.frameInfo.isMainFrame,
+                  message.frameInfo.securityOrigin.host == AppConfiguration.trustedHost else { return }
+            showPage()
+        }
+
+        /// A page that never says it is ready (an older version, an error page)
+        /// is still shown: the opening screen must not be a place to get stuck.
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.showPage() }
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            showPage()
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            showPage()
         }
 
         @objc func refresh(_ sender: UIRefreshControl) {

@@ -55,4 +55,66 @@ assert.equal(browserActFromArguments(JSON.stringify({ action: "type", ref: 0 }))
 assert.equal(browserActFromArguments(JSON.stringify({ action: "run_script", ref: 0 })), null);
 assert.equal(browserActFromArguments("nope"), null);
 
+// Requests inside the user's own account go to the part of Vox with the browser, not to a web search.
+{
+  const { isOwnAccountWebTask, routeForOwnAccountTask } = await import("../lib/browser-agent.ts");
+  for (const text of [
+    "take a look at my starlux account and see how many mileage is about to expire",
+    "can you try to do all the things for me? at least bring me to the sign in page",
+    "log me into Uber",
+    "where is my Amazon order",
+    "幫我登入星宇航空",
+    "看一下我的星宇里程還有多少快到期",
+    "我的蝦皮訂單到哪了",
+  ]) assert.equal(isOwnAccountWebTask(text), true, text);
+  for (const text of ["what's the weather in Taipei", "how do airline miles expire in general", "星宇航空的里程規則是什麼", "who won the game last night"]) assert.equal(isOwnAccountWebTask(text), false, text);
+  assert.equal(routeForOwnAccountTask("live_web", "check my starlux miles", true), "realtime");
+  assert.equal(routeForOwnAccountTask("expert_reasoning", "check my starlux miles", true), "realtime");
+  assert.equal(routeForOwnAccountTask("live_web", "check my starlux miles", false), "live_web", "without a browser nothing changes");
+  assert.equal(routeForOwnAccountTask("live_web", "how do airline miles expire in general", true), "live_web");
+  assert.equal(routeForOwnAccountTask("create_reminder", "remind me to check my orders", true), "create_reminder");
+}
+
+// How much Vox asks, by the user's own setting.
+{
+  const { needsConfirmation, parseApprovalLevel, defaultApprovalLevel, approvalOptions } = await import("../lib/browser-agent.ts");
+  const button = (label) => ({ ref: 1, kind: "button", label, value: "", hint: "" });
+  assert.equal(defaultApprovalLevel, "important");
+  assert.equal(parseApprovalLevel("none"), "none");
+  assert.equal(parseApprovalLevel("nonsense"), "important");
+  assert.deepEqual(approvalOptions.map((option) => option.id), ["careful", "important", "none"]);
+  // Careful: anything that commits. Important: only money, other people, or deleting. None: never.
+  for (const label of ["確定", "Confirm", "Submit", "登入", "Accept", "Apply", "同意"]) {
+    assert.equal(needsConfirmation("click", button(label), "important"), false, `${label} is an everyday button`);
+  }
+  for (const label of ["Place order", "Pay now", "付款", "結帳", "Send", "刪除", "Delete account", "叫車", "Buy now"]) {
+    assert.equal(needsConfirmation("click", button(label), "important"), true, label);
+    assert.equal(needsConfirmation("click", button(label), "careful"), true, label);
+    assert.equal(needsConfirmation("click", button(label), "none"), false, label);
+  }
+  assert.equal(needsConfirmation("click", button("Confirm"), "careful"), true);
+  assert.equal(needsConfirmation("press_enter", button("Card number"), "important"), false);
+  assert.equal(needsConfirmation("click", button("Place order")), true, "with no setting given, the careful rule applies");
+}
+
+// Lookups on a named site go to the browser; with "browser" chosen, so does every web search.
+{
+  const { isSiteLookup, routeForLookup, lookupInstruction, parseLookupMode } = await import("../lib/browser-agent.ts");
+  for (const text of ["Find me something around 2000NTD in Airbnb in Taipei that day", "compare prices for this on Amazon and momo", "幫我在蝦皮找藍牙耳機", "星宇下週五飛東京還有位子嗎", "what's cheap on Booking.com in Kyoto"]) assert.equal(isSiteLookup(text), true, text);
+  for (const text of ["what's the weather in Taipei tomorrow", "who won the F1 race", "台積電今天股價", "I booked a table for two"]) assert.equal(isSiteLookup(text), false, text);
+  assert.equal(routeForLookup("live_web", "Find me something on Airbnb in Taipei", true, "auto"), "realtime");
+  assert.equal(routeForLookup("expert_reasoning", "Find me something on Airbnb in Taipei", true, "auto"), "realtime");
+  assert.equal(routeForLookup("live_web", "who won the F1 race", true, "auto"), "live_web", "a quick fact stays with web search");
+  assert.equal(routeForLookup("live_web", "who won the F1 race", true, "browser"), "realtime", "unless the user chose the browser for everything");
+  assert.equal(routeForLookup("expert_reasoning", "prove this theorem", true, "browser"), "expert_reasoning", "thinking is not a lookup");
+  assert.equal(routeForLookup("live_web", "Find me something on Airbnb", false, "browser"), "live_web", "no browser to use: nothing changes");
+  assert.equal(routeForLookup("create_reminder", "remind me to check Airbnb", true, "browser"), "create_reminder");
+  assert.equal(parseLookupMode("browser"), "browser");
+  assert.equal(parseLookupMode(null), "auto");
+  assert.match(lookupInstruction("auto"), /Do not answer such a request from memory/u);
+  assert.doesNotMatch(lookupInstruction("auto"), /every web lookup to be done in the browser/u);
+  assert.match(lookupInstruction("auto"), /When the user says to use the computer, computer use, or the browser/u);
+  assert.match(lookupInstruction("browser"), /every web lookup to be done in the browser/u);
+}
+
 console.log("Browser agent checks passed.");

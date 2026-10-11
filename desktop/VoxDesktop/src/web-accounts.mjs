@@ -42,15 +42,20 @@ export function registerWebAccounts({ requireTrustedVoxSender }) {
     return cookies.filter((cookie) => cookie.value && (!cookie.expirationDate || cookie.expirationDate > now)).map((cookie) => cookie.name);
   }
 
-  ipcMain.handle("vox-accounts:status", async (event, rawChecks) => {
+  ipcMain.handle("vox-accounts:status", (event, rawChecks) => {
     requireTrustedVoxSender(event);
+    return statusOf(rawChecks);
+  });
+
+  /** For each service, whether a sign-in is present. Yes or no only. */
+  async function statusOf(rawChecks) {
     const status = {};
     for (const check of cleanChecks(rawChecks)) {
       const names = (await Promise.all(check.domains.map(liveCookieNames))).flat();
       status[check.id] = looksSignedIn(names, check.cookies);
     }
     return status;
-  });
+  }
 
   /** Signs out of one service in Vox: its cookies and stored data are removed. */
   ipcMain.handle("vox-accounts:sign-out", async (event, rawDomains) => {
@@ -67,4 +72,5 @@ export function registerWebAccounts({ requireTrustedVoxSender }) {
     }
     return domains.length > 0;
   });
+  return { status: statusOf };
 }

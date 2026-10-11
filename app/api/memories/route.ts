@@ -1,4 +1,5 @@
 import { requireUser } from "@/lib/auth";
+import { decisionFetch, decisionKey } from "@/lib/decision";
 import type { MemoryCategory } from "@/lib/memory";
 import { summarizeMemory } from "@/lib/memory-summary";
 import {
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
     return Response.json({ action: "ignore", source: "safety" });
   }
 
-  const jevApiKey = process.env.TYPESAFE_API_KEY;
+  const jevApiKey = decisionKey();
   const openAiApiKey = process.env.OPENAI_API_KEY;
   if (!jevApiKey || !openAiApiKey) {
     return Response.json({ action: "ignore", source: "unavailable" });
@@ -87,7 +88,7 @@ export async function POST(request: Request) {
       ),
     };
 
-    const jevResponse = await fetch("https://api.typesafe.ai/v1/systemone", {
+    const jevResponse = await decisionFetch({
       method: "POST",
       headers: {
         Authorization: `Bearer ${jevApiKey}`,

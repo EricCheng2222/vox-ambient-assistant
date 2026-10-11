@@ -1,7 +1,10 @@
 import { appendAssistantNote, recentOwnerMessages } from "@/lib/conversation-store";
 import { callMcpTool } from "@/lib/mcp-call";
 import { veloServerUrl } from "@/lib/mcp-client";
+import { createApnsSender, getApnsConfig } from "@/lib/apns";
+import { createOwnerReacher } from "@/lib/owner-push";
 import { createOwnerTexter } from "@/lib/owner-text";
+import { forgetPushDevice, leaveOwnerNotice, listPushOwnerIds, pushDevicesFor } from "@/lib/push-store";
 import { getOwnerTextDestination, listProactiveTextOwnerIds } from "@/lib/phone-assistant-store";
 import { getUserPreferences } from "@/lib/preference-store";
 import { proactiveTextStore } from "@/lib/proactive-text-store";
@@ -25,12 +28,16 @@ export async function POST(request: Request) {
     return Response.json({ error: "Not found." }, { status: 404 });
   }
   try {
-    // Without a phone line there is nobody to text: read nothing at all.
-    if (!getTwilioConfig()) {
+    const canNotify = getApnsConfig() !== null;
+    const canText = getTwilioConfig() !== null;
+    // Those whose own iPhone or iPad collects notices, and those who can be texted.
+    const accounts = [...new Set([...(await listPushOwnerIds()), ...(canText ? await listProactiveTextOwnerIds() : [])])];
+    // Nobody to reach: read nothing at all.
+    if (!accounts.length) {
       return Response.json({ checked: 0, sent: 0, failed: 0, skipped: 0, errors: 0, deferred: 0 }, { headers: { "Cache-Control": "no-store" } });
     }
     const summary = await runProactiveTick({
-      listAccounts: listProactiveTextOwnerIds,
+      listAccounts: async () => accounts,
       initiative: async (ownerId) => (await getUserPreferences(ownerId)).initiative,
       // The zone the owner's own device last reported, else Asia/Taipei.
       timeZone: reminderTimeZone,
@@ -44,8 +51,17 @@ export async function POST(request: Request) {
       },
       // Laid out by code: headed sections, one item per line, the same shape every day.
       write: async (summary, language) => layoutBriefingText(summary, language),
-      send: createOwnerTexter({ destinationFor: getOwnerTextDestination }),
-      appendToConversation: (ownerId, id, text) => appendAssistantNote(ownerId, { id, text }),
+      // Left for the owner's own iPhone and iPad to show, and delivered now by push or text when possible.
+      send: createOwnerReacher({
+        devicesFor: async (ownerId) => (canNotify ? pushDevicesFor(ownerId) : []),
+        forgetDevice: (token) => forgetPushDevice(token),
+        sendToDevice: createApnsSender(),
+        text: createOwnerTexter({ destinationFor: getOwnerTextDestination }),
+        leaveNotice: leaveOwnerNotice,
+      }),
+      appendToConversation: async (ownerId, id, text) => {
+        await appendAssistantNote(ownerId, { id, text });
+      },
       // The deployment's public address, as already configured for Twilio.
       link: voxLink(process.env.TWILIO_WEBHOOK_BASE_URL),
     });

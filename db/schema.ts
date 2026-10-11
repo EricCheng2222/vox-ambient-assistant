@@ -475,3 +475,73 @@ export const proactiveTextLog = sqliteTable(
   },
   (table) => [index("idx_proactive_text_log_owner_created").on(table.ownerId, table.createdAt)],
 );
+
+// What Vox recently put on the stage (a plan, a comparison, the pages behind
+// an answer), so it can be opened again after it is closed and on the user's
+// other devices. A handful per person; older ones are removed.
+export const stageHistory = sqliteTable(
+  "stage_history",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    title: text("title").notNull(),
+    // StageContent as JSON, checked and trimmed before it is stored.
+    content: text("content").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("idx_stage_history_owner_created").on(table.ownerId, table.createdAt)],
+);
+
+// The iPhones and iPads that show an account's notifications. Today each
+// install of the app collects them itself when iOS wakes it in the background
+// (environment "pull", token = an id the app made up). With a paid Apple
+// developer account the token would be Apple's and Vox would push instead.
+export const pushDevices = sqliteTable(
+  "push_devices",
+  {
+    // The device token itself (hex). A device belongs to one account at a time.
+    token: text("token").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    // "pull", or for Apple push: "development" (Xcode builds) / "production".
+    environment: text("environment").notNull(),
+    platform: text("platform").notNull(),
+    createdAt: text("created_at").notNull(),
+    seenAt: text("seen_at").notNull(),
+  },
+  (table) => [index("idx_push_devices_owner").on(table.ownerId)],
+);
+
+// What Vox set out to tell an account's owner while the app was closed, kept
+// briefly so their devices can collect it and show it as a notification.
+export const ownerNotices = sqliteTable(
+  "owner_notices",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    // Already delivered to the owner's phone another way (a text, or a push).
+    delivered: integer("delivered", { mode: "boolean" }).notNull().default(false),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("idx_owner_notices_owner_created").on(table.ownerId, table.createdAt)],
+);
+
+// An answer Vox is still working out (a web search, hard thinking) that must
+// survive the user leaving the app. Only the handle to the work is kept here;
+// the answer itself goes to the waiting app or into the conversation.
+export const answerJobs = sqliteTable(
+  "answer_jobs",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    // The provider's id for the answer being worked out in the background.
+    responseId: text("response_id").notNull(),
+    // running: being worked out. seen: the app received it. delivered: left in the conversation. failed.
+    status: text("status").notNull().default("running"),
+    createdAt: text("created_at").notNull(),
+    // Touched while the app is still waiting; when it goes quiet the server takes over.
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("idx_answer_jobs_status_updated").on(table.status, table.updatedAt)],
+);

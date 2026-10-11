@@ -130,7 +130,9 @@ async function connectGoogle(path = "/google/connect") {
   assert.equal(await accounts.openSecret(env, rows[0], rows[0].accessToken, rows[0].accessIv), "ya29.first");
   assert.match(await textOf("list_accounts"), /; Google access: mail, calendar, tasks \(not allowed yet: contacts, drive; the user can allow them by reconnecting Google at https:\/\/mail\.example\/\)$/u);
   home = await (await get("/")).text();
-  assert.match(home, /Vox can use Mail, Calendar and Tasks</u);
+  assert.match(home, /aria-label="Vox can use Mail, Calendar and Tasks"/u);
+  assert.match(home, /<span class="use">Calendar<\/span>/u);
+  assert.match(home, /<span class="use off">Drive</u);
   assert.match(home, />Allow contacts and files<\/a>/u);
   assert.equal(await errorOf("search_drive", { query: "plan" }), "needs_google_access: Reconnect Google in Vox Mail to allow Drive access.");
 
@@ -145,7 +147,8 @@ async function connectGoogle(path = "/google/connect") {
   assert.deepEqual([rows.length, rows[0].id, rows[0].status, rows[0].scope], [1, first.id, "connected", EVERYTHING]);
   assert.equal(await textOf("list_accounts"), "1 email account:\n1. me@gmail.com: Gmail, primary (sends by default); Google access: mail, calendar, tasks, contacts, drive");
   home = await (await get("/")).text();
-  assert.match(home, /Vox can use Mail, Calendar, Tasks, Contacts and Drive</u);
+  assert.match(home, /aria-label="Vox can use Mail, Calendar, Tasks, Contacts and Drive"/u);
+  assert.ok(!/class="use off"/u.test(home));
   assert.doesNotMatch(home, />Allow /u);
 }
 

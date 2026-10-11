@@ -2,13 +2,22 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const { visualThemeOptions, parseVisualTheme, themeVoices, themePersonaInstruction } = await import("../lib/visual-theme.ts");
-assert.deepEqual(visualThemeOptions.map((option) => option.id), ["ambient", "holographic", "daylight"]);
+assert.deepEqual(visualThemeOptions.map((option) => option.id), ["sunset", "daylight"]);
 assert.equal(parseVisualTheme("daylight"), "daylight");
-assert.equal(parseVisualTheme("nonsense"), "ambient");
+assert.equal(parseVisualTheme("nonsense"), "sunset");
 assert.ok(themeVoices.daylight);
 // Daylight is the proactive theme: a step ahead, one offer at a time.
 assert.match(themePersonaInstruction("daylight"), /Presentation style: Daylight/);
 assert.match(themePersonaInstruction("daylight"), /One offer per reply at most/);
+// Sunset is Sunrise in other colours: same behaviour, same voice, its own id.
+{
+  const { themeLook } = await import("../lib/visual-theme.ts");
+  assert.equal(themeLook("sunset"), "daylight");
+  assert.equal(themeLook("daylight"), "daylight");
+  assert.equal(parseVisualTheme("sunset"), "sunset");
+  assert.equal(themePersonaInstruction("sunset"), themePersonaInstruction("daylight"));
+  assert.equal(themeVoices.sunset, themeVoices.daylight);
+}
 {
   const { nextHeadsUp, momentKey, headsUpInstruction, suggestionsFor } = await import("../lib/proactive.ts");
   const moments = [
@@ -42,7 +51,7 @@ for (const rule of css.split("}\n").map((block) => block.split("{")[0].trim()).f
   }
 }
 // The dashboard column only exists in Daylight, for a signed-in account.
-assert.match(page, /\{theme === "daylight" && todayAvailable && !compactScreen && dashOpen && \(\n\s+<DashboardPanels/u);
+assert.match(page, /\{look === "daylight" && todayAvailable && !compactScreen && dashOpen && \(\n\s+<DashboardPanels/u);
 // One-click connect: the button names the provider and Vox passes it on.
 assert.match(panels, /openMailConnection\(\{ provider: "google" \}\)/u);
 assert.match(mailRoute, /started\.searchParams\.set\("provider", body\.provider\)/u);
@@ -51,6 +60,6 @@ console.log("Daylight theme checks passed.");
 {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   // In Daylight the conversation always has the middle, whatever was last chosen elsewhere.
-  assert.match(page, /const sidePanelSwitch = todayAvailable && theme !== "daylight" && !phoneScreen;\n\s+const showingToday = sidePanelSwitch && sidePanel === "today";/u);
+  assert.match(page, /const sidePanelSwitch = todayAvailable && look !== "daylight" && !phoneScreen;\n\s+const showingToday = sidePanelSwitch && sidePanel === "today";/u);
   console.log("Daylight keeps the conversation in the middle.");
 }

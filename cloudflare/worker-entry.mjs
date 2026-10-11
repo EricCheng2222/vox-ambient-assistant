@@ -92,6 +92,21 @@ function proactiveTickDue(event) {
   return at.getUTCMinutes() % PROACTIVE_EVERY_MINUTES === 0;
 }
 
+// Every minute: answers whose app stopped waiting (the user left) are finished
+// and left in the conversation. With nothing waiting this is one small query.
+async function runAnswerJobsTick(env, context) {
+  const response = await runApplication(
+    new Request("https://vox.internal/api/answer-jobs/tick", {
+      method: "POST",
+      headers: { "x-vox-scheduler": schedulerToken() },
+    }),
+    env,
+    context,
+  );
+  if (!response.ok) console.error("Answer jobs check returned", response.status);
+  else await response.body?.cancel();
+}
+
 async function runProactiveTick(env, context) {
   const response = await runApplication(
     new Request("https://vox.internal/api/proactive/tick", {
@@ -144,6 +159,12 @@ const worker = {
         }),
       );
     }
+    // Answers whose app stopped waiting are finished and left in the conversation.
+    context.waitUntil(
+      runAnswerJobsTick(env, context).catch((error) => {
+        console.error("Answer jobs check failed", error instanceof Error ? error.message : "");
+      }),
+    );
   },
 };
 

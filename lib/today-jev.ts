@@ -1,9 +1,9 @@
 import type { JevAnswers, JevQuestions } from "./today-moments.ts";
+import { decisionFetch, decisionKey } from "./decision.ts";
 
 // Asking JEV (typesafe.ai) the Today briefing's choice questions. One request
 // may carry several questions; the answers come back by question name.
 
-const JEV_URL = "https://api.typesafe.ai/v1/systemone";
 export const JEV_TIMEOUT_MS = 6_000;
 
 /**
@@ -11,10 +11,10 @@ export const JEV_TIMEOUT_MS = 6_000;
  * Callers have a plain rule to fall back on, so this never throws.
  */
 export async function askJev(request: JevQuestions, timeoutMs = JEV_TIMEOUT_MS): Promise<JevAnswers> {
-  const apiKey = process.env.TYPESAFE_API_KEY;
+  const apiKey = decisionKey();
   if (!apiKey || !Object.keys(request.questions).length) return null;
   try {
-    const response = await fetch(JEV_URL, {
+    const response = await decisionFetch({
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       signal: AbortSignal.timeout(timeoutMs),

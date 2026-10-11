@@ -9,7 +9,28 @@ export type RemoteMacCommand =
   | { kind: "open_workspace" }
   | { kind: "smart_home"; prompt: string; deviceId?: string }
   | { kind: "phone_mac"; prompt: string }
-  | { kind: "local_codex"; prompt: string };
+  | { kind: "local_codex"; prompt: string }
+  // The websites signed in on the Mac, used from the phone or tablet.
+  | { kind: "browser"; op: "look"; open?: string }
+  | { kind: "browser"; op: "act"; request: { ref?: number; action: string; text?: string } }
+  // The private box, filled in on the phone: values travel encrypted with the pairing key.
+  | { kind: "browser"; op: "fill"; entries: Array<{ ref: number; value?: string; saved?: boolean }>; remember: boolean }
+  | { kind: "browser"; op: "saved"; refs: number[] }
+  // The Mac's page as a picture, with what the user did on that picture (positions are fractions of its size).
+  | { kind: "browser"; op: "view"; input?: RemotePageInput; size?: [number, number] }
+  // A whole website task the Mac carries out by itself, so it survives the phone being put away.
+  | { kind: "browser_task"; taskId: string; goal: string; context?: string; url?: string; approval: string; language: string }
+  | { kind: "web_accounts"; checks: Array<{ id: string; domains: string[]; cookies: string[] }> };
+
+/** What the user does on the picture of the Mac's page: their own taps, drags, typing and keys. */
+export type RemotePageInput =
+  | { type: "tap"; x: number; y: number }
+  | { type: "drag"; from: [number, number]; to: [number, number] }
+  | { type: "text"; text: string }
+  | { type: "key"; key: "Enter" | "Backspace" | "Tab" | "Escape" }
+  | { type: "scroll"; down: boolean };
+
+export type RemotePageView = { image: string; width: number; height: number; url: string; title: string };
 
 export type StoredRemoteMacPairing = {
   deviceId: string;

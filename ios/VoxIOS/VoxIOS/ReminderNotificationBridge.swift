@@ -77,6 +77,7 @@ final class ReminderNotificationBridge: NSObject, WKScriptMessageHandlerWithRepl
               savePlace: (name) => handler.postMessage({ type: "savePlace", name: String(name) }),
               pickPlace: (name) => handler.postMessage({ type: "pickPlace", name: String(name ?? "") }),
               deletePlace: (name) => handler.postMessage({ type: "deletePlace", name: String(name) }),
+              pushDevice: () => handler.postMessage({ type: "pushDevice" }),
             }),
           });
         })();
@@ -136,6 +137,15 @@ final class ReminderNotificationBridge: NSObject, WKScriptMessageHandlerWithRepl
                     return
                 }
                 replyHandler(await LocationReminderScheduler.shared.pickPlace(named: name, from: presenter), nil)
+            }
+        case "pushDevice":
+            // This install's id for collecting notifications, for the signed-in account.
+            Task { @MainActor in
+                replyHandler([
+                    "token": NoticeFetcher.deviceId,
+                    "environment": "pull",
+                    "platform": NoticeFetcher.platform,
+                ], nil)
             }
         case "deletePlace":
             let name = body["name"] as? String ?? ""

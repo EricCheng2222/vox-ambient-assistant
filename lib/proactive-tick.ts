@@ -7,6 +7,7 @@ import {
   buildNudgeRequest,
   buildWriterRequest,
   composeNudge,
+  composeNudgeForApp,
   decideNudges,
   eveningSummary,
   fallbackBriefingText,
@@ -111,7 +112,7 @@ function errorCode(error: unknown) {
 type Run = { deps: ProactiveTickDeps; ownerId: string; now: Date; nowIso: string; today: string; timeZone: string };
 
 /** Sends one text and records how it went. The log row is the claim: a text is never sent twice for one row. */
-async function deliver(run: Run, kind: TextKind, logId: string, body: string, items: number): Promise<AccountOutcome> {
+async function deliver(run: Run, kind: TextKind, logId: string, body: string, items: number, inApp?: string): Promise<AccountOutcome> {
   const { deps, ownerId } = run;
   const claimed = await deps.store.claimLog({ id: logId, ownerId, kind, status: "sending", localDay: run.today, items, createdAt: run.nowIso });
   if (!claimed) return { action: "skipped", reason: "already_under_way" };
@@ -120,7 +121,8 @@ async function deliver(run: Run, kind: TextKind, logId: string, body: string, it
   await deps.store.finishLog(logId, result.ok ? "sent" : "error", result.ok ? null : errorCode(new Error(result.error))).catch(() => undefined);
   if (!result.ok) return { action: "failed", kind };
   // The owner sees what was texted when they next open Vox.
-  await deps.appendToConversation(ownerId, `proactive-${logId}`.replace(/[^A-Za-z0-9_-]/gu, "-").slice(0, 160), text).catch((error) => {
+  // In the app it reads as a notice with choices, not as a text asking them to come to the app.
+  await deps.appendToConversation(ownerId, `proactive-${logId}`.replace(/[^A-Za-z0-9_-]/gu, "-").slice(0, 160), inApp ?? body).catch((error) => {
     console.error("Proactive text: conversation append failed", errorCode(error));
   });
   return { action: "sent", kind, items };
@@ -185,7 +187,7 @@ async function sendNudge(run: Run, fresh: Array<{ id: string; candidate: NudgeCa
   const budget = MAX_TEXT_CHARS - (deps.link ? deps.link.length + 1 : 0);
   const body = composeNudge(sending, now, timeZone, language, budget);
   const logId = `${ownerId}:nudge:${(deps.newId ?? (() => crypto.randomUUID()))()}`;
-  const outcome = await deliver(run, "nudge", logId, body, sending.length);
+  const outcome = await deliver(run, "nudge", logId, body, sending.length, composeNudgeForApp(sending, now, timeZone, language));
   if (outcome.action !== "sent") await deps.store.releaseKeys(ownerId, [...claimed]).catch(() => undefined);
   return outcome;
 }

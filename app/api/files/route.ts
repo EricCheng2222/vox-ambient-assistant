@@ -1,4 +1,5 @@
 import { requireUser } from "@/lib/auth";
+import { decisionFetch, decisionKey } from "@/lib/decision";
 import { formatMemoryContext } from "@/lib/memory";
 import { listMemories } from "@/lib/memory-store";
 import { loadProfileContext } from "@/lib/profile-store";
@@ -133,11 +134,11 @@ function fallbackKind(text: string): FileKind {
 }
 
 async function chooseFileKind(text: string): Promise<FileKind> {
-  const apiKey = process.env.TYPESAFE_API_KEY;
+  const apiKey = decisionKey();
   if (!apiKey) return fallbackKind(text);
 
   try {
-    const response = await fetch("https://api.typesafe.ai/v1/systemone", {
+    const response = await decisionFetch({
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,

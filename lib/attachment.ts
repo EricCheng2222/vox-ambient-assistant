@@ -66,3 +66,48 @@ export function documentForModel(name: string, text: string) {
 export function attachmentNote(names: string[]) {
   return names.length ? `[Attached: ${names.map(cleanFileName).join(", ")}]` : "";
 }
+
+const IMAGE_NAME = /\.(png|jpe?g|gif|webp|heic|heif|avif|bmp|tiff?)$/iu;
+
+export function isImageName(name: string) {
+  return IMAGE_NAME.test(name.trim());
+}
+
+/** A message's own words, and the files named in its attachment line (if it has one). */
+export function splitAttachmentNote(text: string): { body: string; names: string[] } {
+  const match = /(?:^|\n)\[Attached: ([^\]\n]+)\]\s*$/u.exec(text);
+  if (!match) return { body: text, names: [] };
+  return { body: text.slice(0, match.index).trimEnd(), names: match[1].split(", ").map((name) => name.trim()).filter(Boolean) };
+}
+
+export type MessageImage = { name: string; url: string };
+const MESSAGE_IMAGES_KEY = "vox:message-images";
+const MAX_REMEMBERED_IMAGE_MESSAGES = 12;
+
+/** Pictures the user sent from this device, by message, so the chat can show them again after a reload. */
+export function loadMessageImages(): Record<string, MessageImage[]> {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(MESSAGE_IMAGES_KEY) ?? "{}") as Record<string, MessageImage[]>;
+    const clean: Record<string, MessageImage[]> = {};
+    for (const [id, images] of Object.entries(parsed && typeof parsed === "object" ? parsed : {})) {
+      const kept = (Array.isArray(images) ? images : []).filter((image) => typeof image?.name === "string" && typeof image?.url === "string" && image.url.startsWith("data:image/"));
+      if (kept.length) clean[id] = kept;
+    }
+    return clean;
+  } catch {
+    return {};
+  }
+}
+
+/** Keeps the most recent ones; when the browser is out of room, keeps fewer. */
+export function saveMessageImages(images: Record<string, MessageImage[]>) {
+  let ids = Object.keys(images).slice(-MAX_REMEMBERED_IMAGE_MESSAGES);
+  while (ids.length) {
+    try {
+      window.localStorage.setItem(MESSAGE_IMAGES_KEY, JSON.stringify(Object.fromEntries(ids.map((id) => [id, images[id]]))));
+      return;
+    } catch {
+      ids = ids.slice(1);
+    }
+  }
+}

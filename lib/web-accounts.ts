@@ -124,7 +124,11 @@ export function webAccountBridge(): WebAccountBridge | null {
 export function webAccountsInstruction(signedInIds: string[]) {
   const names = WEB_ACCOUNT_SERVICES.filter((item) => signedInIds.includes(item.id)).map((item) => item.name);
   if (!names.length) {
-    return "The user can sign in to websites (Amazon, Uber, Airbnb, Instagram and others) inside Vox on this Mac: Settings, Connected accounts, Websites. If they ask you to do something on a site that needs their account, offer to open its sign-in page for them; they sign in themselves.";
+    return "The user can sign in to websites (Amazon, Uber, Airbnb, Instagram and others) inside Vox on this Mac: Settings, Connected accounts, Websites. If they ask you to do something on a site that needs their account, open the site and go to its sign-in page yourself, then call ask_user_to_fill so they can type their details in the private box.";
   }
   return `The user is signed in to these websites inside Vox's built-in browser on this Mac: ${names.join(", ")}. When they ask for something there (check an order, find a ride, look at messages), open the site with show_on_stage and work on the page with browser_look and browser_act. For other sites they can sign in under Settings, Connected accounts, Websites.`;
+}
+
+export function webAccountNames(ids: string[]) {
+  return WEB_ACCOUNT_SERVICES.filter((item) => ids.includes(item.id)).map((item) => item.name);
 }

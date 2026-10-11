@@ -1,7 +1,10 @@
+import { answerText, backgroundState, fetchBackground, isJobId, settleAnswerJob, startAnswerJob, touchAnswerJob, type BackgroundPayload } from "@/lib/answer-jobs";
+import { withoutLinkMarkup } from "@/lib/answer-text";
 import { askFirstAvailable, EXPERT_MODELS } from "@/lib/models";
 import { requireUser } from "@/lib/auth";
 import { earlierMessages, parseRecentMessages } from "@/lib/conversation-context";
 import { formatMemoryContext } from "@/lib/memory";
+import { WRITTEN_LAYOUT_INSTRUCTION } from "@/lib/answer-layout";
 import { listMemories } from "@/lib/memory-store";
 import { loadProfileContext } from "@/lib/profile-store";
 import {
@@ -79,7 +82,12 @@ export async function POST(request: Request) {
     memoryUse?: unknown;
     ritual?: unknown;
     recentMessages?: unknown;
+    jobId?: unknown;
+    written?: unknown;
   };
+  // With a job id the answer is worked out in the background, so it survives
+  // the app going away: whoever is there when it finishes gets it.
+  const jobId = isJobId(body.jobId) ? body.jobId : null;
   const text = body.text?.trim().slice(0, 12000) ?? "";
   const route = body.route;
   const replyLength = parseReplyLength(body.replyLength);
@@ -121,8 +129,14 @@ export async function POST(request: Request) {
   ];
 
   let model: string = models[0];
-  const response = await askFirstAvailable(models, (candidate) => fetch("https://api.openai.com/v1/responses", {
+  // One time limit for the whole answer, however many models are tried: the
+  // user is waiting, and a search that hasn't come back by now won't be worth it.
+  const deadline = AbortSignal.timeout(isExpert ? 120_000 : 60_000);
+  let response: Response;
+  try {
+    response = await askFirstAvailable(models, (candidate) => fetch("https://api.openai.com/v1/responses", {
     method: "POST",
+    signal: deadline,
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
@@ -131,7 +145,10 @@ export async function POST(request: Request) {
       model: (model = candidate),
       input,
       instructions:
-        "Prepare an accurate answer for a voice assistant to speak aloud. Answer the latest user message as the next turn of the conversation you are given: resolve references to earlier turns and do not repeat what was already said. Use plain language, spoken-friendly sentences, and no markdown. Do not mention model routing.\n\n" +
+        (body.written === true
+          ? // A typed conversation: the answer is read, so it is laid out for reading.
+            `Prepare an accurate answer for an assistant to show in a chat. Answer the latest user message as the next turn of the conversation you are given: resolve references to earlier turns and do not repeat what was already said. Use plain language. ${WRITTEN_LAYOUT_INSTRUCTION} Do not mention model routing.\n\n`
+          : "Prepare an accurate answer for a voice assistant to speak aloud. Answer the latest user message as the next turn of the conversation you are given: resolve references to earlier turns and do not repeat what was already said. Use plain language, spoken-friendly sentences, and no markdown. Do not mention model routing.\n\n") +
         languageInstruction +
         timeContext +
         memoryContext +
@@ -146,9 +163,17 @@ export async function POST(request: Request) {
       },
       max_output_tokens: lengthSettings.maxOutputTokens,
       tools: isWeb ? [{ type: "web_search" }] : undefined,
-      store: false,
+      ...(jobId ? { background: true, store: true } : { store: false }),
     }),
   }));
+  } catch (error) {
+    if (!deadline.aborted) throw error;
+    console.error("Reasoning request timed out", isExpert ? "expert" : isWeb ? "web" : "balanced");
+    return Response.json(
+      { error: isWeb ? "That search took longer than I wait for an answer. Ask me again, or for something narrower." : "That took longer than I wait for an answer. Ask me again, or for something narrower." },
+      { status: 504, headers: { "Cache-Control": "no-store" } },
+    );
+  }
 
   const payload = (await response.json()) as Parameters<typeof readOutputText>[0];
   if (!response.ok) {
@@ -163,10 +188,35 @@ export async function POST(request: Request) {
     );
   }
 
-  const answer = readOutputText(payload);
+  let finished: BackgroundPayload = payload as BackgroundPayload;
+  if (jobId && finished.id) {
+    const key = `${auth.user.id}:${jobId}`;
+    const responseId = finished.id;
+    await startAnswerJob(auth.user.id, jobId, responseId, new Date().toISOString());
+    const until = Date.now() + (isExpert ? 120_000 : 60_000);
+    let state = backgroundState(finished);
+    for (let polls = 1; state === "working" && Date.now() < until; polls += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      finished = (await fetchBackground(apiKey, responseId)) ?? finished;
+      state = backgroundState(finished);
+      // Still here, still waiting: the server's own timer leaves this job alone.
+      if (polls % 4 === 0) await touchAnswerJob(key, new Date().toISOString());
+    }
+    // Not ready yet: it keeps going, and the app keeps asking (GET /api/answer-jobs).
+    if (state === "working") return Response.json({ pending: true }, { status: 202, headers: { "Cache-Control": "no-store" } });
+    if (state === "failed") {
+      await settleAnswerJob(key, "failed", new Date().toISOString());
+      return Response.json({ error: "The selected reasoning model could not answer." }, { status: 502 });
+    }
+    // Handing it over is not the same as it arriving: the job stays open until
+    // the app confirms (POST /api/answer-jobs). If it never does, the server's
+    // timer leaves the answer in the conversation.
+    await touchAnswerJob(key, new Date().toISOString());
+  }
+  const answer = jobId ? answerText(finished) : withoutLinkMarkup(readOutputText(payload));
   if (!isWeb) {
     return Response.json({ answer, model }, { headers: { "Cache-Control": "no-store" } });
   }
-  const stage = webStage(text, payload as ResponsesPayload);
+  const stage = webStage(text, (jobId ? finished : payload) as ResponsesPayload);
   return Response.json({ answer, model, stage }, { headers: { "Cache-Control": "no-store" } });
 }
