@@ -48,6 +48,19 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
   disarmRemoteControl: () => ipcRenderer.invoke("vox-remote:disarm"),
   revokeRemotePairing: () => ipcRenderer.invoke("vox-remote:revoke"),
   getSmartHomeStatus: () => ipcRenderer.invoke("vox-smart-home:status"),
+  beginDysonLogin: (request) => ipcRenderer.invoke("vox-smart-home:dyson-login-begin", {
+    deviceId: typeof request?.deviceId === "string" ? request.deviceId.slice(0, 100) : "",
+    email: typeof request?.email === "string" ? request.email.slice(0, 254) : "",
+    country: typeof request?.country === "string" ? request.country.slice(0, 2) : "TW",
+    region: request?.region === "china" ? "china" : "global",
+  }),
+  completeDysonLogin: (request) => ipcRenderer.invoke("vox-smart-home:dyson-login-complete", {
+    challengeId: typeof request?.challengeId === "string" ? request.challengeId.slice(0, 100) : "",
+    code: typeof request?.code === "string" ? request.code.slice(0, 40) : "",
+    password: typeof request?.password === "string" ? request.password.slice(0, 500) : "",
+  }),
+  cancelDysonLogin: (challengeId) => ipcRenderer.invoke("vox-smart-home:dyson-login-cancel", typeof challengeId === "string" ? challengeId.slice(0, 100) : ""),
+  disconnectDysonCloud: (deviceId) => ipcRenderer.invoke("vox-smart-home:dyson-disconnect-cloud", typeof deviceId === "string" ? deviceId.slice(0, 100) : ""),
   discoverSmartHomeDevices: (adapter) =>
     ipcRenderer.invoke("vox-smart-home:discover", typeof adapter === "string" ? adapter.slice(0, 80) : ""),
   saveSmartHomeDevice: (device) =>

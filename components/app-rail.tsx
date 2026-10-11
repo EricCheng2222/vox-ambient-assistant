@@ -35,8 +35,9 @@ function Badge({ count }: { count: number }) {
 }
 
 /**
- * Vox's main navigation: a slim vertical rail on large screens and a bottom
- * tab bar below the lg breakpoint (the page keeps its own mic controls).
+ * Vox's main navigation: a labeled sidebar on Mac and iPad, a compact rail
+ * in narrow Split View, and a bottom tab bar on iPhone. The page keeps its
+ * own microphone controls.
  * Render it inside `.vox-shell` so the theme styles apply.
  */
 export function AppRail({
@@ -57,8 +58,9 @@ export function AppRail({
   return (
     <>
       <nav className="vx-rail" aria-label="Vox">
-        <div className="brand-mark" aria-hidden="true">
-          V
+        <div className="vx-rail-brand" aria-hidden="true">
+          <div className="brand-mark"><AudioLines strokeWidth={1.8} /></div>
+          <span>Vox</span>
         </div>
         <ul className="vx-rail-list">
           {items.map(({ view: itemView, label, icon: Icon }) => (

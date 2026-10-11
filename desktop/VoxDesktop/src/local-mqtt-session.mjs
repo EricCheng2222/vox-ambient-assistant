@@ -3,7 +3,7 @@ import mqtt from "mqtt";
 import { SmartHomeConnectionError } from "./smart-home-errors.mjs";
 
 /** One bounded MQTT session. Error/close listeners remain active until disposal. */
-export async function openLocalMqttSession({ host, options, label, connect = mqtt.connect, timeoutMs = 7_000 }) {
+export async function openLocalMqttSession({ host, url, options, label, connect = mqtt.connect, timeoutMs = 7_000 }) {
   let client;
   let closing = false;
   let commandSent = false;
@@ -57,13 +57,15 @@ export async function openLocalMqttSession({ host, options, label, connect = mqt
     // A broken broker must not leave the command or per-device queue hanging.
     await new Promise((resolve) => {
       const timer = setTimeout(() => { client.stream?.destroy(); resolve(); }, 1_000);
-      client.end(true, {}, () => { clearTimeout(timer); resolve(); });
+      // Give a healthy broker DISCONNECT so its connection slot is released.
+      // Broken sockets and brokers still have the same bounded destruction.
+      client.end(!client.connected, {}, () => { clearTimeout(timer); resolve(); });
     });
     client.off("close", onClose);
     // Keep the error listener for any late socket error during destruction.
   };
   try {
-    client = connect(`mqtt://${host}:1883`, options);
+    client = connect(url ?? `mqtt://${host}:1883`, options);
     client.on("error", fail);
     client.on("close", onClose);
     await bounded(new Promise((resolve) => client.once("connect", resolve)));

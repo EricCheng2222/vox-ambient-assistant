@@ -81,6 +81,10 @@ export function normalizeDysonManualConfiguration(raw) {
     serial: serialNumber(raw?.serial),
     productType: productType(raw?.productType),
     credential: deviceCredential(raw?.credential),
+    ...(typeof raw?.cloudToken === "string" && raw.cloudToken && raw.cloudToken.length <= 16_000 ? {
+      cloudToken: raw.cloudToken,
+      cloudRegion: raw.cloudRegion === "china" ? "china" : "global",
+    } : {}),
   };
 }
 
@@ -297,14 +301,14 @@ function answerFor(intent, status, prompt, verified) {
     return zh ? `${name}${facts.length ? facts.join("，") : "已連線，但暫時沒有感測資料"}。` : `${name} ${facts.length ? facts.join(", ") : "is connected, but sensor data is not available yet"}.`;
   }
   if (zh) {
-    const prefix = verified ? "已經" : "已送出本機指令，嘗試";
+    const prefix = verified ? "已經" : "已送出指令，嘗試";
     if (intent.kind === "power") return `${prefix}${intent.enabled ? "開啟" : "關閉"} ${name}。`;
     if (intent.kind === "speed") return `${prefix}把 ${name} 風速設為 ${intent.speed}。`;
     if (intent.kind === "auto") return `${prefix}${intent.enabled ? "開啟" : "關閉"} ${name} 的自動模式。`;
     if (intent.kind === "night") return `${prefix}${intent.enabled ? "開啟" : "關閉"} ${name} 的夜間模式。`;
     return `${prefix}${intent.enabled ? "開啟" : "關閉"} ${name} 的擺動。`;
   }
-  if (!verified) return `I sent a local command to ${name}, but could not verify the updated state.`;
+  if (!verified) return `I sent a command to ${name}, but could not verify the updated state.`;
   if (intent.kind === "power") return `I turned ${name} ${intent.enabled ? "on" : "off"}.`;
   if (intent.kind === "speed") return `I set ${name}'s fan speed to ${intent.speed}.`;
   if (intent.kind === "auto") return `I ${intent.enabled ? "enabled" : "disabled"} ${name}'s auto mode.`;
@@ -315,7 +319,7 @@ function answerFor(intent, status, prompt, verified) {
 export async function runDysonCommand(config, prompt, deps = {}) {
   const normalized = normalizeDysonManualConfiguration(config);
   const intent = parseDysonCommand(prompt);
-  const session = await connectClient(normalized, deps);
+  const session = await (deps.openSession ? deps.openSession(normalized) : connectClient(normalized, deps));
   const { client } = session;
   // Some cloud/sticker variants advertise the base type (e.g. 527K → 527).
   // Only a real state message selects the active topic; discovery is not proof of control.

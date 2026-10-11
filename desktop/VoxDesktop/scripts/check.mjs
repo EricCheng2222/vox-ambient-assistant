@@ -28,6 +28,8 @@ const files = [
   "src/personal-route.mjs",
   "src/local-web-server.mjs",
   "src/dyson-local.mjs",
+  "src/dyson-cloud.mjs",
+  "src/dyson-login-sessions.mjs",
   "src/local-mqtt-session.mjs",
   "src/smart-home-errors.mjs",
   "src/smart-home-hub.mjs",
@@ -43,7 +45,7 @@ const files = [
 
 for (const file of files) await access(path.join(root, file));
 
-for (const file of ["src/main.mjs", "src/browser-task.mjs", "src/codex-task-events.mjs", "src/task-event-relay.mjs", "src/computer-use-session.mjs", "src/desktop-control-policy.mjs", "src/phone-mac-route.mjs", "src/personal-api.mjs", "src/personal-route.mjs", "src/local-web-server.mjs", "src/dyson-local.mjs", "src/local-mqtt-session.mjs", "src/smart-home-errors.mjs", "src/smart-home-hub.mjs", "src/remote-control.mjs", "src/preload.cjs", "src/vox-preload.cjs", "src/renderer.mjs"]) {
+for (const file of ["src/main.mjs", "src/browser-task.mjs", "src/codex-task-events.mjs", "src/task-event-relay.mjs", "src/computer-use-session.mjs", "src/desktop-control-policy.mjs", "src/phone-mac-route.mjs", "src/personal-api.mjs", "src/personal-route.mjs", "src/local-web-server.mjs", "src/dyson-local.mjs", "src/dyson-cloud.mjs", "src/dyson-login-sessions.mjs", "src/local-mqtt-session.mjs", "src/smart-home-errors.mjs", "src/smart-home-hub.mjs", "src/remote-control.mjs", "src/preload.cjs", "src/vox-preload.cjs", "src/renderer.mjs"]) {
   const check = spawnSync(process.execPath, ["--check", path.join(root, file)], { encoding: "utf8" });
   if (check.status !== 0) throw new Error(check.stderr || `${file} failed syntax validation.`);
 }

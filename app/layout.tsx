@@ -7,6 +7,7 @@ import "./fonts.css";
 import "./sunrise.css";
 import "./phone.css";
 import "./readability.css";
+import "./apple.css";
 import "leaflet/dist/leaflet.css";
 
 export const metadata: Metadata = {

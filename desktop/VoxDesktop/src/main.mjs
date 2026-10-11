@@ -44,6 +44,8 @@ import { registerWelcomeHome } from "./welcome-home.mjs";
 import { registerStageBrowser } from "./stage-browser.mjs";
 import { registerPageWatch } from "./page-watch.mjs";
 import { registerWebAccounts } from "./web-accounts.mjs";
+import { createDysonCloudClient, runDysonCloudCommand } from "./dyson-cloud.mjs";
+import { createDysonLoginSessions } from "./dyson-login-sessions.mjs";
 import { createCodexTaskRun } from "./codex-task-events.mjs";
 import { createTaskEventRelay } from "./task-event-relay.mjs";
 import {
@@ -324,6 +326,12 @@ function publicSavedSmartHomeDevices(settings) {
 
 /** Serialize recovered connection saves so simultaneous devices cannot overwrite each other. */
 let smartHomeConnectionSave = Promise.resolve();
+const dysonCloud = createDysonCloudClient();
+const dysonLoginChallenges = createDysonLoginSessions();
+function sealSmartHomeConfiguration(device) {
+  const { host, serial, productType, credential, cloudToken, cloudRegion } = device;
+  return safeStorage.encryptString(JSON.stringify({ host, serial, productType, credential, ...(cloudToken ? { cloudToken, cloudRegion: cloudRegion ?? "global" } : {}) })).toString("base64");
+}
 function saveSmartHomeDeviceHost(id, host, changes = {}) {
   const write = smartHomeConnectionSave.then(async () => {
     if (!secureStorageAvailable()) return;
@@ -333,12 +341,7 @@ function saveSmartHomeDeviceHost(id, host, changes = {}) {
     if (!saved) return;
     const unlocked = unlockSmartHomeDevice(settings, id);
     const normalized = configureSmartHomeDevice({ ...unlocked, ...changes, host });
-    const encryptedConfiguration = safeStorage.encryptString(JSON.stringify({
-      host: normalized.host,
-      serial: unlocked.serial,
-      productType: normalized.productType,
-      credential: unlocked.credential,
-    })).toString("base64");
+    const encryptedConfiguration = sealSmartHomeConfiguration(normalized);
     // The older way of saving kept these in the open beside the credential; they now live inside the encrypted part.
     const kept = Object.fromEntries(Object.entries(saved).filter(([key]) => !["encryptedCredential", "host", "serial", "productType"].includes(key)));
     await saveSettings({ ...settings, smartHomeDevices: devices.map((device) => (device.id === id ? { ...kept, encryptedConfiguration } : device)) });
@@ -1451,12 +1454,11 @@ function registerIpcHandlers() {
         return false;
       }
     });
-    const encryptedConfiguration = safeStorage.encryptString(JSON.stringify({
-      host: configured.host,
-      serial: configured.serial,
-      productType: configured.productType,
-      credential: configured.credential,
-    })).toString("base64");
+    if (existing) {
+      const previous = unlockSmartHomeDevice(settings, existing.id);
+      if (previous.cloudToken) Object.assign(configured, { cloudToken: previous.cloudToken, cloudRegion: previous.cloudRegion });
+    }
+    const encryptedConfiguration = sealSmartHomeConfiguration(configured);
     const savedDevice = {
       id: existing?.id ?? randomUUID(),
       adapter: configured.adapter,
@@ -1481,6 +1483,61 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle("vox-smart-home:dyson-login-begin", async (event, request) => {
+    requireTrustedVoxSender(event);
+    if (!secureStorageAvailable()) throw new Error("Secure system storage is unavailable on this computer.");
+    const device = unlockSmartHomeDevice(await readSettings(), request?.deviceId);
+    if (device.adapter !== "dyson-local") throw new Error("Choose a configured Dyson purifier.");
+    dysonLoginChallenges.cancelDevice(device.id);
+    const challenge = await dysonCloud.beginLogin({ email: request?.email?.trim(), country: request?.country || "TW", region: request?.region || "global" });
+    return dysonLoginChallenges.start({ ...challenge, deviceId: device.id, serial: device.serial, senderId: event.sender.id });
+  });
+
+  ipcMain.handle("vox-smart-home:dyson-login-complete", async (event, request) => {
+    requireTrustedVoxSender(event);
+    if (!secureStorageAvailable()) throw new Error("Secure system storage is unavailable on this computer.");
+    const challenge = dysonLoginChallenges.acquire(request?.challengeId, event.sender.id);
+    try {
+      const account = await dysonCloud.completeLogin(challenge, { code: request?.code, password: request?.password });
+      dysonLoginChallenges.assertActive(request.challengeId, challenge);
+      const local = await dysonCloud.deviceConfiguration(account, challenge.serial);
+      const settings = await readSettings();
+      const device = unlockSmartHomeDevice(settings, challenge.deviceId);
+      if (device.serial !== challenge.serial) throw new Error("The selected device changed. Start sign-in again.");
+      const configured = configureSmartHomeDevice({ ...device, ...local, cloudToken: account.token, cloudRegion: account.region });
+      // Authenticate and test the independent cloud path before presenting success.
+      let status, warning;
+      try { status = await runDysonCloudCommand(configured, "status"); }
+      catch (error) { warning = error instanceof Error ? error.message : "Dyson cloud control could not be verified."; }
+      const latest = await readSettings();
+      dysonLoginChallenges.consume(request.challengeId, challenge);
+      const devices = savedSmartHomeDevices(latest);
+      const current = devices.find(entry => entry.id === device.id);
+      if (!current) throw new Error("The device was removed while signing in.");
+      const updated = { ...current, encryptedConfiguration: sealSmartHomeConfiguration({ ...configured, ...(status?.productType ? { productType: status.productType } : {}) }) };
+      await saveSettings({ ...latest, smartHomeDevices: devices.map(entry => entry.id === device.id ? updated : entry) });
+      return { device: { id: device.id, ...publicSmartHomeDevice(configured) }, connected: Boolean(status?.connected), warning };
+    } finally { dysonLoginChallenges.release(request.challengeId, challenge); }
+  });
+
+  ipcMain.handle("vox-smart-home:dyson-login-cancel", async (event, challengeId) => {
+    requireTrustedVoxSender(event);
+    dysonLoginChallenges.cancel(challengeId, event.sender.id);
+    return { cancelled: true };
+  });
+
+  ipcMain.handle("vox-smart-home:dyson-disconnect-cloud", async (event, deviceId) => {
+    requireTrustedVoxSender(event);
+    const settings = await readSettings();
+    const device = unlockSmartHomeDevice(settings, deviceId);
+    dysonLoginChallenges.cancelDevice(deviceId);
+    delete device.cloudToken;
+    delete device.cloudRegion;
+    const encryptedConfiguration = sealSmartHomeConfiguration(device);
+    await saveSettings({ ...settings, smartHomeDevices: savedSmartHomeDevices(settings).map(entry => entry.id === deviceId ? { ...entry, encryptedConfiguration } : entry) });
+    return { disconnected: true };
+  });
+
   ipcMain.handle("vox-smart-home:remove-device", async (event, rawId) => {
     requireTrustedVoxSender(event);
     const id = typeof rawId === "string" ? rawId.slice(0, 100) : "";
@@ -1491,6 +1548,7 @@ function registerIpcHandlers() {
     if (nextDevices.length === currentDevices.length) {
       throw new Error("That smart-home device is not configured.");
     }
+    dysonLoginChallenges.cancelDevice(id);
     await saveSettings({ ...settings, smartHomeDevices: nextDevices });
     return { removed: true };
   });

@@ -61,11 +61,12 @@ const CHECKS = [
       if (failures.length) {
         const needsCredential = failures.some(({ error }) => error?.kind === "credential");
         const needsPermission = failures.some(({ error }) => error?.kind === "permission");
+        const needsCloudSignIn = failures.some(({ error }) => /sign in to Dyson|connect your Dyson account/iu.test(error?.message ?? ""));
         return finding("home", "Home devices", needsCredential || needsPermission ? "needs_you" : "unknown",
-          `${failures.map(({ device }) => device.name).join(", ")} ${needsCredential ? "rejected the saved local credential" : needsPermission ? "cannot be reached because local network access was denied" : "did not confirm a working local control connection after recovery"}.`,
-          { how: needsCredential ? "Reconnect the device in Home devices using its local credential." : needsPermission ? "Allow Vox in macOS Settings → Privacy & Security → Local Network." : "Open Home devices to check the saved connection. Network discovery alone does not confirm that device control works." });
+          `${failures.map(({ device }) => device.name).join(", ")} ${needsCloudSignIn ? "need Dyson sign-in to restore cloud control" : needsCredential ? "rejected the saved local credential" : needsPermission ? "cannot be reached because local network access was denied" : "did not confirm a working control connection after recovery"}.`,
+          { how: needsCloudSignIn ? "Sign in to Dyson in Home devices." : needsCredential ? "Reconnect the device in Home devices using its local credential." : needsPermission ? "Allow Vox in macOS Settings → Privacy & Security → Local Network." : "Open Home devices to check or connect the device's cloud account. Network discovery alone does not confirm that device control works." });
       }
-      return finding("home", "Home devices", "fine", `${devices.map((device) => device.name).join(", ")} ${devices.length === 1 ? "answered" : "all answered"} a local device status request.`);
+      return finding("home", "Home devices", "fine", `${devices.map((device) => device.name).join(", ")} ${devices.length === 1 ? "answered" : "all answered"} a device status request.`);
     }
     const seen = await deps.devicesOnNetwork();
     const moved = devices.filter((device) => seen.some((found) => found.serial === device.serial && found.host !== device.host));

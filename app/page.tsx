@@ -394,6 +394,7 @@ type SmartHomeDevice = {
   host: string;
   serial: string;
   productType: string;
+  cloudConnected: boolean;
 };
 type SmartHomeStatus = {
   available: boolean;
@@ -678,6 +679,19 @@ declare global {
         warning?: string;
       }>;
       removeSmartHomeDevice?: (deviceId: string) => Promise<{ removed: boolean }>;
+      beginDysonLogin?: (request: {
+        deviceId: string;
+        email: string;
+        country?: "TW";
+        region?: "global" | "china";
+      }) => Promise<{ challengeId: string }>;
+      completeDysonLogin?: (request: {
+        challengeId: string;
+        code: string;
+        password: string;
+      }) => Promise<{ device: SmartHomeDevice; connected: boolean; warning?: string }>;
+      cancelDysonLogin?: (challengeId: string) => Promise<{ cancelled: true }>;
+      disconnectDysonCloud?: (deviceId: string) => Promise<{ disconnected: true }>;
       runSmartHomeCommand?: (request: {
         deviceId?: string;
         prompt: string;
@@ -756,7 +770,7 @@ const frontVoiceConfig: Record<
   smart_home: {
     workState: "working",
     zhBridge: "好，我來連線到家裡的裝置。",
-    enBridge: "Got it—I’ll contact the device on your local network.",
+    enBridge: "Got it—I’ll contact your device.",
   },
   balanced_reasoning: {
     workState: "thinking",
@@ -1398,6 +1412,7 @@ export default function Home() {
   const [smartHomeOpen, setSmartHomeOpen] = useState(false);
   const [smartHomeStatus, setSmartHomeStatus] = useState<SmartHomeStatus | null>(null);
   const [smartHomeBusy, setSmartHomeBusy] = useState(false);
+  const [smartHomeLocalAction, setSmartHomeLocalAction] = useState<"discover" | "save" | null>(null);
   const [smartHomeError, setSmartHomeError] = useState("");
   const [smartHomeDiscovery, setSmartHomeDiscovery] = useState<SmartHomeDiscoveredDevice[]>([]);
   const [dysonSetupMethod, setDysonSetupMethod] = useState<DysonSetupMethod>("sticker");
@@ -1408,6 +1423,13 @@ export default function Home() {
   const [dysonSerial, setDysonSerial] = useState("");
   const [dysonProductType, setDysonProductType] = useState("");
   const [dysonCredential, setDysonCredential] = useState("");
+  const [dysonLoginDeviceId, setDysonLoginDeviceId] = useState<string | null>(null);
+  const [dysonLoginEmail, setDysonLoginEmail] = useState("");
+  const [dysonLoginChallenge, setDysonLoginChallenge] = useState("");
+  const [dysonLoginCode, setDysonLoginCode] = useState("");
+  const [dysonLoginPassword, setDysonLoginPassword] = useState("");
+  const [dysonLoginError, setDysonLoginError] = useState("");
+  const dysonLoginEpochRef = useRef(0);
   const [remotePairingOpen, setRemotePairingOpen] = useState(false);
   const [remoteRoutingOpen, setRemoteRoutingOpen] = useState(false);
   const [remotePairingStatus, setRemotePairingStatus] = useState<RemotePairingStatus | null>(null);
@@ -4592,12 +4614,103 @@ export default function Home() {
   function changeSmartHomeOpen(open: boolean) {
     setSmartHomeOpen(open);
     if (open) void loadSmartHomeStatus();
+    else {
+      clearDysonLogin();
+      setDysonWifiPassword("");
+      setDysonCredential("");
+    }
+  }
+
+  function clearDysonLogin() {
+    dysonLoginEpochRef.current += 1;
+    if (dysonLoginChallenge) {
+      void window.voxLocalCodex?.cancelDysonLogin?.(dysonLoginChallenge).catch(() => undefined);
+    }
+    setDysonLoginDeviceId(null);
+    setDysonLoginEmail("");
+    setDysonLoginChallenge("");
+    setDysonLoginCode("");
+    setDysonLoginPassword("");
+    setDysonLoginError("");
+  }
+
+  function openDysonLogin(deviceId: string) {
+    clearDysonLogin();
+    setSmartHomeError("");
+    setDysonLoginDeviceId(deviceId);
+  }
+
+  async function submitDysonLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const bridge = window.voxLocalCodex;
+    if (!dysonLoginDeviceId || smartHomeBusy) return;
+    const epoch = dysonLoginEpochRef.current;
+    setSmartHomeBusy(true);
+    setDysonLoginError("");
+    try {
+      if (!dysonLoginChallenge) {
+        if (!bridge?.beginDysonLogin) throw new Error("Update Vox Desktop to sign in to Dyson.");
+        const result = await bridge.beginDysonLogin({
+          deviceId: dysonLoginDeviceId,
+          email: dysonLoginEmail.trim(),
+          country: "TW",
+          region: "global",
+        });
+        if (dysonLoginEpochRef.current === epoch) {
+          setDysonLoginChallenge(result.challengeId);
+        } else {
+          void bridge.cancelDysonLogin?.(result.challengeId).catch(() => undefined);
+        }
+      } else {
+        const password = dysonLoginPassword;
+        setDysonLoginPassword("");
+        if (!bridge?.completeDysonLogin) throw new Error("Update Vox Desktop to sign in to Dyson.");
+        const result = await bridge.completeDysonLogin({
+          challengeId: dysonLoginChallenge,
+          code: dysonLoginCode.trim(),
+          password,
+        });
+        // A linked account still needs to appear when the connection test fails.
+        await loadSmartHomeStatus(true);
+        if (dysonLoginEpochRef.current !== epoch) return;
+        clearDysonLogin();
+        if (result.connected) {
+          toast.success("Dyson connected", { description: "Vox uses local Wi-Fi first, with Dyson cloud as a fallback." });
+        } else {
+          setSmartHomeError(result.warning ?? "Your Dyson account is linked, but the purifier did not answer the connection test. You can reconnect to try again.");
+        }
+      }
+    } catch (error) {
+      if (dysonLoginEpochRef.current === epoch) {
+        setDysonLoginError(error instanceof Error ? error.message : "Dyson sign-in failed. Please try again.");
+      }
+    } finally {
+      setSmartHomeBusy(false);
+    }
+  }
+
+  async function disconnectDysonCloud(deviceId: string) {
+    const bridge = window.voxLocalCodex;
+    if (!bridge?.disconnectDysonCloud || smartHomeBusy) return;
+    clearDysonLogin();
+    setSmartHomeBusy(true);
+    setSmartHomeError("");
+    try {
+      await bridge.disconnectDysonCloud(deviceId);
+      await loadSmartHomeStatus(true);
+      toast.success("Dyson cloud disconnected", { description: "Local Wi-Fi control remains available." });
+    } catch (error) {
+      setSmartHomeError(error instanceof Error ? error.message : "Dyson cloud could not be disconnected.");
+    } finally {
+      setSmartHomeBusy(false);
+    }
   }
 
   async function discoverSmartHome() {
     const bridge = window.voxLocalCodex;
     if (!bridge?.discoverSmartHomeDevices) return;
     setSmartHomeBusy(true);
+    setSmartHomeLocalAction("discover");
     setSmartHomeError("");
     try {
       const result = await bridge.discoverSmartHomeDevices("dyson-local");
@@ -4609,6 +4722,7 @@ export default function Home() {
       setSmartHomeError(error instanceof Error ? error.message : "Local device discovery failed.");
     } finally {
       setSmartHomeBusy(false);
+      setSmartHomeLocalAction(null);
     }
   }
 
@@ -4626,6 +4740,7 @@ export default function Home() {
     const bridge = window.voxLocalCodex;
     if (!bridge?.saveSmartHomeDevice) return;
     setSmartHomeBusy(true);
+    setSmartHomeLocalAction("save");
     setSmartHomeError("");
     try {
       const result = await bridge.saveSmartHomeDevice({
@@ -4653,12 +4768,14 @@ export default function Home() {
       setSmartHomeError(error instanceof Error ? error.message : "The Dyson purifier could not be saved.");
     } finally {
       setSmartHomeBusy(false);
+      setSmartHomeLocalAction(null);
     }
   }
 
   async function removeSmartHomeDevice(deviceId: string) {
     const bridge = window.voxLocalCodex;
     if (!bridge?.removeSmartHomeDevice) return;
+    clearDysonLogin();
     setSmartHomeBusy(true);
     setSmartHomeError("");
     try {
@@ -8983,13 +9100,14 @@ export default function Home() {
       <div className="vox-frame-main vx-tabbar-pad min-w-0 flex-1">
 
       <header className="vox-header relative z-10 flex min-h-16 items-center justify-between border-b border-white/8 px-4 py-3 sm:h-20 sm:px-8 sm:py-0 lg:px-12">
-        <div className="flex items-center gap-3">
+        <div className="vox-header-brand flex items-center gap-3">
           <div className="brand-mark" aria-hidden="true">
             <AudioLines size={19} strokeWidth={2.2} />
           </div>
           <div>
             <p className="font-display text-lg font-semibold tracking-[-0.03em]">
-              VOX
+              <span className="vox-header-wordmark">VOX</span>
+              <span className="vox-header-context">{view === "talk" ? "Conversation" : view === "today" ? "Today" : view === "library" ? "Library" : "Settings"}</span>
               <span className="holo-version"> / 02</span>
             </p>
             <p className="vox-tagline text-[0.7rem] font-medium uppercase tracking-[0.17em] text-white/40">
@@ -10467,7 +10585,7 @@ export default function Home() {
               {desktopPersonalAvailable && (
                 <Sheet open={smartHomeOpen} onOpenChange={changeSmartHomeOpen}>
                   <SheetTrigger asChild>
-                    <SettingsRow icon={<House />} title="Home devices" detail="Lights and devices on your home network" />
+                    <SettingsRow icon={<House />} title="Home devices" detail="Local control with Dyson cloud fallback" />
                   </SheetTrigger>
                   <SheetContent className="w-[min(94vw,480px)] border-white/10 bg-[#10111b] text-white sm:max-w-[480px]">
                     <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
@@ -10478,17 +10596,24 @@ export default function Home() {
                         </SheetTitle>
                       </div>
                       <SheetDescription className="mt-2 leading-6 text-white/46">
-                        A local smart-home hub for Vox Desktop. Dyson purifier support is
-                        the first device adapter; more device types can be added later.
+                        Control your Dyson purifier from Vox Desktop. Connect over local
+                        Wi-Fi, with your Dyson account as a fallback.
                       </SheetDescription>
                     </SheetHeader>
 
                     <div className="flex-1 overflow-y-auto px-5 py-5">
                       <div className="mb-5 flex items-start gap-2 rounded-xl border border-emerald-300/12 bg-emerald-300/[0.045] px-3.5 py-3 text-xs leading-5 text-white/56">
                         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-300" />
-                        Device control stays on this Mac and your Wi-Fi network. Credentials
-                        are encrypted with macOS secure storage and are never sent to Vox Cloud.
+                        Vox tries local Wi-Fi first, then Dyson cloud if you sign in. Device
+                        credentials and your Dyson account session are encrypted on this Mac
+                        and never sent to Vox Cloud. Your account password is not saved.
                       </div>
+
+                      {smartHomeError && (
+                        <p role="alert" className="mb-4 rounded-xl border border-[#ff766c]/16 bg-[#ff766c]/[0.055] px-3.5 py-3 text-xs leading-5 text-[#ffaaa4]">
+                          {smartHomeError}
+                        </p>
+                      )}
 
                       {smartHomeStatus?.devices.map((device) => (
                         <article
@@ -10501,7 +10626,9 @@ export default function Home() {
                             </div>
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-sm font-semibold text-white/82">{device.name}</p>
-                              <p className="mt-1 text-xs text-white/40">Dyson purifier · local Wi-Fi</p>
+                              <p className="mt-1 text-xs text-white/40">
+                                {device.cloudConnected ? "Local Wi-Fi · Dyson account linked" : "Dyson purifier · local Wi-Fi"}
+                              </p>
                               <p className="mt-2 truncate font-mono text-[0.66rem] text-white/28">
                                 {device.host} · {device.productType}
                               </p>
@@ -10512,8 +10639,9 @@ export default function Home() {
                                   type="button"
                                   size="icon-sm"
                                   variant="ghost"
-                                  className="shrink-0 rounded-full text-white/32 hover:bg-[#ff766c]/10 hover:text-[#ff9d96]"
+                                  className="size-11 shrink-0 rounded-full text-white/32 hover:bg-[#ff766c]/10 hover:text-[#ff9d96]"
                                   aria-label={`Remove ${device.name}`}
+                                  disabled={smartHomeBusy}
                                 >
                                   <Trash2 />
                                 </Button>
@@ -10522,7 +10650,7 @@ export default function Home() {
                                 <AlertDialogHeader>
                                   <AlertDialogTitle>Remove this home device?</AlertDialogTitle>
                                   <AlertDialogDescription className="leading-6 text-white/46">
-                                    Vox will delete the encrypted local credential for “{device.name}” from this Mac.
+                                    Vox will delete the encrypted device credential and any linked Dyson account session for “{device.name}” from this Mac.
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
@@ -10540,6 +10668,84 @@ export default function Home() {
                               </AlertDialogContent>
                             </AlertDialog>
                           </div>
+                          {dysonLoginDeviceId === device.id ? (
+                            <form onSubmit={submitDysonLogin} className="mt-4 space-y-3 border-t border-white/8 pt-4" aria-label={`Dyson sign-in for ${device.name}`}>
+                              <div>
+                                <p className="text-sm font-semibold text-white/82">Sign in to Dyson</p>
+                                <p className="mt-1 text-xs leading-5 text-white/46">
+                                  {dysonLoginChallenge ? "Enter the code Dyson emailed you, then your MyDyson password." : "Use the Taiwan Dyson account that owns this purifier. Dyson will email a verification code."}
+                                </p>
+                              </div>
+                              {!dysonLoginChallenge ? (
+                                <label className="block text-xs text-white/50">
+                                  Dyson account email
+                                  <input
+                                    type="email"
+                                    name="dyson-email"
+                                    autoComplete="email"
+                                    autoFocus
+                                    autoCapitalize="none"
+                                    spellCheck={false}
+                                    value={dysonLoginEmail}
+                                    onChange={(event) => setDysonLoginEmail(event.target.value)}
+                                    required
+                                    maxLength={254}
+                                    disabled={smartHomeBusy}
+                                    className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none focus:border-sky-300/40"
+                                  />
+                                </label>
+                              ) : (
+                                <>
+                                  <label className="block text-xs text-white/50">
+                                    Verification code
+                                    <input
+                                      type="text"
+                                      name="dyson-code"
+                                      autoComplete="one-time-code"
+                                      autoFocus
+                                      inputMode="numeric"
+                                      value={dysonLoginCode}
+                                      onChange={(event) => setDysonLoginCode(event.target.value)}
+                                      required
+                                      maxLength={12}
+                                      disabled={smartHomeBusy}
+                                      className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none focus:border-sky-300/40"
+                                    />
+                                  </label>
+                                  <label className="block text-xs text-white/50">
+                                    MyDyson password
+                                    <input
+                                      type="password"
+                                      name="dyson-password"
+                                      autoComplete="current-password"
+                                      value={dysonLoginPassword}
+                                      onChange={(event) => setDysonLoginPassword(event.target.value)}
+                                      required
+                                      maxLength={500}
+                                      disabled={smartHomeBusy}
+                                      className="mt-1.5 h-11 w-full rounded-xl border border-white/10 bg-black/20 px-3.5 text-sm text-white outline-none focus:border-sky-300/40"
+                                    />
+                                  </label>
+                                </>
+                              )}
+                              {dysonLoginError && <p role="alert" className="text-xs leading-5 text-[#ffaaa4]">{dysonLoginError}</p>}
+                              <div className="flex flex-wrap gap-2">
+                                <Button type="submit" disabled={smartHomeBusy || smartHomeStatus?.secureStorageAvailable === false} className="h-11 flex-1 rounded-full bg-[#f4ff74] text-[#10111b] hover:bg-[#ebf969]">
+                                  {smartHomeBusy ? (dysonLoginChallenge ? "Connecting…" : "Sending…") : (dysonLoginChallenge ? "Connect and test" : "Send code")}
+                                </Button>
+                                <Button type="button" variant="ghost" onClick={clearDysonLogin} className="h-11 rounded-full text-white/65 hover:bg-white/10 hover:text-white">Cancel</Button>
+                              </div>
+                            </form>
+                          ) : (
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              <Button type="button" variant="outline" disabled={smartHomeBusy || smartHomeStatus?.secureStorageAvailable === false} onClick={() => openDysonLogin(device.id)} className="h-11 rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white">
+                                {device.cloudConnected ? "Reconnect to Dyson" : "Sign in to Dyson"}
+                              </Button>
+                              {device.cloudConnected && (
+                                <Button type="button" variant="ghost" disabled={smartHomeBusy} onClick={() => void disconnectDysonCloud(device.id)} className="h-11 rounded-full text-white/50 hover:bg-white/10 hover:text-white">Disconnect cloud</Button>
+                              )}
+                            </div>
+                          )}
                         </article>
                       ))}
 
@@ -10557,7 +10763,7 @@ export default function Home() {
                           onClick={() => void discoverSmartHome()}
                           className="rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
                         >
-                          <Wifi /> {smartHomeBusy ? "Looking…" : "Discover"}
+                          <Wifi /> {smartHomeLocalAction === "discover" ? "Looking…" : "Discover"}
                         </Button>
                       </div>
 
@@ -10692,22 +10898,17 @@ export default function Home() {
                               />
                             </label>
                             <p className="text-[0.68rem] leading-5 text-white/34">
-                              Newer Dyson models require their local device credential. Vox does not ask for or store your MyDyson account password.
+                              Newer Dyson models require their local device credential. After saving, you can sign in to Dyson to enable cloud fallback. Updating these local settings keeps your linked account.
                             </p>
                           </>
                         )}
 
-                        {smartHomeError && (
-                          <p className="rounded-xl border border-[#ff766c]/16 bg-[#ff766c]/[0.055] px-3.5 py-3 text-xs leading-5 text-[#ffaaa4]">
-                            {smartHomeError}
-                          </p>
-                        )}
                         <Button
                           type="submit"
                           disabled={smartHomeBusy || smartHomeStatus?.secureStorageAvailable === false}
                           className="h-11 w-full rounded-full bg-[#f4ff74] font-semibold text-[#10111b] hover:bg-[#ebf969]"
                         >
-                          <Wind /> {smartHomeBusy ? "Connecting…" : "Save and test locally"}
+                          <Wind /> {smartHomeLocalAction === "save" ? "Connecting…" : "Save and test locally"}
                         </Button>
                       </form>
                     </div>

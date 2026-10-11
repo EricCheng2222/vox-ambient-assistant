@@ -93,3 +93,6 @@ assert.match(smartHomeFailureMessage("Dyson closed the local control connection.
 assert.match(smartHomeFailureMessage("Local network access to Dyson was denied on this Mac.", "english"), /Privacy & Security/u);
 assert.match(smartHomeFailureMessage("Dyson's local connection closed after the command was sent; its updated state is unconfirmed.", "english"), /won’t automatically repeat/u);
 assert.match(smartHomeFailureMessage("connected, but did not answer the device state request", "english", "Bedroom lamp"), /^Bedroom lamp connected/u);
+assert.match(smartHomeFailureMessage("Sign in to Dyson again in Home devices to restore cloud control.", "english"), /enable or restore cloud control/u);
+assert.match(smartHomeFailureMessage("Dyson's cloud service could not be reached.", "taiwan_mandarin"), /Dyson 雲端/u);
+assert.match(smartHomeFailureMessage("Dyson through Dyson cloud's updated state is unconfirmed after the command was sent.", "english"), /won’t automatically repeat/u);
