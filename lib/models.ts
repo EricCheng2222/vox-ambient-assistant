@@ -4,7 +4,7 @@
 // budget error.
 
 /** The hardest questions, and writing that should be good: slides and documents. */
-export const EXPERT_MODELS = ["gpt-6.1-sol", "gpt-6-astra"] as const;
+export const EXPERT_MODELS = ["gpt-6.1-sol"] as const;
 
 /**
  * Calls `ask` with each model in turn until one returns an OK response.

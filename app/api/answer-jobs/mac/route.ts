@@ -25,9 +25,14 @@ export async function POST(request: Request) {
     await startAnswerJob(auth.user.id, body.id, MAC_TASK, nowIso);
     return Response.json({ started: true }, { headers: noStore });
   }
-  const text = typeof body.text === "string" ? body.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/gu, " ").trim().slice(0, 3_000) : "";
+  const text = typeof body.text === "string" ? body.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/gu, " ").trim().slice(0, 12_000) : "";
   const job = await getAnswerJob(auth.user.id, body.id);
-  if (!job || job.responseId !== MAC_TASK || !text) return Response.json({ delivered: false, notified: false }, { headers: noStore });
+  if (!job || job.responseId !== MAC_TASK) return Response.json({ delivered: false, notified: false }, { headers: noStore });
+  if (body.action === "fail") {
+    const failed = await settleAnswerJob(job.id, "failed", nowIso);
+    return Response.json({ failed }, { headers: noStore });
+  }
+  if (!text) return Response.json({ delivered: false, notified: false }, { headers: noStore });
   if (body.action === "deliver") {
     const wasNew = await appendAssistantNote(auth.user.id, { id: body.id, text });
     // From here the result is in the conversation; "seen" (set by the device) is left alone.

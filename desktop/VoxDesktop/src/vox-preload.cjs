@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld("voxLocalCodex", {
       taskId: typeof request?.taskId === "string" ? request.taskId.slice(0, 36) : "",
       prompt: typeof request?.prompt === "string" ? request.prompt : "",
     }),
+  runGptTask: (request) => ipcRenderer.invoke("vox-gpt:task", request),
   openWorkspace: () => ipcRenderer.invoke("vox-desktop:open-workspace"),
   runDesktopControl: (request) =>
     ipcRenderer.invoke("vox-desktop:control", {

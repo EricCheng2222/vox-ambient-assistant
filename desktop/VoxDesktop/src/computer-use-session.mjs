@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { GPT_MODEL, GPT_REASONING, chatGptEnvironment } from "./gpt-runtime.mjs";
 
 // Complex multi-step tasks may take several minutes; each individual tool call
 // still has its own stall timeout below.
@@ -40,15 +41,13 @@ export function permitsConfirmedApp(params, bundleId, threadId, options = {}) {
     Object.keys(params.requestedSchema.properties ?? {}).length === 0;
 }
 
-export function computerUseModelSettings(mode) {
-  return mode === "fast"
-    ? { model: "gpt-5.6-luna", effort: "low" }
-    : { model: "gpt-5.6-terra", effort: "medium" };
+export function computerUseModelSettings() {
+  return { model: GPT_MODEL, effort: GPT_REASONING };
 }
 
 export async function runComputerUseSession({ executable, cwd, prompt, bundleId, mode, signal, onItem, onDiagnostic = () => {}, completionCheck, completionAnswer = "", draftOnly = false }) {
   const settings = computerUseModelSettings(mode);
-  const child = spawn(executable, ["app-server"], { stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(executable, ["app-server", "--config", 'forced_login_method="chatgpt"'], { stdio: ["pipe", "pipe", "pipe"], env: chatGptEnvironment() });
   const pending = new Map();
   let nextId = 0;
   let threadId;

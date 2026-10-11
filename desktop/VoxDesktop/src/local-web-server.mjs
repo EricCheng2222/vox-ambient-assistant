@@ -44,7 +44,7 @@ const cloudApiMethods = new Map([
   ["/api/profile", new Set(["GET", "PATCH", "DELETE"])],
   ["/api/profile/consolidate", new Set(["POST"])],
   ["/api/realtime-token", new Set(["POST"])],
-  ["/api/reason", new Set(["POST"])],
+  ["/api/reason", new Set(["GET", "POST"])],
   ["/api/reminders", new Set(["GET", "POST", "PATCH", "DELETE"])],
   ["/api/reminders/due", new Set(["POST"])],
   ["/api/speech", new Set(["POST"])],

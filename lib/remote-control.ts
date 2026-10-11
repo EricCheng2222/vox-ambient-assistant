@@ -11,6 +11,7 @@ export type RemoteMacCommand =
   | { kind: "smart_home"; prompt: string; deviceId?: string }
   | { kind: "phone_mac"; prompt: string }
   | { kind: "local_codex"; prompt: string; taskId?: string }
+  | { kind: "gpt_task"; taskId: string; text: string; route: "live_web" | "balanced_reasoning" | "expert_reasoning"; recentMessages?: unknown; written?: boolean; replyLength?: unknown; responseLength?: unknown; responsePosture?: unknown; memoryUse?: unknown; ritual?: unknown }
   // The websites signed in on the Mac, used from the phone or tablet.
   | { kind: "browser"; op: "look"; open?: string }
   | { kind: "browser"; op: "act"; request: { ref?: number; action: string; text?: string } }

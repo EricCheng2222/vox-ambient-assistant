@@ -12,10 +12,10 @@ import {
   isClosingDesktopApp,
 } from "../src/desktop-control-policy.mjs";
 
-test("only supported task tiers choose models; missing or invalid tiers retain Terra", () => {
-  assert.deepEqual(computerUseModelSettings("fast"), {model: "gpt-5.6-luna", effort: "low"});
+test("all substantial app tasks use Sol High, including legacy fast requests", () => {
+  assert.deepEqual(computerUseModelSettings("fast"), {model: "gpt-6.1-sol", effort: "high"});
   for (const mode of [undefined, "standard", "gpt-6-astra", {}, "FAST"]) {
-    assert.deepEqual(computerUseModelSettings(mode), {model: "gpt-5.6-terra", effort: "medium"});
+    assert.deepEqual(computerUseModelSettings(mode), {model: "gpt-6.1-sol", effort: "high"});
   }
 });
 

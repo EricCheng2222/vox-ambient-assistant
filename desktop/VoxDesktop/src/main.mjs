@@ -36,14 +36,14 @@ import {
   validTypeSafeKey,
 } from "./personal-route.mjs";
 import { startLocalVoxServer } from "./local-web-server.mjs";
-import { createStepPlanner } from "./local-planner.mjs";
+import { runGptTask } from "./gpt-task.mjs";
+import { GPT_MODEL, GPT_REASONING, chatGptEnvironment, gptEnvironment } from "./gpt-runtime.mjs";
 import { registerHealth } from "./health.mjs";
 import { registerVoiceFilter } from "./voice-filter.mjs";
 import { registerWelcomeHome } from "./welcome-home.mjs";
 import { registerStageBrowser } from "./stage-browser.mjs";
 import { registerPageWatch } from "./page-watch.mjs";
 import { registerWebAccounts } from "./web-accounts.mjs";
-import { runBrowserTask } from "./browser-task.mjs";
 import { createCodexTaskRun } from "./codex-task-events.mjs";
 import { createTaskEventRelay } from "./task-event-relay.mjs";
 import {
@@ -100,6 +100,7 @@ let activeVoxOrigin = "";
 let activeConnectionMode = null;
 let panelOpen = false;
 let activeTask = null;
+let browserTaskRunning = false;
 let taskLaunchPending = false;
 let lastWorkspaceOpenAt = 0;
 let lastDesktopControlAt = 0;
@@ -559,6 +560,8 @@ async function runCodexTask(taskId, request) {
       codexPathOverride: request.computerControl
         ? await computerUseCodexPath()
         : packagedCodexPath(),
+      env: request.computerControl ? chatGptEnvironment() : await gptEnvironment(bundledCodexPath()),
+      config: { forced_login_method: "chatgpt" },
     });
     const thread = codex.startThread({
       workingDirectory: request.workspace,
@@ -570,11 +573,11 @@ async function runCodexTask(taskId, request) {
       networkAccessEnabled: false,
       // In its own workspace Vox may look things up; desktop control may not.
       webSearchMode: request.freeRein ? "live" : "disabled",
-      modelReasoningEffort: "medium",
+      modelReasoningEffort: GPT_REASONING,
       // Named outright, as for Computer Use: left to the user's own Codex
       // settings, a model their ChatGPT plan can't use there fails every task
       // in a second ("not supported when using Codex with a ChatGPT account").
-      model: "gpt-5.6-terra",
+      model: GPT_MODEL,
       threadSource: "vox-desktop",
     });
     const prompt = request.computerControl
@@ -758,37 +761,66 @@ async function savedOrChosenWorkspace() {
 /**
  * A whole website task, carried out by this Mac: for a phone or tablet (so it
  * keeps going when that is put away) and for requests made on the Mac itself.
- * Each step is thought out here, under the user's ChatGPT sign-in, and only
- * asked of the paid API when that isn't possible.
+ * GPT owns the whole task under ChatGPT sign-in. Vox supplies its browser;
+ * a failed session never silently switches to the paid API.
  */
 async function runWebsiteTask(command, onTaskEvent) {
   if (!stageBrowser) throw new Error("The Mac's browser isn't ready yet.");
+  if (browserTaskRunning) throw new Error("The Mac's browser is already working on a task.");
+  browserTaskRunning = true;
   const taskId = typeof command.taskId === "string" && /^[0-9a-f-]{36}$/u.test(command.taskId) ? command.taskId : "";
-  if (taskId) await cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "start" }) }).catch(() => undefined);
-  const planner = createStepPlanner({
-    ask: (body) => cloudJson("/api/browser-agent/next", { method: "POST", body: JSON.stringify(body) }),
-    codexPath: bundledCodexPath(),
-    onFallback: (error) => void logMainError("local planner", error),
-  });
-  const result = await runBrowserTask(command, {
-    open: stageBrowser.page.open,
-    look: stageBrowser.page.look,
-    act: stageBrowser.page.act,
-    next: planner.next,
-    now: () => Date.now(),
-    wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    onTaskEvent: (event) => { sendTaskEvent(event); onTaskEvent?.(event); },
-  });
-  // The result goes into the conversation now, whether or not the device that
-  // asked is still around; if it never shows it on screen, a notice follows.
-  if (taskId && result.answer) {
-    await cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "deliver", text: result.answer }) }).catch(() => undefined);
+  try {
+    if (taskId) await cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "start" }) }).catch(() => undefined);
+    const result = await runGptTask({ ...command, taskId: taskId || randomUUID(), route: "browser" }, {
+      codexPath: bundledCodexPath(),
+      browser: {
+        open: stageBrowser.page.open,
+        look: stageBrowser.page.look,
+        act: stageBrowser.page.act,
+        wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      },
+      onTaskEvent: (event) => { sendTaskEvent(event); onTaskEvent?.(event); },
+    });
+    // Leave the result under its original ID even when the requesting phone left.
+    if (taskId && result.answer) {
+      await cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "deliver", text: result.answer }) }).catch(() => undefined);
+      setTimeout(() => {
+        void cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "notify", text: result.answer }) }).catch(() => undefined);
+      }, 30_000);
+    }
+    return JSON.stringify(result);
+  } catch (error) {
+    if (taskId) await cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "fail" }) }).catch(() => undefined);
+    throw error;
+  } finally {
+    browserTaskRunning = false;
+  }
+}
+
+/** Research and reasoning use the same GPT owner, without browser/file authority. */
+async function runReasoningTask(command, onTaskEvent) {
+  const taskId = requestedTaskId(command.taskId);
+  const goal = typeof command.text === "string" ? command.text.trim().slice(0, maximumPromptLength) : "";
+  if (!goal || !["live_web", "balanced_reasoning", "expert_reasoning"].includes(command.route)) throw new Error("The GPT request is invalid.");
+  const capabilities = await cloudJson("/api/reason");
+  if (capabilities.gptTasks !== 1) throw new Error("Update the Vox server to enable ChatGPT tasks.");
+  const prepared = await cloudJson("/api/reason", { method: "POST", body: JSON.stringify({ ...command, mode: "prepare", text: goal }) });
+  if (typeof prepared.instructions !== "string") throw new Error("The server does not support ChatGPT task preparation. Update Vox before trying again.");
+  await cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "start" }) });
+  try {
+    const result = await runGptTask({ taskId, goal, route: command.route, instructions: prepared.instructions, context: prepared.context }, {
+      codexPath: bundledCodexPath(),
+      onTaskEvent: (event) => { sendTaskEvent(event); onTaskEvent?.(event); },
+    });
+    await cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "deliver", text: result.answer }) });
     setTimeout(() => {
       void cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "notify", text: result.answer }) }).catch(() => undefined);
     }, 30_000);
+    return result;
+  } catch (error) {
+    await cloudJson("/api/answer-jobs/mac", { method: "POST", body: JSON.stringify({ id: taskId, action: "fail" }) }).catch(() => undefined);
+    throw error;
   }
-  // How many steps were thought out here and how many were asked of the API.
-  return JSON.stringify({ ...result, planned: planner.used });
 }
 
 async function performRemoteSmartHomeCommand(command) {
@@ -950,6 +982,7 @@ async function performRemoteCommand(command, taskContext = {}) {
   if (command.kind === "smart_home") return performRemoteSmartHomeCommand(command);
   if (command.kind === "phone_mac") return performPhoneMacRequest(command, taskContext);
   if (command.kind === "local_codex") return performRemoteCodexTask(command, taskContext);
+  if (command.kind === "gpt_task") return JSON.stringify(await runReasoningTask(command, taskContext.onTaskEvent));
   // The paired phone or tablet using the websites signed in on this Mac.
   if (command.kind === "browser") {
     if (!stageBrowser) throw new Error("The Mac's browser isn't ready yet.");
@@ -1361,6 +1394,11 @@ function registerIpcHandlers() {
   });
 
   // The same website task a phone can hand over, asked for on this Mac itself.
+  ipcMain.handle("vox-gpt:task", async (event, rawTask) => {
+    requireTrustedVoxSender(event);
+    return runReasoningTask(rawTask && typeof rawTask === "object" ? rawTask : {});
+  });
+
   ipcMain.handle("vox-browser:task", async (event, rawTask) => {
     requireTrustedVoxSender(event);
     const task = rawTask && typeof rawTask === "object" ? rawTask : {};

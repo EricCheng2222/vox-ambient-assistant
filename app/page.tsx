@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import { useTaskProgress } from "@/hooks/use-task-progress";
 import { readTaskEventResponse } from "@/lib/task-event-client";
 import { decryptRemoteTaskProgress } from "@/lib/remote-control";
+import { gptAnswer } from "@/lib/gpt-answer";
 import type {
   CSSProperties,
   FormEvent,
@@ -686,6 +687,7 @@ declare global {
         canceled: boolean;
         answer?: string;
       }>;
+      runGptTask?: (request: Record<string, unknown>) => Promise<{ answer: string; model: string; backend: string }>;
       openWorkspace: () => Promise<{
         opened: boolean;
         name?: string;
@@ -7144,6 +7146,7 @@ export default function Home() {
           answer?: string;
           error?: string;
           stage?: StageContent | null;
+          backend?: string;
         };
         if (!searchResponse.ok || !searched.answer?.trim()) {
           throw new Error(searched.error ?? "Live research returned no answer.");
@@ -7153,7 +7156,7 @@ export default function Home() {
           const shown = searched.stage;
           showStage(shown);
           // The facts fill in while Vox is already speaking.
-          void fetch("/api/stage/facts", {
+          if (searched.backend !== "ChatGPT SDK") void fetch("/api/stage/facts", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ question: completeText, answer: searched.answer, sources: shown.sources }),
@@ -8377,6 +8380,23 @@ export default function Home() {
       answerJobIdsRef.current.set(payload.answer, jobId);
       return Response.json(payload);
     };
+    // The local GPT session owns research/reasoning whenever this device can
+    // reach the Mac. Once started, failure is reported; it never incurs API
+    // usage by silently trying the cloud model instead.
+    const bridge = window.voxLocalCodex;
+    const paired = connectionMode === "cloud" && webActionRoutingRef.current === "paired_mac" && remoteMacReadyRef.current && remoteMacPairingRef.current;
+    if (connectionMode === "cloud" && (bridge?.runGptTask || paired)) {
+      const task = { ...body, taskId: jobId, written: quietSessionRef.current };
+      const result = bridge?.runGptTask
+        ? await bridge.runGptTask(task)
+        : await sendRemoteMacCommand({
+            kind: "gpt_task", ...task,
+            text: String(body.text ?? "").slice(0, 12_000),
+            route: body.route as "live_web" | "balanced_reasoning" | "expert_reasoning",
+          }).then((reply) => JSON.parse(reply.answer ?? "{}") as { answer: string; model: string; backend: string });
+      if (!result.answer?.trim()) return failure();
+      return hand({ ...result, ...gptAnswer(String(body.text ?? ""), result.answer, body.route === "live_web") });
+    }
     const first = await fetch("/api/reason", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, jobId, written: quietSessionRef.current, eventStream: true }) }).catch(() => null);
     if (first && first.status !== 202) {
       if (!first.ok) return first;

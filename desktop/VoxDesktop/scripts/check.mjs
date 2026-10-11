@@ -47,7 +47,7 @@ for (const file of ["src/main.mjs", "src/browser-task.mjs", "src/codex-task-even
 }
 
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
-if (packageJson.dependencies?.["@openai/codex-sdk"] !== "0.155.1") {
+if (packageJson.dependencies?.["@openai/codex-sdk"] !== "0.162.1") {
   throw new Error("The desktop app must pin the tested Codex SDK version.");
 }
 

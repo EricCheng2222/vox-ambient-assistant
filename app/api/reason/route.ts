@@ -64,16 +64,18 @@ function webStage(question: string, payload: ResponsesPayload): StageContent | n
   };
 }
 
+export async function GET(request: Request) {
+  const auth = await requireUser(request);
+  if ("response" in auth) return auth.response;
+  return Response.json({ gptTasks: 1 }, { headers: { "Cache-Control": "no-store" } });
+}
+
 export async function POST(request: Request) {
   const auth = await requireUser(request);
   if ("response" in auth) return auth.response;
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return Response.json({ error: "The reasoning service is not configured." }, { status: 503 });
-  }
-
   const body = (await request.json().catch(() => ({}))) as {
+    mode?: unknown;
     text?: string;
     route?: ReasonRoute;
     replyLength?: unknown;
@@ -96,14 +98,14 @@ export async function POST(request: Request) {
   const responsePosture = parseResponsePosture(body.responsePosture, "answer");
   const memoryUse = parseMemoryUse(body.memoryUse);
   const ritual = parseConversationRitual(body.ritual);
-  if (!text || !route) {
+  if (!text || !route || !["balanced_reasoning", "expert_reasoning", "live_web"].includes(route)) {
     return Response.json({ error: "A prompt and route are required." }, { status: 400 });
   }
 
   const isExpert = route === "expert_reasoning";
   const isWeb = route === "live_web";
   const lengthSettings = adaptiveReplyLengthSettings(responseLength, isExpert);
-  const models = isExpert ? EXPERT_MODELS : (["gpt-5.6-terra"] as const);
+  const models = EXPERT_MODELS;
   const remembered = await listMemories(auth.user.id, 24).catch((error) => {
     console.error("Reasoning without saved memory", error);
     return [];
@@ -129,6 +131,23 @@ export async function POST(request: Request) {
     { role: "user" as const, content: text },
   ];
 
+  const instructions =
+    (body.written === true
+      ? `Prepare an accurate answer for an assistant to show in a chat. Answer the latest user message as the next turn of the conversation you are given: resolve references to earlier turns and do not repeat what was already said. Use plain language. ${WRITTEN_LAYOUT_INSTRUCTION} Do not mention model routing.\n\n`
+      : "Prepare an accurate answer for a voice assistant to speak aloud. Answer the latest user message as the next turn of the conversation you are given: resolve references to earlier turns and do not repeat what was already said. Use plain language, spoken-friendly sentences, and no markdown. Do not mention model routing.\n\n") +
+    languageInstruction + timeContext + memoryContext +
+    `\n\n${responsePostureInstruction(responsePosture)}` +
+    `\n\n${memoryUseInstruction(memoryUse)}` +
+    `\n\n${ritualInstruction(ritual)}` +
+    `\n\n${replyLengthInstruction(replyLength)}` +
+    `\n\n${adaptiveReplyLengthInstruction(replyLength, responseLength)}`;
+  // Prepare account context for the local GPT owner. This branch makes no provider call.
+  if (body.mode === "prepare") {
+    return Response.json({ instructions, context: JSON.stringify(input.slice(0, -1)), model: EXPERT_MODELS[0], reasoning: "high" }, { headers: { "Cache-Control": "no-store" } });
+  }
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return Response.json({ error: "The reasoning service is not configured." }, { status: 503 });
+
   let model: string = models[0];
   // One time limit for the whole answer, however many models are tried: the
   // user is waiting, and a search that hasn't come back by now won't be worth it.
@@ -145,20 +164,8 @@ export async function POST(request: Request) {
     body: JSON.stringify({
       model: (model = candidate),
       input,
-      instructions:
-        (body.written === true
-          ? // A typed conversation: the answer is read, so it is laid out for reading.
-            `Prepare an accurate answer for an assistant to show in a chat. Answer the latest user message as the next turn of the conversation you are given: resolve references to earlier turns and do not repeat what was already said. Use plain language. ${WRITTEN_LAYOUT_INSTRUCTION} Do not mention model routing.\n\n`
-          : "Prepare an accurate answer for a voice assistant to speak aloud. Answer the latest user message as the next turn of the conversation you are given: resolve references to earlier turns and do not repeat what was already said. Use plain language, spoken-friendly sentences, and no markdown. Do not mention model routing.\n\n") +
-        languageInstruction +
-        timeContext +
-        memoryContext +
-        `\n\n${responsePostureInstruction(responsePosture)}` +
-        `\n\n${memoryUseInstruction(memoryUse)}` +
-        `\n\n${ritualInstruction(ritual)}` +
-        `\n\n${replyLengthInstruction(replyLength)}` +
-        `\n\n${adaptiveReplyLengthInstruction(replyLength, responseLength)}`,
-      reasoning: { effort: isExpert ? "high" : "low" },
+      instructions,
+      reasoning: { effort: "high" },
       text: {
         verbosity: lengthSettings.verbosity,
       },

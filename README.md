@@ -95,7 +95,7 @@ Phone control is available only when Vox Desktop uses **Vox Cloud** and the phon
 4. Wait for the Mac to show **Phone connected**.
 5. On the phone, open **Route** in the header and explicitly choose **Paired Mac**.
 
-Pairing does not enable Mac routing by itself. The phone defaults to **Web only**, and the selected route remains visible in the header. In **Paired Mac** mode, supported app actions, smart-home commands, folder opening, and approved read-only Codex tasks travel through the paired Mac. Normal conversation, web search, reminders, files, and cloud memory continue to use the web service.
+Pairing does not enable Mac routing by itself. The phone defaults to **Web only**, and the selected route remains visible in the header. In **Paired Mac** mode, supported app actions, smart-home commands, folder opening, approved read-only Codex tasks, web research, and substantial reasoning travel through the paired Mac. Ordinary conversation, reminders, generated files, and cloud memory use the web service.
 
 The QR code is generated locally inside Vox Desktop and encodes a pairing link carrying a random device key in its URL fragment, which browsers do not send to the server. No third-party QR service sees it. Commands and results are AES-256-GCM encrypted on the endpoints; D1 stores only ciphertext. The Mac rejects expired and replayed command IDs and applies its local app, smart-home, sandbox, and confirmation policies after decryption. Revoke the phone from **Pair phone** on the Mac to delete the relay queue and invalidate its local key.
 
@@ -179,6 +179,16 @@ How the result reaches you depends on where you asked:
 - Desktop-local Codex and constrained Computer Use integration
 - Desktop-local smart-home hub with an initial Dyson Wi-Fi purifier adapter
 - Explicit phone-web routing to a securely paired Mac
+
+### GPT task ownership
+
+Vox supplies voice, context, memory, execution tools and progress. JEV (or the configured OpenAI decision provider) handles quick routing and presence decisions. **GPT-6.1 Sol with High reasoning** owns substantial research, reasoning, workspace and browser tasks.
+
+In Cloud mode on Vox Desktop, research and reasoning run through the Codex SDK using the user's ChatGPT sign-in. A phone in Paired Mac mode uses the same runtime over its encrypted relay. `/api/reason` prepares authenticated memory, profile, time and conversation context without calling a model. Without Mac routing, the web app uses the Responses API with Sol High. SDK failure does not silently retry with an API key or a different model; subscription usage limits still apply.
+
+Browser tasks use one continuous GPT session, rather than asking a new model to choose every step. A task-specific, authenticated loopback MCP server exposes Vox's browser look/open/action/finish tools. GPT can combine those tools with live web research and verify results. Vox enforces the selected approval level, sign-in/private-field boundaries, page freshness, repeated ineffective actions, a 60-action limit, and a ten-minute deadline. Finishing or needing the user closes browser action authority. AG-UI reports task progress without exposing raw provider payloads.
+
+The desktop pins `@openai/codex-sdk` **0.162.1**; the previous bundled 0.155.1 CLI rejects Sol 6.1 with ChatGPT authentication. Live tools also require `codex-code-mode-host`, supplied by an installed ChatGPT/Codex desktop app. The Mac must stay running. Completed answers retain the existing job ID and cross-device conversation delivery; a task cannot continue executing through a desktop shutdown. Realtime voice and quick decision-provider calls retain their separate billing.
 
 ## Conversation context and memory
 
