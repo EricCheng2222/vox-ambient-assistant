@@ -2,7 +2,7 @@
  * Sunrise: the look of the light theme (its id stays "daylight"). One calm
  * column under a morning sky: the orb is the sun, the conversation sits
  * beneath it as plain text, and the message box rests at the bottom.
- * Manrope carries the reading; Newsreader gives larger headings a quieter character.
+ * Native text fonts handle compact reading; Newsreader gives headings a quieter character.
  * Layout for phones is in phone.css.
  */
 
@@ -10,7 +10,7 @@ html[data-vox-theme="daylight"] {
   /* Ink and paper, as bare channels, so a tone can swap them (see Sunset). */
   --ink-rgb: 31 37 50;
   --paper-rgb: 255 255 255;
-  --sun-text: "Manrope", "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
+  --sun-text: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", "PingFang TC", "Noto Sans TC", sans-serif;
   --sun-display: "Newsreader", "PingFang TC", "Noto Sans TC", Georgia, serif;
   --sun-gold: #f6a94a;
   --sun-ember: #ee7f52;
@@ -30,6 +30,7 @@ html[data-vox-theme="daylight"] {
 html[data-vox-theme="daylight"] body,
 .vox-shell[data-vox-theme="daylight"],
 .vox-shell[data-vox-theme="daylight"] :is(button, input, select, textarea) { font-family: var(--sun-text); }
+.vox-shell[data-vox-theme="daylight"] { font-optical-sizing: auto; font-kerning: normal; }
 .vox-shell[data-vox-theme="daylight"] :is(.font-display, .vox-view-heading h1, .vx-today-title, .vx-stage-title, .dash-serif, .voice-status > p:first-child) {
   font-family: var(--sun-display);
   font-optical-sizing: auto;
@@ -320,7 +321,7 @@ html[data-vox-theme="daylight"][data-vox-tone="sunset"] :is([data-slot="sheet-ov
   border-top: 1px solid rgb(var(--ink-rgb) / 13%);
 }
 .vox-shell[data-vox-theme="daylight"] .answer-list[data-named] > li:last-child { border-bottom: 1px solid rgb(var(--ink-rgb) / 13%); }
-.vox-shell[data-vox-theme="daylight"] .answer-lead { font-weight: 620; letter-spacing: -0.005em; }
+.vox-shell[data-vox-theme="daylight"] .answer-lead { font-weight: 620; letter-spacing: normal; }
 .vox-shell[data-vox-theme="daylight"] .answer-list[data-named] .answer-detail { color: var(--dl-ink-2); font-size: 1em; line-height: 1.65; }
 /* Plain points and steps: a quiet marker, no rules. */
 .vox-shell[data-vox-theme="daylight"] .answer-list:not([data-named]) { gap: 0.4rem; }
