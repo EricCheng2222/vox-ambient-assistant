@@ -35,7 +35,7 @@ html[data-vox-theme="daylight"] body,
   font-optical-sizing: auto;
 }
 .vox-shell[data-vox-theme="daylight"] .vox-view-heading h1,
-.vox-shell[data-vox-theme="daylight"] .vx-today-title { font-size: 2.1rem; font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; }
+.vox-shell[data-vox-theme="daylight"] .vx-today-title { font-size: 1.875rem; font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; }
 .vox-shell[data-vox-theme="daylight"] .vox-view-eyebrow { display: none; }
 
 /* ---- The sky: cool overhead, warm toward the horizon, first light around the sun ---- */
@@ -104,8 +104,8 @@ html[data-vox-theme="daylight"] body,
 }
 .vox-shell[data-vox-theme="daylight"] .message-user { background: rgb(var(--paper-rgb) / 72%); }
 .vox-shell[data-vox-theme="daylight"] .message .message-copy {
-  font-size: 1.0625rem;
-  line-height: 1.7;
+  font-size: 0.9375rem;
+  line-height: 1.65;
   font-weight: 400;
   letter-spacing: normal;
 }
@@ -167,7 +167,7 @@ html[data-vox-theme="daylight"] body,
   .vox-shell[data-vox-theme="daylight"] .voice-console:not(:has(.talk-stage)) .voice-stage { margin: 0; transform: none; }
   .vox-shell[data-vox-theme="daylight"] .voice-console:not(:has(.talk-stage)) .holo-core-stage { zoom: 0.6; }
   .vox-shell[data-vox-theme="daylight"] .voice-console:not(:has(.talk-stage)) .voice-status { margin-top: 0.7rem; }
-  .vox-shell[data-vox-theme="daylight"] .voice-console:not(:has(.talk-stage)) .voice-status > p:first-child { font-size: 1.35rem; font-weight: 600; letter-spacing: -0.015em; }
+  .vox-shell[data-vox-theme="daylight"] .voice-console:not(:has(.talk-stage)) .voice-status > p:first-child { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.015em; }
   .vox-shell[data-vox-theme="daylight"] .voice-console:not(:has(.talk-stage)) .voice-status > p + p { margin-top: 0.2rem; font-size: 0.86rem; }
   .vox-shell[data-vox-theme="daylight"] .voice-console:not(:has(.talk-stage)) .voice-controls { margin-top: 0.8rem; }
   .vox-shell[data-vox-theme="daylight"] .voice-console .waveform { display: none; }
