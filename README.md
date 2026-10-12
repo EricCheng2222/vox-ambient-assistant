@@ -18,6 +18,10 @@ Use Vox in either of two ways:
 
 Cloud access currently requires an invitation. The hosted service manages its own AI usage, encrypted conversation sync, preferences, memory, reminders, and files.
 
+Flash Cards, Vox Mail, and VÉLO use platform system typography, solid reading surfaces, and the device’s light or dark appearance. Their connection panels inside Vox follow Vox’s selected appearance. Layouts adapt to Mac, iPhone, and iPad, including tablet Split View; reduced motion and increased contrast are supported.
+
+The companion design foundation is `lib/apple-site.ts`. VÉLO keeps a local snapshot so its independent repository still runs on its own; run `node scripts/sync-companion-design.mjs` before checking and committing changes to this stylesheet.
+
 ### Option B: install Personal mode on macOS
 
 Personal mode is the privacy-first, bring-your-own-keys version. The current tested desktop build is for macOS on Apple Silicon.

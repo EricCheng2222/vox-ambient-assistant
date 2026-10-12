@@ -243,3 +243,68 @@ html[data-vox-theme="daylight"] :is([data-slot="dialog-content"], [data-slot="al
 @media (prefers-reduced-motion: reduce) {
   .vox-shell[data-vox-theme="daylight"] *, html[data-vox-theme="daylight"] :is([data-slot="sheet-content"], [data-slot="dialog-content"], [data-slot="alert-dialog-content"]) { animation: none !important; scroll-behavior: auto !important; transition-duration: 0ms !important; }
 }
+
+/* Companion account panels share the same reading rhythm as the main app.
+ * The header stays in place while long account lists scroll independently. */
+[data-slot="sheet-content"].vox-connection-sheet {
+  --connection-ink: var(--dl-ink, #f5f5f7);
+  --connection-secondary: var(--dl-ink-2, #d0d0d7);
+  --connection-muted: var(--dl-ink-3, #aaaab5);
+  --connection-line: var(--dl-line, #41414a);
+  --connection-surface: var(--vox-surface, #232329);
+  --connection-accent: var(--dl-accent, #86baff);
+  --connection-danger: #ffaaa0;
+  width: min(100vw, 28rem);
+  max-width: 28rem;
+  gap: 0;
+  overflow: hidden;
+  background: var(--vox-solid, #16161b);
+  color: var(--connection-ink);
+  font-family: var(--vox-system, -apple-system, BlinkMacSystemFont, system-ui, sans-serif);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+.vox-connection-sheet [data-slot="sheet-header"] {
+  padding: max(1.25rem, env(safe-area-inset-top)) 4rem 1.25rem 1.25rem;
+  border-bottom: 1px solid var(--connection-line);
+}
+.vox-connection-heading { display: flex; align-items: center; gap: 0.625rem; }
+.vox-connection-heading > svg { width: 1.125rem; height: 1.125rem; color: var(--connection-accent); }
+.vox-connection-sheet [data-slot="sheet-title"] { color: var(--connection-ink); font: 600 1.125rem/1.3 var(--vox-system, system-ui); letter-spacing: -0.015em; }
+.vox-connection-sheet [data-slot="sheet-description"] { margin-top: 0.5rem; color: var(--connection-secondary); font-size: 0.875rem; line-height: 1.6; }
+.vox-connection-body { display: flex; flex-direction: column; gap: 1.25rem; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 1.25rem 1.25rem max(1.5rem, env(safe-area-inset-bottom)); }
+.vox-connection-card { padding: 1rem; border: 1px solid var(--connection-line); border-radius: 0.875rem; background: var(--connection-surface); }
+.vox-connection-status { display: flex; align-items: center; gap: 0.5rem; color: var(--connection-ink); font-size: 0.875rem; font-weight: 600; }
+.vox-connection-status > svg { width: 1rem; height: 1rem; flex: none; color: var(--connection-accent); }
+.vox-connection-status::before { content: ""; width: 0.4rem; height: 0.4rem; flex: none; border-radius: 50%; background: var(--connection-muted); }
+.vox-connection-status[data-state="connected"]::before { background: #4f9d70; }
+.vox-connection-status[data-state="warning"]::before { background: #b98537; }
+.vox-connection-card > .vox-connection-muted { margin-top: 0.5rem; }
+.vox-connection-muted { color: var(--connection-secondary); font-size: 0.875rem; line-height: 1.6; }
+.vox-connection-note { display: flex; align-items: start; gap: 0.625rem; color: var(--connection-secondary); font-size: 0.8125rem; line-height: 1.6; }
+.vox-connection-note > svg { width: 1rem; height: 1rem; margin-top: 0.2rem; color: var(--connection-accent); flex: none; }
+.vox-connection-section { margin: 0 0 0.625rem; color: var(--connection-muted); font-size: 0.8125rem; font-weight: 600; }
+.vox-connection-actions { display: grid; gap: 0.625rem; }
+.vox-connection-sheet :is(.vox-connection-button, .vox-connection-link) { display: flex; width: 100%; min-height: 2.75rem; height: auto; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.625rem 0.875rem; border: 1px solid var(--connection-line); border-radius: 0.625rem; background: var(--connection-surface); color: var(--connection-ink); font-size: 0.875rem; line-height: 1.4; font-weight: 550; white-space: normal; text-align: center; text-decoration: none; touch-action: manipulation; transition: background-color 120ms ease, border-color 120ms ease; }
+.vox-connection-sheet :is(.vox-connection-button, .vox-connection-link):is(:hover, :active) { background: var(--vox-selection, #253348); border-color: var(--connection-accent); }
+.vox-connection-sheet .vox-connection-button--primary { background: #0066cc; border-color: transparent; color: #fff; }
+.vox-connection-sheet .vox-connection-button--primary:is(:hover, :active) { background: #0056ad; border-color: transparent; }
+.vox-connection-sheet .vox-connection-button--quiet { border-color: transparent; background: transparent; color: var(--connection-muted); }
+.vox-connection-sheet .vox-connection-button--danger { color: var(--connection-danger); }
+html[data-vox-theme="daylight"]:not([data-vox-tone="sunset"]) .vox-connection-sheet { --connection-danger: #b3261e; }
+.vox-connection-sheet :is(button, a):focus-visible { outline: 2px solid var(--connection-accent); outline-offset: 3px; }
+.vox-connection-error { padding: 0.875rem 1rem; border: 1px solid var(--connection-line); border-radius: 0.875rem; color: var(--connection-ink); background: var(--connection-surface); }
+.vox-connection-error .vox-connection-button { margin-top: 0.75rem; }
+.vox-mail-accounts { display: grid; gap: 0.75rem; margin: 0; padding: 0; list-style: none; }
+.vox-mail-address { margin: 0; color: var(--connection-ink); font-size: 0.875rem; font-weight: 600; overflow-wrap: anywhere; }
+.vox-mail-meta { margin-top: 0.25rem; color: var(--connection-muted); font-size: 0.8125rem; }
+.vox-mail-access { display: flex; flex-wrap: wrap; gap: 0.375rem; margin: 0.75rem 0 0; padding: 0; list-style: none; }
+.vox-mail-access > li { padding: 0.15rem 0.5rem; border-radius: 0.375rem; background: var(--vox-selection, #253348); color: var(--connection-accent); font-size: 0.75rem; }
+.vox-mail-access > li[data-allowed="false"] { border: 1px dashed var(--connection-line); background: transparent; color: var(--connection-muted); }
+.vox-mail-account .vox-connection-button { margin-top: 0.875rem; }
+@media (max-width: 639px) {
+  [data-slot="sheet-content"].vox-connection-sheet { width: 100%; max-width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vox-connection-sheet * { transition: none !important; animation: none !important; }
+}

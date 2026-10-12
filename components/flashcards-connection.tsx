@@ -46,10 +46,17 @@ export function FlashcardsConnection({
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   const refresh = useCallback(async () => {
-    const response = await fetch("/api/connections/flashcards", { cache: "no-store" });
-    if (response.ok) setStatus((await response.json()) as ConnectionStatus);
+    try {
+      const response = await fetch("/api/connections/flashcards", { cache: "no-store" });
+      if (!response.ok) throw new Error("The Flash Cards connection could not load.");
+      setStatus((await response.json()) as ConnectionStatus);
+      setError("");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "The Flash Cards connection could not load.");
+    }
   }, []);
 
   useEffect(() => {
@@ -69,10 +76,15 @@ export function FlashcardsConnection({
 
   async function disconnect() {
     setBusy(true);
+    setError("");
     try {
-      await fetch("/api/connections/flashcards", { method: "DELETE" });
+      const response = await fetch("/api/connections/flashcards", { method: "DELETE" });
+      if (!response.ok) throw new Error("Flash Cards could not be disconnected. Please try again.");
+      setStatus((current) => current ? { ...current, connected: false } : current);
       await refresh();
       toast.success("Disconnected Vox Flash Cards");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Flash Cards could not be disconnected.");
     } finally {
       setBusy(false);
     }
@@ -88,89 +100,76 @@ export function FlashcardsConnection({
           tone={studying ? "ok" : "default"}
         />
       </SheetTrigger>
-      <SheetContent className="w-[min(94vw,420px)] border-white/10 bg-[#10111b] text-white sm:max-w-[420px]">
-        <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
-          <div className="flex items-center gap-2 text-[#f4ff74]">
-            <Layers size={18} />
-            <SheetTitle className="font-display text-xl text-white">Flash cards</SheetTitle>
+      <SheetContent className="vox-connection-sheet sm:max-w-[420px]">
+        <SheetHeader>
+          <div className="vox-connection-heading">
+            <Layers size={18} aria-hidden="true" />
+            <SheetTitle>Flash cards</SheetTitle>
           </div>
-          <SheetDescription className="mt-2 leading-6 text-white/46">
-            Your cards live on Vox Flash Cards. Connect it once, then say “let’s review my flash
-            cards” and Vox will quiz you like a friend.
+          <SheetDescription>
+            Keep your decks in Vox Flash Cards, then review one card at a time by voice.
           </SheetDescription>
         </SheetHeader>
 
-        <div className="space-y-3 px-5 py-5">
+        <div className="vox-connection-body">
+          {error && (
+            <div className="vox-connection-error" role="alert">
+              <p>{error}</p>
+              <Button type="button" variant="ghost" className="vox-connection-button vox-connection-button--quiet mt-2" onClick={() => void refresh()}>Retry</Button>
+            </div>
+          )}
           {status === null ? (
-            <p className="text-sm text-white/40">Checking the connection…</p>
+            !error && <p className="vox-connection-muted" role="status">Checking the connection…</p>
           ) : status.connected ? (
             <>
-              <p className="flex items-center gap-2 text-sm text-[#f4ff74]/85">
-                <Link2 className="size-4" aria-hidden="true" /> Connected to Vox Flash Cards
-              </p>
-              {studying ? (
-                <Button
-                  type="button"
-                  className="w-full rounded-full border-white/15 bg-transparent text-white hover:bg-white/10"
-                  variant="outline"
-                  onClick={() => {
-                    setOpen(false);
-                    onStopStudy();
-                  }}
-                >
-                  Stop studying
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  className="w-full rounded-full bg-[#f4ff74] text-[#10111b] hover:bg-[#f4ff74]/90"
-                  onClick={() => {
-                    setOpen(false);
-                    onStudy();
-                  }}
-                >
-                  <GraduationCap /> Study with Vox
-                </Button>
-              )}
-              <a
-                href={status.siteUrl}
-                target="_blank"
-                rel="noopener"
-                className="flex w-full items-center justify-center gap-2 rounded-full border border-white/10 bg-white/[0.04] py-2 text-sm text-white hover:bg-white/10"
-              >
-                <ExternalLink className="size-4" aria-hidden="true" /> Manage cards on Vox Flash Cards
-              </a>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={busy}
-                className="w-full rounded-full text-white/50 hover:text-[#ff9d96]"
-                onClick={() => void disconnect()}
-              >
-                <Unlink /> Disconnect
+              <div className="vox-connection-card">
+                <p className="vox-connection-status" data-state="connected">
+                  <Link2 className="size-4" aria-hidden="true" /> Connected to Vox Flash Cards
+                </p>
+                <p className="vox-connection-note">{studying ? "A study session is in progress." : "Your decks are ready to review with Vox."}</p>
+              </div>
+              <div className="vox-connection-actions">
+                {studying ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="vox-connection-button"
+                    onClick={() => { setOpen(false); onStopStudy(); }}
+                  >Stop studying</Button>
+                ) : (
+                  <Button
+                    type="button"
+                    className="vox-connection-button vox-connection-button--primary"
+                    onClick={() => { setOpen(false); onStudy(); }}
+                  ><GraduationCap /> Study with Vox</Button>
+                )}
+                <a href={status.siteUrl} target="_blank" rel="noopener" className="vox-connection-link">
+                  <ExternalLink className="size-4" aria-hidden="true" /> Manage decks and cards
+                </a>
+              </div>
+              <div className="vox-connection-card">
+                <p className="vox-connection-section">Review by voice</p>
+                <p className="vox-connection-note">Say “let’s review my flash cards.” Vox grades your answer before moving on. Say “skip” to leave a card ungraded.</p>
+              </div>
+              <Button type="button" variant="ghost" disabled={busy} className="vox-connection-button vox-connection-button--danger" onClick={() => void disconnect()}>
+                <Unlink /> {busy ? "Disconnecting…" : "Disconnect Flash Cards"}
               </Button>
             </>
           ) : (
             <>
-              <p className="text-sm leading-6 text-white/60">
-                Vox isn’t connected to your flash cards yet. You’ll sign in with your Vox account on
-                Vox Flash Cards and allow Vox to use your cards.
-              </p>
-              <Button
-                type="button"
-                className="w-full rounded-full bg-[#f4ff74] text-[#10111b] hover:bg-[#f4ff74]/90"
-                onClick={() => void openFlashcardsConnection()}
-              >
-                <Link2 /> Connect Vox Flash Cards
-              </Button>
-              <a
-                href={status.siteUrl}
-                target="_blank"
-                rel="noopener"
-                className="block text-center text-xs text-white/45 underline-offset-2 hover:underline"
-              >
-                Open Vox Flash Cards
-              </a>
+              <div className="vox-connection-card">
+                <p className="vox-connection-status" data-state="warning">Not connected</p>
+                <p className="vox-connection-note">Sign in with your Vox account on Vox Flash Cards, then allow Vox to access your decks.</p>
+              </div>
+              <div className="vox-connection-actions">
+                <Button type="button" className="vox-connection-button vox-connection-button--primary" onClick={() => void openFlashcardsConnection()}>
+                  <Link2 /> Connect Flash Cards
+                </Button>
+                <a href={status.siteUrl} target="_blank" rel="noopener" className="vox-connection-link">
+                  <ExternalLink className="size-4" aria-hidden="true" /> Open Vox Flash Cards
+                </a>
+              </div>
+              <p className="vox-connection-muted">You can also create and study cards directly on the site.</p>
             </>
           )}
         </div>

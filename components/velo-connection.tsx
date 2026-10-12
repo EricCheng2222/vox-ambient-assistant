@@ -27,10 +27,17 @@ export function VeloConnection() {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const response = await fetch("/api/connections/velo", { cache: "no-store" });
-    if (response.ok) setStatus((await response.json()) as ConnectionStatus);
+    try {
+      const response = await fetch("/api/connections/velo", { cache: "no-store" });
+      if (!response.ok) throw new Error("Couldn’t load your VÉLO connection.");
+      setStatus((await response.json()) as ConnectionStatus);
+      setError(null);
+    } catch {
+      setError("Couldn’t load your VÉLO connection. Try again.");
+    }
   }, []);
 
   useEffect(() => {
@@ -51,9 +58,13 @@ export function VeloConnection() {
   async function disconnect() {
     setBusy(true);
     try {
-      await fetch("/api/connections/velo", { method: "DELETE" });
+      const response = await fetch("/api/connections/velo", { method: "DELETE" });
+      if (!response.ok) throw new Error("Couldn’t disconnect VÉLO.");
+      setStatus((current) => current ? { ...current, connected: false } : current);
       await refresh();
       toast.success("Disconnected VÉLO", { description: "Start a new conversation for this to take effect." });
+    } catch {
+      toast.error("Couldn’t disconnect VÉLO", { description: "Try again in a moment." });
     } finally {
       setBusy(false);
     }
@@ -64,52 +75,58 @@ export function VeloConnection() {
       <SheetTrigger asChild>
         <SettingsRow icon={<Dumbbell />} title="VÉLO" detail="Workouts, meals, water, sleep and habits" />
       </SheetTrigger>
-      <SheetContent className="w-[min(94vw,420px)] border-white/10 bg-[#10111b] text-white sm:max-w-[420px]">
-        <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
-          <div className="flex items-center gap-2 text-[#f4ff74]">
+      <SheetContent className="vox-connection-sheet">
+        <SheetHeader>
+          <div className="vox-connection-heading">
             <Dumbbell size={18} />
-            <SheetTitle className="font-display text-xl text-white">VÉLO</SheetTitle>
+            <SheetTitle>VÉLO</SheetTitle>
           </div>
-          <SheetDescription className="mt-2 leading-6 text-white/46">
-            Your notebook for workouts, meals, water, body weight, sleep and habits. Tell Vox what you
-            did (“I did 50 push-ups”) and it keeps count; ask how you’re doing and it tells you.
-          </SheetDescription>
+          <SheetDescription>Your notebook for training, meals, water, sleep, and habits.</SheetDescription>
         </SheetHeader>
 
-        <div className="space-y-3 px-5 py-5">
+        <div className="vox-connection-body">
+          {error ? (
+            <div className="vox-connection-error" role="alert">
+              <p>{error}</p>
+              <Button className="vox-connection-button" onClick={() => void refresh()}>Try again</Button>
+            </div>
+          ) : null}
           {status === null ? (
-            <p className="text-sm text-white/40">Checking the connection…</p>
+            error ? null : <p className="vox-connection-muted" role="status">Checking the connection…</p>
           ) : status.connected ? (
             <>
-              <p className="flex items-center gap-2 text-sm text-[#f4ff74]/85">
-                <Link2 className="size-4" aria-hidden="true" /> Connected. Try “I did 20 push-ups.”
-              </p>
-              <p className="text-sm leading-6 text-white/55">
-                Vox logs what you mention without asking, and waits for your “yes” before it deletes
-                an entry or replaces your training plan.
-              </p>
+              <div className="vox-connection-card">
+                <p className="vox-connection-status" data-state="connected">VÉLO connected</p>
+                <p className="vox-connection-muted">Try “I did 20 push-ups.”</p>
+              </div>
+              <section className="vox-connection-card" aria-label="Using your notebook">
+                <h3 className="vox-connection-section">Keep track by voice</h3>
+                <p className="vox-connection-muted">Tell Vox what you did, ate, or drank. Ask “how am I doing this week?” to hear your progress.</p>
+              </section>
               <a
                 href={status.siteUrl}
                 target="_blank"
                 rel="noopener"
-                className="flex w-full items-center justify-center gap-2 rounded-full border border-white/10 bg-white/[0.04] py-2 text-sm text-white hover:bg-white/10"
+                className="vox-connection-link"
               >
                 <ExternalLink className="size-4" aria-hidden="true" /> See today in VÉLO
               </a>
-              <Button type="button" variant="ghost" disabled={busy} className="w-full rounded-full text-white/50 hover:text-[#ff9d96]" onClick={() => void disconnect()}>
-                <Unlink /> Disconnect
+              <Button type="button" variant="ghost" disabled={busy} className="vox-connection-button vox-connection-button--quiet vox-connection-button--danger" onClick={() => void disconnect()}>
+                <Unlink /> {busy ? "Disconnecting…" : "Disconnect VÉLO"}
               </Button>
             </>
           ) : (
             <>
-              <p className="text-sm leading-6 text-white/60">
-                One click: it signs in with your Vox account. Start a new conversation afterwards.
-              </p>
-              <Button type="button" className="w-full rounded-full bg-[#f4ff74] text-[#10111b] hover:bg-[#f4ff74]/90" onClick={() => void openVeloConnection()}>
+              <div className="vox-connection-card">
+                <p className="vox-connection-status">Connect your notebook</p>
+                <p className="vox-connection-muted">Use your Vox account, then start a new conversation to log entries.</p>
+              </div>
+              <Button type="button" className="vox-connection-button vox-connection-button--primary" onClick={() => void openVeloConnection()}>
                 <Link2 /> Connect VÉLO
               </Button>
             </>
           )}
+          <p className="vox-connection-note">Say “undo that” to take back the last entry. Vox waits for your “yes” before deleting older entries or replacing your training plan.</p>
         </div>
       </SheetContent>
     </Sheet>

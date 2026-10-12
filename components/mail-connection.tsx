@@ -26,28 +26,28 @@ const GOOGLE_PARTS = [
 ] as const;
 
 /** One connected account: its address, and what Vox can use in it. */
-function AccountRow({ account }: { account: MailAccountDetail }) {
+function AccountRow({ account, siteUrl }: { account: MailAccountDetail; siteUrl: string }) {
   const missing = account.google ? GOOGLE_PARTS.filter(([key]) => !account.google?.[key]) : [];
   return (
-    <li className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-      <p className="truncate text-sm font-medium text-white">{account.email}</p>
-      <p className="mt-0.5 text-xs text-white/50">
+    <li className="vox-connection-card vox-mail-account">
+      <p className="vox-mail-address">{account.email}</p>
+      <p className="vox-mail-meta">
         {account.kind}
         {account.primary ? ", sends by default" : ""}
       </p>
       {account.needsReconnect ? (
-        <p className="mt-2 text-xs text-[#f0c887]">Access expired. Reconnect this account to keep using it.</p>
+        <p className="vox-connection-muted mt-2">Access expired. Reconnect this account to keep using it.</p>
       ) : (
-        <ul className="mt-2 flex flex-wrap gap-1.5" aria-label={`What Vox can use in ${account.email}`}>
-          <li className="rounded-full border border-white/10 px-2 py-0.5 text-xs text-[#78ebff]">Mail</li>
+        <ul className="vox-mail-access" aria-label={`What Vox can use in ${account.email}`}>
+          <li>Mail</li>
           {GOOGLE_PARTS.map(([key, label]) =>
             account.google?.[key] ? (
-              <li key={key} className="rounded-full border border-white/10 px-2 py-0.5 text-xs text-[#78ebff]">
+              <li key={key}>
                 {label}
               </li>
             ) : account.google ? (
-              <li key={key} className="rounded-full border border-dashed border-white/15 px-2 py-0.5 text-xs text-white/40">
-                {label}: not allowed yet
+              <li key={key} data-allowed="false">
+                {label}<span className="sr-only">: not allowed yet</span>
               </li>
             ) : null,
           )}
@@ -57,11 +57,16 @@ function AccountRow({ account }: { account: MailAccountDetail }) {
         <Button
           type="button"
           variant="outline"
-          className="mt-3 w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+          className="vox-connection-button"
           onClick={() => void openMailConnection({ provider: "google", add: true, loginHint: account.email })}
         >
           <Link2 /> {account.needsReconnect ? "Reconnect Google" : `Allow ${missing.map(([, label]) => label.toLowerCase()).join(", ")}`}
         </Button>
+      ) : null}
+      {!account.google && account.needsReconnect ? (
+        <a href={siteUrl} target="_blank" rel="noopener" className="vox-connection-link mt-3">
+          <ExternalLink className="size-4" aria-hidden="true" /> Reconnect account
+        </a>
       ) : null}
     </li>
   );
@@ -92,10 +97,17 @@ export function MailConnection() {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const response = await fetch("/api/connections/mail", { cache: "no-store" });
-    if (response.ok) setStatus((await response.json()) as ConnectionStatus);
+    try {
+      const response = await fetch("/api/connections/mail", { cache: "no-store" });
+      if (!response.ok) throw new Error("Couldn’t load your email connection.");
+      setStatus((await response.json()) as ConnectionStatus);
+      setError(null);
+    } catch {
+      setError("Couldn’t load your email connection. Try again.");
+    }
   }, []);
 
   useEffect(() => {
@@ -116,11 +128,15 @@ export function MailConnection() {
   async function disconnect() {
     setBusy(true);
     try {
-      await fetch("/api/connections/mail", { method: "DELETE" });
+      const response = await fetch("/api/connections/mail", { method: "DELETE" });
+      if (!response.ok) throw new Error("Couldn’t disconnect your email.");
+      setStatus((current) => current ? { ...current, connected: false } : current);
       await refresh();
       toast.success("Disconnected your email", {
         description: "Vox can no longer read or send your mail. Start a new conversation for this to take effect.",
       });
+    } catch {
+      toast.error("Couldn’t disconnect your email", { description: "Try again in a moment." });
     } finally {
       setBusy(false);
     }
@@ -131,47 +147,51 @@ export function MailConnection() {
       <SheetTrigger asChild>
         <SettingsRow icon={<Mail />} title="Email" detail="Gmail, Outlook, iCloud, and other accounts" />
       </SheetTrigger>
-      <SheetContent className="w-[min(94vw,420px)] border-white/10 bg-[#10111b] text-white sm:max-w-[420px]">
-        <SheetHeader className="border-b border-white/8 px-6 py-6 pr-12">
-          <div className="flex items-center gap-2 text-[#f4ff74]">
+      <SheetContent className="vox-connection-sheet">
+        <SheetHeader>
+          <div className="vox-connection-heading">
             <Mail size={18} />
-            <SheetTitle className="font-display text-xl text-white">Email</SheetTitle>
+            <SheetTitle>Email</SheetTitle>
           </div>
-          <SheetDescription className="mt-2 leading-6 text-white/46">
-            Connect Gmail, Outlook, iCloud, or any other email account, and Vox can check,
-            search, read, draft, reply, file, and tidy your email by voice.
+          <SheetDescription>
+            Read, search, and reply across your accounts with Vox.
           </SheetDescription>
         </SheetHeader>
 
-        <div className="space-y-3 px-5 py-5">
+        <div className="vox-connection-body">
+          {error ? (
+            <div className="vox-connection-error" role="alert">
+              <p>{error}</p>
+              <Button className="vox-connection-button" onClick={() => void refresh()}>Try again</Button>
+            </div>
+          ) : null}
           {status === null ? (
-            <p className="text-sm text-white/40">Checking the connection…</p>
+            error ? null : <p className="vox-connection-muted" role="status">Checking the connection…</p>
           ) : status.connected ? (
             <>
-              <p className="flex items-center gap-2 text-sm text-[#f4ff74]/85">
-                <Link2 className="size-4" aria-hidden="true" /> Connected. Try “any new email?”
-              </p>
-              <p className="flex gap-2 text-sm leading-6 text-white/55">
-                <ShieldCheck className="mt-1 size-4 shrink-0" aria-hidden="true" />
-                Vox reads back who it’s writing to and what it will say, and waits for your “yes”,
-                before it sends, replies, forwards, or moves mail to the trash.
-              </p>
+              <div className="vox-connection-card">
+                <p className="vox-connection-status" data-state="connected">Vox Mail connected</p>
+                <p className="vox-connection-muted">Try “any new email?”</p>
+              </div>
+              <section aria-label="Email accounts">
+                <h3 className="vox-connection-section">Email accounts</h3>
               {status.accounts?.length ? (
-                <ul className="space-y-2" aria-label="Connected accounts">
+                <ul className="vox-mail-accounts" aria-label="Connected accounts">
                   {status.accounts.map((account) => (
-                    <AccountRow key={account.email} account={account} />
+                    <AccountRow key={account.email} account={account} siteUrl={status.siteUrl} />
                   ))}
                 </ul>
               ) : status.accounts ? (
-                <p className="text-sm text-white/55">No email account is connected yet. Add one below.</p>
+                <p className="vox-connection-muted">No email account is connected yet. Add one below.</p>
               ) : (
-                <p className="text-sm text-white/55">Couldn’t list your accounts right now.</p>
+                <p className="vox-connection-muted">Couldn’t list your accounts right now.</p>
               )}
+              </section>
               <a
                 href={status.siteUrl}
                 target="_blank"
                 rel="noopener"
-                className="flex w-full items-center justify-center gap-2 rounded-full border border-white/10 bg-white/[0.04] py-2 text-sm text-white hover:bg-white/10"
+                className="vox-connection-link"
               >
                 <ExternalLink className="size-4" aria-hidden="true" /> Add or remove email accounts
               </a>
@@ -179,21 +199,22 @@ export function MailConnection() {
                 type="button"
                 variant="ghost"
                 disabled={busy}
-                className="w-full rounded-full text-white/50 hover:text-[#ff9d96]"
+                className="vox-connection-button vox-connection-button--quiet vox-connection-button--danger"
                 onClick={() => void disconnect()}
               >
-                <Unlink /> Disconnect
+                <Unlink /> {busy ? "Disconnecting…" : "Disconnect Vox Mail"}
               </Button>
             </>
           ) : (
             <>
-              <p className="text-sm leading-6 text-white/60">
-                Pick your account, allow access, and you’re back here connected. Start a new
-                conversation afterwards.
-              </p>
+              <div className="vox-connection-card">
+                <p className="vox-connection-status">Choose an email provider</p>
+                <p className="vox-connection-muted">Sign in with your provider, then start a new conversation in Vox.</p>
+              </div>
+              <div className="vox-connection-actions">
               <Button
                 type="button"
-                className="w-full rounded-full bg-[#f4ff74] text-[#10111b] hover:bg-[#f4ff74]/90"
+                className="vox-connection-button vox-connection-button--primary"
                 onClick={() => void openMailConnection({ provider: "google" })}
               >
                 <Link2 /> Connect Gmail
@@ -201,7 +222,7 @@ export function MailConnection() {
               <Button
                 type="button"
                 variant="outline"
-                className="w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+                className="vox-connection-button"
                 onClick={() => void openMailConnection({ provider: "microsoft" })}
               >
                 Connect Outlook
@@ -209,13 +230,18 @@ export function MailConnection() {
               <Button
                 type="button"
                 variant="outline"
-                className="w-full rounded-full border-white/10 bg-white/[0.04] text-white hover:bg-white/10 hover:text-white"
+                className="vox-connection-button"
                 onClick={() => void openMailConnection({ provider: "imap" })}
               >
                 iCloud, Yahoo, or another account
               </Button>
+              </div>
             </>
           )}
+          <p className="vox-connection-note">
+            <ShieldCheck aria-hidden="true" />
+            Vox previews messages and waits for your “yes” before sending, replying, forwarding, or moving email to the trash.
+          </p>
         </div>
       </SheetContent>
     </Sheet>
