@@ -20,7 +20,7 @@ Cloud access currently requires an invitation. The hosted service manages its ow
 
 Flash Cards, Vox Mail, and VÉLO use platform system typography, solid reading surfaces, and the device’s light or dark appearance. Their connection panels inside Vox follow Vox’s selected appearance. Layouts adapt to Mac, iPhone, and iPad, including tablet Split View; reduced motion and increased contrast are supported.
 
-The companion design foundation is `lib/apple-site.ts`. VÉLO keeps a local snapshot so its independent repository still runs on its own; run `node scripts/sync-companion-design.mjs` before checking and committing changes to this stylesheet.
+The companion design foundation is `lib/apple-site.ts`. VÉLO keeps a local snapshot so its independent repository still runs on its own; run `node scripts/sync-companion-design.mjs` before checking and committing changes to this stylesheet. `npm run test:velo` fails if the snapshot is stale. Flash Cards builds on `appleSiteBase` (tokens and element defaults only) so the shared component classes don’t leak into its own.
 
 ### Option B: install Personal mode on macOS
 

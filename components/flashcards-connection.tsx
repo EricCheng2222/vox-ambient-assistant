@@ -76,15 +76,14 @@ export function FlashcardsConnection({
 
   async function disconnect() {
     setBusy(true);
-    setError("");
     try {
       const response = await fetch("/api/connections/flashcards", { method: "DELETE" });
-      if (!response.ok) throw new Error("Flash Cards could not be disconnected. Please try again.");
+      if (!response.ok) throw new Error("Flash Cards could not be disconnected.");
       setStatus((current) => current ? { ...current, connected: false } : current);
       await refresh();
       toast.success("Disconnected Vox Flash Cards");
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Flash Cards could not be disconnected.");
+    } catch {
+      toast.error("Couldn’t disconnect Vox Flash Cards", { description: "Try again in a moment." });
     } finally {
       setBusy(false);
     }
@@ -100,7 +99,7 @@ export function FlashcardsConnection({
           tone={studying ? "ok" : "default"}
         />
       </SheetTrigger>
-      <SheetContent className="vox-connection-sheet sm:max-w-[420px]">
+      <SheetContent className="vox-connection-sheet">
         <SheetHeader>
           <div className="vox-connection-heading">
             <Layers size={18} aria-hidden="true" />

@@ -1,29 +1,27 @@
 import { escapeHtml } from "./util.ts";
-import { appleSiteStyles } from "../../lib/apple-site.ts";
+import { appleSiteBase } from "../../lib/apple-site.ts";
 
 // Flash Cards shares Vox's system typography and adaptive surfaces. The deck
 // metaphor stays in the quiet card shapes, while study content remains plain.
-const baseStyles = `${appleSiteStyles}
+const baseStyles = `${appleSiteBase}
   :root {
-    --hand: var(--ui);
     --paper: var(--glass-strong);
-    --heading: var(--text);
     --again: var(--danger);
     --hard: #99651d;
     --good: var(--success);
     --easy: var(--accent);
+    --new: var(--line);
   }
   body { font-optical-sizing: auto; }
   [hidden] { display: none !important; }
-  .wrap { width: min(100% - 3rem, 1080px); padding-bottom: env(safe-area-inset-bottom); }
-  .topbar { min-height: 5rem; gap: 1rem; padding: 1rem 0; }
+  .wrap { width: min(100% - 3rem, 1080px); margin: 0 auto; padding-bottom: env(safe-area-inset-bottom); }
+  .topbar { display: flex; align-items: center; justify-content: space-between; min-height: 5rem; gap: 1rem; padding: 1rem 0; }
   .wordmark { display: inline-flex; align-items: center; gap: .65rem; color: var(--text); font-size: .9375rem; font-weight: 650; text-decoration: none; white-space: nowrap; }
   .wordmark-mark { position: relative; width: 1.9rem; height: 1.9rem; border-radius: .65rem; background: var(--accent-soft); }
   .wordmark-mark::before, .wordmark-mark::after { content: ""; position: absolute; width: 1rem; height: .7rem; border: 1.5px solid var(--accent); border-radius: 3px; }
   .wordmark-mark::before { top: .5rem; left: .4rem; opacity: .45; }
   .wordmark-mark::after { top: .7rem; left: .6rem; background: var(--accent-soft); }
   .card { position: relative; color: var(--text); background: var(--paper); border: 1px solid var(--line); border-radius: 1.25rem; box-shadow: 0 2px 8px rgb(var(--ink) / .025); }
-  .hand { font-family: var(--ui); color: var(--text); }
   .button { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 2.75rem; padding: .6rem 1.15rem; border: 1px solid transparent; border-radius: .75rem; font-size: .9375rem; line-height: 1.3; font-weight: 600; text-decoration: none; cursor: pointer; touch-action: manipulation; transition: background-color 120ms, transform 100ms; }
   .button-primary { color: white; background: var(--accent); }
   .button-quiet { color: var(--text); background: var(--glass); border-color: var(--line); }
@@ -35,7 +33,7 @@ const baseStyles = `${appleSiteStyles}
   .nav { display: flex; gap: .25rem; margin-right: .5rem; padding: .2rem; background: var(--field); border-radius: .8rem; }
   .nav a { display: inline-flex; align-items: center; min-height: 2.4rem; padding: .4rem .75rem; border-radius: .6rem; color: var(--text-2); font-size: .875rem; font-weight: 600; text-decoration: none; }
   .nav a[aria-current="page"] { background: var(--paper); color: var(--text); box-shadow: 0 1px 3px rgb(var(--ink) / .06); }
-  .who-name { font-size: .8125rem; color: var(--muted); }
+  .who-name { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8125rem; color: var(--muted); }
   .field { min-height: 2.75rem; width: 100%; padding: .65rem .85rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--field); color: var(--text); }
   .error { color: var(--danger); min-height: 1.5em; font-size: .875rem; }
   .error:empty { min-height: 0; margin: 0; }
@@ -51,7 +49,6 @@ const baseStyles = `${appleSiteStyles}
     .who-name { display: none; }
   }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } .button:active, .grade:active, .chip:active, .pile:active { transform: none !important; } }
-  @media (prefers-reduced-transparency: reduce) { .card, .nav a[aria-current="page"] { background: var(--glass-strong); backdrop-filter: none; } }
   @media (prefers-contrast: more) { .card, .button-quiet, .field, .grade { border-color: var(--text-2); } }
 `;
 
@@ -441,10 +438,8 @@ export function appPage(mcpUrl: string) {
       $("card-front").classList.toggle("is-long", current.front.length > 70);
       $("card-back").classList.toggle("is-long", current.back.length > 70);
       $("card-note").textContent = current.notes || "";
-      $("study-card").classList.remove("empty-card");
       $("study-card").setAttribute("aria-label", "Question: " + current.front + ". Tap to see the answer.");
     } else {
-      $("study-card").classList.add("empty-card");
       $("card-front").textContent = decks.length
         ? (result.next_due_at ? "You’re all caught up. Next review " + relativeDue(result.next_due_at) + "." : "This deck has no cards yet.")
         : "Make your first deck below, then add a few cards.";
@@ -627,7 +622,7 @@ export function appPage(mcpUrl: string) {
   $("rename-deck").addEventListener("click", () => {
     const deck = decks.find((candidate) => candidate.id === openDeckId);
     if (!deck) return;
-    const input = el("input", { className: "field", value: deck.name, maxlength: "80", "aria-label": "Deck name", style: "font-family:var(--hand);font-size:1rem;width:min(420px,100%)" });
+    const input = el("input", { className: "field", value: deck.name, maxlength: "80", "aria-label": "Deck name", style: "font-size:1rem;width:min(420px,100%)" });
     const form = el("form", {
       style: "display:flex;gap:8px;flex-wrap:wrap",
       onsubmit: async (event) => {
@@ -725,19 +720,19 @@ const statsStyles = `
   .stats .card { padding: 3.25rem 1.5rem 1.5rem; }
   .card-label { position: absolute; top: 1.15rem; left: 1.5rem; right: 1.5rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: .4rem; font-size: .8125rem; color: var(--text-2); }
   .sentence { margin: 0 0 1.5rem; font-size: clamp(1.25rem, 2.4vw, 1.5rem); font-weight: 600; line-height: 1.4; letter-spacing: -.025em; color: var(--text); }
-  .figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.25rem; border: 0; border-radius: 0; background: transparent; overflow: visible; }
-  .figure { padding: 0; background: transparent; }
+  .figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.25rem; }
+  .figure { display: grid; align-content: start; gap: .4rem; }
   .figure b { display: block; font-size: 1.75rem; line-height: 1.25; font-weight: 650; letter-spacing: -.03em; color: var(--text); font-variant-numeric: tabular-nums; }
   .figure span { font-size: .8125rem; color: var(--text-2); }
   .pair { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 1.25rem; }
   .heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 16px); grid-auto-columns: 16px; justify-content: start; gap: 4px; overflow-x: auto; padding: .4rem 0; }
-  .heat i { border-radius: 3px; background: var(--line-soft); }
-  .heat i[data-level="1"] { background: color-mix(in srgb, var(--accent) 22%, var(--field)); }
-  .heat i[data-level="2"] { background: color-mix(in srgb, var(--accent) 44%, var(--field)); }
-  .heat i[data-level="3"] { background: color-mix(in srgb, var(--accent) 70%, var(--field)); }
-  .heat i[data-level="4"] { background: var(--accent); }
+  .heat i, .heat-key i { border-radius: 3px; background: var(--line-soft); }
+  :is(.heat, .heat-key) i[data-level="1"] { background: color-mix(in srgb, var(--accent) 22%, var(--field)); }
+  :is(.heat, .heat-key) i[data-level="2"] { background: color-mix(in srgb, var(--accent) 44%, var(--field)); }
+  :is(.heat, .heat-key) i[data-level="3"] { background: color-mix(in srgb, var(--accent) 70%, var(--field)); }
+  :is(.heat, .heat-key) i[data-level="4"] { background: var(--accent); }
   .heat i.future { background: transparent; }
-  .legend { display: flex; align-items: center; gap: .3rem; margin-top: .6rem; padding: 0; font-size: .75rem; color: var(--text-2); }
+  .legend { display: flex; align-items: center; gap: .3rem; margin-top: .6rem; font-size: .75rem; color: var(--text-2); }
   .legend i { width: 11px; height: 11px; border-radius: 3px; }
   .bars { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); align-items: end; gap: .4rem; height: 170px; }
   .bar { display: grid; align-content: end; justify-items: center; gap: .3rem; height: 100%; font-size: .6875rem; color: var(--text-2); }
@@ -801,7 +796,7 @@ export function statsPage() {
     <section class="card" aria-labelledby="activity-title">
       <span class="card-label"><span id="activity-title">Last 12 months</span><span id="activity-total"></span></span>
       <div class="heat" id="heat" role="img" aria-label="Reviews per day"></div>
-      <div class="legend" aria-hidden="true">Fewer <i style="background:#e8edf3"></i><i style="background:#c7d6f0"></i><i style="background:#8fb0e8"></i><i style="background:#4f74cc"></i><i style="background:#2f55b5"></i> More</div>
+      <div class="legend heat-key" aria-hidden="true">Fewer <i data-level="0"></i><i data-level="1"></i><i data-level="2"></i><i data-level="3"></i><i data-level="4"></i> More</div>
     </section>
 
     <div class="pair">
@@ -853,13 +848,14 @@ export function statsPage() {
     const at = name.indexOf(": ");
     return at > 0 && at < 30 ? { series: name.slice(0, at), title: name.slice(at + 2) } : { series: "", title: name };
   };
+  // Colors are the page's CSS tokens, so the bars match the grade buttons and dark mode.
   const MATURITY = [
-    ["mature", "Learned well", "#2f55b5"],
-    ["young", "Getting there", "#8fb0e8"],
-    ["learning", "Learning", "#b7791f"],
-    ["new", "Not studied yet", "#c9d2de"],
+    ["mature", "Learned well", "var(--accent)"],
+    ["young", "Getting there", "color-mix(in srgb, var(--accent) 44%, var(--field))"],
+    ["learning", "Learning", "var(--hard)"],
+    ["new", "Not studied yet", "var(--new)"],
   ];
-  const RATINGS = [["again", "Again", "#c8453a"], ["hard", "Hard", "#b7791f"], ["good", "Good", "#2f7d4f"], ["easy", "Easy", "#2f55b5"]];
+  const RATINGS = [["again", "Again", "var(--again)"], ["hard", "Hard", "var(--hard)"], ["good", "Good", "var(--good)"], ["easy", "Easy", "var(--easy)"]];
 
   function stack(target, keyTarget, parts, total, label) {
     $(target).replaceChildren(...parts.filter((part) => part.value > 0).map((part) =>

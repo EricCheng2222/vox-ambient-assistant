@@ -1,7 +1,10 @@
 /** Shared, dependency-free presentation for the Vox companion Workers.
  * Reading surfaces are solid; only navigation uses a translucent material.
  * Relative units let browser text sizing scale controls and spacing together. */
-export const appleSiteStyles = `
+
+/** Tokens and element defaults only. Sites with their own component vocabulary
+ * (Flash Cards) build on this so the shared class names below can't leak in. */
+export const appleSiteBase = `
   :root {
     color-scheme: light dark;
     --ui: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", "PingFang TC", "Noto Sans TC", sans-serif;
@@ -23,7 +26,6 @@ export const appleSiteStyles = `
     --glass: #fff;
     --glass-strong: #fff;
     --field: #fff;
-    --chrome: rgb(245 245 247 / 90%);
     --shadow: 0 4px 20px -14px rgb(0 0 0 / 18%);
     --radius: 0.875rem;
   }
@@ -43,7 +45,6 @@ export const appleSiteStyles = `
       --glass: #232329;
       --glass-strong: #2a2a32;
       --field: #1c1c22;
-      --chrome: rgb(22 22 27 / 92%);
       --shadow: 0 4px 20px -14px rgb(0 0 0 / 50%);
     }
   }
@@ -61,6 +62,17 @@ export const appleSiteStyles = `
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   form, p { margin: 0; }
   [hidden] { display: none !important; }
+  h1, h2, h3 { margin: 0; font-weight: 650; line-height: 1.25; }
+  h1 { font-size: clamp(1.5rem, 3vw, 1.75rem); letter-spacing: -0.025em; overflow-wrap: anywhere; }
+  h2 { font-size: 1.0625rem; letter-spacing: -0.015em; }
+  h3 { font-size: 0.9375rem; letter-spacing: -0.005em; }
+  @media (max-width: 639px) { body { font-size: 1rem; } }
+  @media (prefers-contrast: more) { :root { --muted: var(--text-2); --line: var(--text-2); --line-soft: var(--muted); } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
+`;
+
+/** Base plus the shared components Mail and VÉLO are built from. */
+export const appleSiteStyles = `${appleSiteBase}
   .wrap { width: min(calc(100% - 3rem), 66rem); margin: 0 auto; padding-bottom: max(3rem, env(safe-area-inset-bottom)); }
   .narrow { max-width: 40rem; }
   .topbar {
@@ -73,10 +85,6 @@ export const appleSiteStyles = `
   .brand span b { color: var(--text); font-weight: inherit; }
   .who { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); font-size: 0.8125rem; }
   .who-name { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  h1, h2, h3 { margin: 0; font-weight: 650; line-height: 1.25; }
-  h1 { font-size: clamp(1.5rem, 3vw, 1.75rem); letter-spacing: -0.025em; overflow-wrap: anywhere; }
-  h2 { font-size: 1.0625rem; letter-spacing: -0.015em; }
-  h3 { font-size: 0.9375rem; letter-spacing: -0.005em; }
   .hud { margin: 0; color: var(--muted); font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.01em; }
   .hud.amber { color: var(--warn); }
   .hud svg { width: 1rem; height: 1rem; margin-right: 0.4rem; vertical-align: -0.2rem; }
@@ -212,7 +220,6 @@ export const appleSiteStyles = `
   }
   @media (pointer: coarse), (max-width: 639px) { .btn { min-height: 2.75rem; } }
   @media (max-width: 639px) {
-    body { font-size: 1rem; }
     .wrap { width: calc(100% - 2rem); }
     .topbar { min-height: 4rem; margin-bottom: 1.25rem; }
     .who-name { display: none; }
@@ -234,7 +241,4 @@ export const appleSiteStyles = `
     .day .how { text-align: left; }
     .btn-row > .btn, .form-actions > .btn { flex: 1 1 auto; }
   }
-  @media (prefers-reduced-transparency: reduce) { :root { --chrome: var(--night); } }
-  @media (prefers-contrast: more) { :root { --muted: var(--text-2); --line: var(--text-2); --line-soft: var(--muted); } }
-  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
 `;

@@ -55,7 +55,7 @@ const icons = {
 function brandMark() {
   return `<svg viewBox="0 0 48 48" aria-hidden="true">
   <defs><linearGradient id="vx-sun" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd9b0"/><stop offset="1" stop-color="#e86a52"/></linearGradient></defs>
-  <circle cx="24" cy="24" r="22" fill="rgb(248 236 226 / 10%)"/>
+  <circle cx="24" cy="24" r="22" fill="#f5a25a" fill-opacity="0.2"/>
   <circle cx="24" cy="24" r="16" fill="url(#vx-sun)"/>
   <rect x="16.5" y="18.5" width="15" height="11" rx="2" fill="none" stroke="#2a1d3f" stroke-width="1.8"/><path d="M17.2 19.8l6.8 5 6.8-5" fill="none" stroke="#2a1d3f" stroke-width="1.8" stroke-linejoin="round"/>
 </svg>`;
@@ -70,8 +70,9 @@ function reactor() {
   </defs>
   <circle cx="200" cy="200" r="196" fill="url(#vx-glow)"/>
   <circle cx="200" cy="200" r="118" fill="url(#vx-big-sun)"/>
-  <!-- Going down: bands of evening sky closing over the lower half. -->
-  <g fill="#3a2458"><rect x="70" y="232" width="260" height="6" rx="3" opacity="0.5"/><rect x="70" y="254" width="260" height="10" rx="5" opacity="0.62"/><rect x="70" y="280" width="260" height="14" rx="7" opacity="0.74"/><rect x="70" y="308" width="260" height="18" rx="9" opacity="0.86"/></g>
+  <!-- Going down: bands of the page background closing over the lower half,
+       so the sun sets into the page in light and dark mode alike. -->
+  <g style="fill: var(--night)"><rect x="70" y="232" width="260" height="6" rx="3" opacity="0.5"/><rect x="70" y="254" width="260" height="10" rx="5" opacity="0.62"/><rect x="70" y="280" width="260" height="14" rx="7" opacity="0.74"/><rect x="70" y="308" width="260" height="18" rx="9" opacity="0.86"/></g>
   <rect x="152" y="140" width="96" height="66" rx="10" fill="none" stroke="#3a2458" stroke-width="8"/><path d="M156 146l44 32 44-32" fill="none" stroke="#3a2458" stroke-width="8" stroke-linejoin="round"/>
 </svg></div>`;
 }
